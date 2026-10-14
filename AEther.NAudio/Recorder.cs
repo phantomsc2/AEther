@@ -26,7 +26,10 @@ namespace AEther.NAudio
             var deviceIndex = Array.FindIndex(devices, d => d == deviceName);
             return new WaveIn()
             {
-                DeviceNumber = deviceIndex
+                DeviceNumber = deviceIndex,
+                WaveFormat = new WaveFormat(48000, 16, 2),
+                BufferMilliseconds = 10,
+                NumberOfBuffers = 3,
             };
         }
 

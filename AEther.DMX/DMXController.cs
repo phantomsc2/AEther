@@ -20,6 +20,7 @@ namespace AEther.DMX
 
         readonly double[] KeyWeights;
         int Key;
+        bool IsDisposed;
 
         readonly MovingQuantileEstimator SinuoidFilter;
         readonly MovingQuantileEstimator TransientFilter;
@@ -139,14 +140,15 @@ namespace AEther.DMX
 
         public void Dispose()
         {
+            if (IsDisposed)
+                return;
+            IsDisposed = true;
             GC.SuppressFinalize(this);
-            if (!Cancel.IsCancellationRequested)
-            {
-                Cancel.Cancel();
+            Cancel.Cancel();
+            if (WriterThread.IsAlive)
                 WriterThread.Join();
-                Serial.Close();
-                Serial.Dispose();
-            }
+            Serial.Dispose();
+            Cancel.Dispose();
         }
 
     }

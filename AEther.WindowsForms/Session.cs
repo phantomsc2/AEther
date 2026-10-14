@@ -14,6 +14,8 @@ namespace AEther.WindowsForms
         public readonly Analyzer Analyzer;
         public readonly DMXController DMX;
         public readonly GraphicsModule GraphicsModule;
+        Task? StopTask;
+        bool IsDisposed;
 
         public Session(MainForm form, SampleSource source, ListBox states, AnalyzerOptions options, DMXOptions dmxOptions)
         {
@@ -21,9 +23,23 @@ namespace AEther.WindowsForms
             Statistics = new StatisticsModule(form);
             Source = source;
             Analyzer = new(source.Format, options);
+            Analyzer.Profile.Describe("Source", source.GetType().FullName ?? source.GetType().Name);
 
-            GraphicsModule = new GraphicsModule(form.Graphics, states, Source.Format.ChannelCount, options.Domain.Length, options.TimeResolution / 2);
-            DMX = new DMXController(options.Domain, dmxOptions);
+            try
+            {
+                DMX = new DMXController(options.Domain, dmxOptions);
+                var analysisRate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
+                var historyCount = (int)Math.Clamp(Math.Ceiling(analysisRate * options.HistorySeconds), 2, 16384);
+                GraphicsModule = new GraphicsModule(form.Graphics, states, Source.Format.ChannelCount, options.Domain.Length, historyCount, analysisRate, options.HistoryPresentationDelayMilliseconds / 1000, options);
+            }
+            catch
+            {
+                DMX?.Dispose();
+                Source.Dispose();
+                Analyzer.Stop();
+                throw;
+            }
+            GraphicsModule.Profile = Analyzer.Profile;
             Analyzer.SamplesAnalyzed += Analyzer_SamplesAnalyzed;
             Source.DataAvailable += Source_DataAvailable;
             Form.KeyPress += Form_KeyPress;
@@ -43,8 +59,8 @@ namespace AEther.WindowsForms
         private void Analyzer_SamplesAnalyzed(object? sender, SampleEvent<double> evt)
         {
             Statistics.Process(evt);
-            DMX.Process(evt);
-            GraphicsModule.Process(evt);
+            using (Analyzer.Profile.Measure("subscriber.dmx_ms")) DMX.Process(evt);
+            using (Analyzer.Profile.Measure("subscriber.graphics_ms")) GraphicsModule.Process(evt);
         }
 
         public void Start()
@@ -55,29 +71,34 @@ namespace AEther.WindowsForms
 
         public void Render()
         {
-            Statistics.Update();
+            Statistics.Update(Analyzer.DroppedInputCount);
             GraphicsModule.Render();
         }
 
-        public async Task StopAsync()
+        public Task StopAsync() => StopTask ??= StopCoreAsync();
+
+        async Task StopCoreAsync()
         {
 
             Analyzer.SamplesAnalyzed -= Analyzer_SamplesAnalyzed;
             Source.DataAvailable -= Source_DataAvailable;
             Form.KeyPress -= Form_KeyPress;
-            Source.Stop();
-            Source.Dispose();
-            Analyzer.Stop();
             try
             {
+                Source.Stop();
+            }
+            finally
+            {
+                Analyzer.Stop();
                 await Analyzer.Completion;
             }
-            catch (OperationCanceledException)
-            { }
         }
 
         public void Dispose()
         {
+            if (IsDisposed)
+                return;
+            IsDisposed = true;
             GC.SuppressFinalize(this);
             Source.Dispose();
             GraphicsModule.Dispose();

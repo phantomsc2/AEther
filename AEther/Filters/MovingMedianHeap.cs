@@ -29,7 +29,8 @@ namespace AEther
             Below.Clear();
             Above.Clear();
             Above.Insert((state, 0));
-            Position = 1;
+            Flags[0] = true; // the seed belongs to Above, including after every Clear
+            Position = WindowSize == 1 ? 0 : 1;
         }
 
         public override void Filter(T value)

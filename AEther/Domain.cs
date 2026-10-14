@@ -14,7 +14,7 @@ namespace AEther
     : IEnumerable<double>
     {
 
-        public double Octaves => Length / Resolution;
+        public double Octaves => Length / (double)Resolution;
 
         public static Domain FromRange(double minValue, double maxValue, int resolution)
         {

@@ -26,25 +26,32 @@ namespace AEther
         public void FilterSpan(ReadOnlySpan<T> source, Span<T> destination, Func<T, T, T> op)
         {
 
-            Debug.Assert(source.Length <= destination.Length);
+            if (source.Length > destination.Length)
+                throw new ArgumentException("Destination is too small.", nameof(destination));
+            if (source.IsEmpty)
+                return;
 
             var buffer = Pool.Rent(source.Length);
 
-            Clear(buffer[0] = source[0]);
-            for (var i = 1; i < source.Length; ++i)
+            try
             {
-                Filter(source[i]);
-                buffer[i] = State;
-            }
+                Clear(buffer[0] = source[0]);
+                for (var i = 1; i < source.Length; ++i)
+                {
+                    Filter(source[i]);
+                    buffer[i] = State;
+                }
 
-            Clear(destination[^1] = buffer[^1]);
-            for (var i = source.Length - 2; 0 <= i; --i)
-            {
-                Filter(source[i]);
-                destination[i] = op(buffer[i], State);
+                // Pool arrays can exceed the requested length. Never read their padding.
+                Clear(source[^1]);
+                destination[source.Length - 1] = op(buffer[source.Length - 1], State);
+                for (var i = source.Length - 2; 0 <= i; --i)
+                {
+                    Filter(source[i]);
+                    destination[i] = op(buffer[i], State);
+                }
             }
-
-            Pool.Return(buffer);
+            finally { Pool.Return(buffer); }
 
         }
 

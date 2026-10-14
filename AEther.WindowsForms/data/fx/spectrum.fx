@@ -4,6 +4,8 @@
 
 Texture2D<float4> Spectrum0 : register(t0);
 Texture2D<float4> Spectrum1 : register(t1);
+bool IntensityView = false;
+bool CombinedLevelView = false;
 
 float4 PS(const PSDefaultin IN) : SV_Target
 {
@@ -13,6 +15,9 @@ float4 PS(const PSDefaultin IN) : SV_Target
 	float4 r = Spectrum1.Sample(Point, uv);
 
 	float4 v = lerp(l, r, .5 < IN.UV.x);
+	if (CombinedLevelView) v = float4(v.aaa, 1);
+	if (IntensityView)
+		return float4(saturate(v.rgb), 1);
 	v = 2 * abs(IN.UV.x - .5) < v;
 	
 	//float4 v = lerp(l, r, IN.UV.x);

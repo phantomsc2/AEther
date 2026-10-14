@@ -98,7 +98,6 @@ namespace AEther.WindowsForms
 
         readonly Model Cube;
         readonly Model Sphere;
-        readonly Model[] Trees;
         readonly Light Light;
 
         GeometryBuffer GeometryBuffer;
@@ -168,9 +167,7 @@ namespace AEther.WindowsForms
             Cube = Graphics.CreateModel(Mesh.CreateSphere(3, 3).SplitVertices(true));
             Sphere = Graphics.CreateModel(Mesh.CreateSphere(15, 15));
 
-            Trees = AssimpAssetImporter.ImportMesh("data/models/trees9.obj").Select(Graphics.CreateModel).ToArray();
 
-            var floor = Graphics.CreateModel(Mesh.CreateGrid(32, 32));
             Camera = new CameraPerspective
             {
                 Position = 10 * Vector3.BackwardLH,
@@ -307,13 +304,16 @@ namespace AEther.WindowsForms
                 LightShader.Dispose();
                 LightShadowShader.Dispose();
 
-                //Particles.Dispose();
+                Graphics.OnModeChange -= Graphics_OnModeChange;
+                Particles.Dispose();
                 InstanceConstants.Dispose();
                 CameraConstants.Dispose();
                 LightConstants.Dispose();
                 Instances.Dispose();
                 Cube.Dispose();
                 Sphere.Dispose();
+                foreach (var model in Models)
+                    model.Dispose();
 
                 GeometryBuffer.Dispose();
                 LightBuffer.Dispose();
@@ -417,6 +417,7 @@ namespace AEther.WindowsForms
         {
 
             UpdateScene();
+            Light.Intensity = 1000 * (.35f + 1.65f * Graphics.RhythmLight) * Vector3.One;
 
             Graphics.SetModel();
             Graphics.SetRenderTarget(null, MandelboxTexture);

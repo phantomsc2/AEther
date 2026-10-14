@@ -11,8 +11,8 @@ namespace AEther.WindowsForms
         public int Height => Description.Height;
         public Size Size => new(Width, Height);
 
-        public Texture2D(SharpDX.Direct3D11.Texture2D texture)
-            : base(texture)
+        public Texture2D(SharpDX.Direct3D11.Texture2D texture, bool ownsResource = true)
+            : base(texture, ownsResource)
         { }
 
     }

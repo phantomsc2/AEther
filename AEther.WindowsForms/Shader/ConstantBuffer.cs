@@ -37,9 +37,8 @@ namespace AEther.WindowsForms
             var context = Buffer.Device.ImmediateContext;
             if (UseResourceMapping)
             {
-                context.MapSubresource(Buffer, MapMode.WriteDiscard, MapFlags.None, out DataStream stream);
-                stream.Write(Value);
-                context.UnmapSubresource(Buffer, 0);
+                using var mapping = new ContextMapping(Buffer);
+                mapping.Write(Value);
             }
             else
             {

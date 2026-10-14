@@ -19,10 +19,12 @@ namespace AEther.WindowsForms
         protected readonly Lazy<ShaderResourceView> SRViewLazy;
 
         protected bool IsDisposed;
+        readonly bool OwnsResource;
 
-        public GraphicsResource(T resource)
+        public GraphicsResource(T resource, bool ownsResource = true)
         {
             Resource = resource;
+            OwnsResource = ownsResource;
             RTViewLazy = new Lazy<RenderTargetView>(CreateRTView);
             DSViewLazy = new Lazy<DepthStencilView>(CreateDSView);
             SRViewLazy = new Lazy<ShaderResourceView>(CreateSRView);
@@ -53,7 +55,7 @@ namespace AEther.WindowsForms
             Resource.Device.ImmediateContext.ClearDepthStencilView(DSView, DepthStencilClearFlags.Depth, depth, 0);
         }
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             if (!IsDisposed)
             {
@@ -63,6 +65,8 @@ namespace AEther.WindowsForms
                     DSViewLazy.Value.Dispose();
                 if (SRViewLazy.IsValueCreated)
                     SRViewLazy.Value.Dispose();
+                if (OwnsResource)
+                    Resource.Dispose();
                 GC.SuppressFinalize(this);
                 IsDisposed = true;
             }

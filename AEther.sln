@@ -27,6 +27,13 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.CSCore", "AEther.CSC
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.DMX", "AEther.DMX\AEther.DMX.csproj", "{4A1CD670-17EA-4C4B-9805-7BCBA8C7D015}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ideas", "ideas", "{15DC4DFC-AA42-4EA1-9F09-348C7B206A28}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "songs", "songs", "{45F14BD6-D6DD-4826-9D52-C7DDCFE7C440}"
+	ProjectSection(SolutionItems) = preProject
+		ideas\songs\Carbon Based Lifeforms - Central Plains = ideas\songs\Carbon Based Lifeforms - Central Plains
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -114,5 +121,8 @@ Global
 	EndGlobalSection
 	GlobalSection(Performance) = preSolution
 		HasPerformanceSessions = true
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{45F14BD6-D6DD-4826-9D52-C7DDCFE7C440} = {15DC4DFC-AA42-4EA1-9F09-348C7B206A28}
 	EndGlobalSection
 EndGlobal

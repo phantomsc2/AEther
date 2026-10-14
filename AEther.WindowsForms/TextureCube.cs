@@ -34,7 +34,7 @@ namespace AEther.WindowsForms
         public Vector3 Up => Ups[Index];
 
         public TextureCubeSlice(SharpDX.Direct3D11.Texture2D texture, int index)
-            : base(texture)
+            : base(texture, ownsResource: false)
         {
             Index = index;
         }
@@ -78,6 +78,13 @@ namespace AEther.WindowsForms
             Slices = Enumerable.Range(0, Resource.Description.ArraySize)
                 .Select(i => new TextureCubeSlice(texture, i))
                 .ToArray();
+        }
+
+        public override void Dispose()
+        {
+            foreach (var slice in Slices)
+                slice.Dispose();
+            base.Dispose();
         }
 
         protected override ShaderResourceView CreateSRView()

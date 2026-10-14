@@ -62,6 +62,14 @@ cbuffer FrameConstants : register(b0)
 	float DT;
 	float HistogramShift;
 	float AspectRatio;
+	float Transient;
+	float Motion;
+	float MotionVelocity;
+	float HistorySpan;
+	float PoseX, PoseY, PoseZ, VisualBreath;
+	float VisualEnergy, VisualFlash, VisualGlow, VisualSustain;
+	float S;
+	float3 MusicalTimePadding;
 };
 
 struct Instance

@@ -31,7 +31,7 @@ namespace AEther
             Coefficients = new Complex[Window.Length];
             for (int j = 0; j < Window.Length; ++j)
             {
-                var bin = M - (Window.Length / 2) + 1 + j;
+                var bin = M - (Window.Length / 2) + j;
                 Coefficients[j] = Complex.Exp(2 * Complex.ImaginaryOne * Math.PI * bin / Length);
             }
 
@@ -44,7 +44,7 @@ namespace AEther
             {
                 result += Window[j] * States[j];
             }
-            return result / Buffer.Length;
+            return result / (Buffer.Length * Window[Window.Length / 2]);
         }
 
         public void Process(double newSample)

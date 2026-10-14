@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Windows.Forms;
+using System.Threading;
 
 namespace AEther.WindowsForms
 {
@@ -12,7 +13,7 @@ namespace AEther.WindowsForms
         readonly Stopwatch FrameTimer;
         readonly Stopwatch UpdateTimer;
 
-        TimeSpan Latency;
+        long LatencyTicks;
 
         public StatisticsModule(Form form, double interval = 1)
         {
@@ -20,10 +21,9 @@ namespace AEther.WindowsForms
             Form = form;
             FrameTimer = Stopwatch.StartNew();
             UpdateTimer = Stopwatch.StartNew();
-            Latency = TimeSpan.Zero;
         }
 
-        public void Update()
+        public void Update(long droppedInputCount = 0)
         {
 
             var frameTime = FrameTimer.Elapsed;
@@ -31,20 +31,23 @@ namespace AEther.WindowsForms
 
             if (UpdateInterval < UpdateTimer.Elapsed)
             {
-                Form.Text = $"Latency: {Math.Round(Latency.TotalMilliseconds, 0)} ms, Draw Time: {Math.Round(frameTime.TotalMilliseconds, 0)} ms";
+                var latency = TimeSpan.FromTicks(Interlocked.Exchange(ref LatencyTicks, 0));
+                Form.Text = $"Analysis age max: {Math.Round(latency.TotalMilliseconds, 0)} ms, Frame interval: {Math.Round(frameTime.TotalMilliseconds, 0)} ms, Dropped input: {droppedInputCount}";
                 UpdateTimer.Restart();
-                Latency = TimeSpan.Zero;
             }
 
         }
 
         public void Process(SampleEvent<double> evt)
         {
-            var latency = DateTime.Now - evt.Time;
-            if (Latency < latency)
+            var latency = Math.Max(0, (DateTime.Now - evt.Time).Ticks);
+            long previous;
+            do
             {
-                Latency = latency;
-            }
+                previous = Interlocked.Read(ref LatencyTicks);
+                if (previous >= latency)
+                    return;
+            } while (Interlocked.CompareExchange(ref LatencyTicks, latency, previous) != previous);
         }
 
     }

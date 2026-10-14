@@ -36,7 +36,7 @@ namespace AEther
             var coeff = new Complex[ComplexVector<double>.Count];
             for (int j = 0; j < window.Length; ++j)
             {
-                var bin = M - (window.Length / 2) + 1 + j;
+                var bin = M - (window.Length / 2) + j;
                 coeff[j] = Complex.Exp(2 * Math.PI * Complex.ImaginaryOne * bin / Length);
             }
             var coeffRe = new Vector<double>(coeff.Select(c => c.Real).ToArray());
@@ -54,7 +54,7 @@ namespace AEther
                 var (re, im) = windowed[j];
                 result += new Complex(re, im);
             }
-            return result / Buffer.Length;
+            return result / (Buffer.Length * Window[WindowSize / 2]);
         }
 
         public void Process(double newSample)

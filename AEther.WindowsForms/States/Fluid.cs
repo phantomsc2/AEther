@@ -64,6 +64,8 @@ namespace AEther.WindowsForms
             DivergenceShader.Dispose();
             Project.Dispose();
             Output.Dispose();
+            if (PoissonSolver is IDisposable disposable)
+                disposable.Dispose();
         }
 
         public Texture2D Render()

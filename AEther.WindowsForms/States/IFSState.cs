@@ -71,7 +71,7 @@ namespace AEther.WindowsForms
         public override void Render()
         {
 
-            var t = (float)DateTime.Now.TimeOfDay.TotalSeconds;
+            var t = Graphics.ElapsedSeconds;
 
             var sumWeight = Vector4.Zero;
             foreach (var element in Elements)

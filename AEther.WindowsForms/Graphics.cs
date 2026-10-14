@@ -20,6 +20,10 @@ namespace AEther.WindowsForms
         public readonly ModeDescription NativeMode;
         public readonly IAssetImporter AssetImporter;
         public readonly Dictionary<string, SharpDX.Direct3D11.Buffer> ShaderConstants = new();
+        public float ElapsedSeconds { get; internal set; }
+        public float RhythmLight { get; internal set; }
+        bool IsDisposed;
+        readonly Dictionary<string, (string File, ShaderMacro[] Macros)> ShaderVariants = new();
 
         int IndexCount;
         SharpDX.Direct3D11.Texture2D BackBufferResource;
@@ -30,10 +34,12 @@ namespace AEther.WindowsForms
         readonly SwapChain Chain;
         readonly Model Quad;
         readonly string AssemblyDirectory;
+        readonly string? ShaderDirectory;
         DeviceContext Context => Device.ImmediateContext;
 
-        public Graphics(IntPtr handle)
+        public Graphics(IntPtr handle, string? shaderDirectory = null)
         {
+            ShaderDirectory = shaderDirectory;
 
             var format = Format.R8G8B8A8_UNorm;
             var modeFlags = DisplayModeEnumerationFlags.Scaling;
@@ -95,7 +101,9 @@ namespace AEther.WindowsForms
 
         private void ShaderWatcher_Changed(object sender, FileSystemEventArgs e)
         {
-            OnShaderChange?.Invoke(sender, e.FullPath);
+            var extension = Path.GetExtension(e.FullPath);
+            if (extension == ".fx" || extension == ".fxi")
+                OnShaderChange?.Invoke(sender, e.FullPath);
         }
 
         public bool IsFullscreen
@@ -114,6 +122,8 @@ namespace AEther.WindowsForms
 
         public Shader LoadShader(string key, params ShaderMacro[] macros)
         {
+            var variant = key + string.Join(";", macros.Select(m => m.Name + "=" + m.Definition));
+            ShaderVariants[variant] = (key, macros);
             var bytecode = Shaders.Load(key, macros);
             var shader = new Shader(Device, bytecode);
             foreach (var kvp in ShaderConstants)
@@ -123,8 +133,48 @@ namespace AEther.WindowsForms
             return shader;
         }
 
+        // Compile every active variant before retiring the current working session.
+        public void ValidateShaders()
+        {
+            foreach (var variant in ShaderVariants.Values)
+            {
+                using var bytecode = Shaders.Load(variant.File, variant.Macros);
+            }
+        }
+
+        public void ThrowIfDebugErrors()
+        {
+            if (Debug is null)
+                return;
+            using var messages = Device.QueryInterface<SharpDX.Direct3D11.InfoQueue>();
+            for (long i = 0; i < messages.NumStoredMessagesAllowedByRetrievalFilter; ++i)
+            {
+                var message = messages.GetMessage(i);
+                if (message.Severity == MessageSeverity.Error || message.Severity == MessageSeverity.Corruption)
+                    throw new InvalidOperationException(message.Description);
+            }
+            messages.ClearStoredMessages();
+        }
+
         public Model CreateModel(Mesh mesh)
             => new(Device, mesh);
+
+        public SharpDX.Direct3D11.Texture3D CreateNoiseVolume(int size, int seed)
+        {
+            var values = new float[checked(size * size * size)];
+            var random = new Random(seed);
+            for (var i = 0; i < values.Length; ++i)
+                values[i] = (float)random.NextDouble();
+            using var data = new SharpDX.DataStream(values.Length * sizeof(float), true, true);
+            data.WriteRange(values);
+            return new SharpDX.Direct3D11.Texture3D(Device, new Texture3DDescription
+            {
+                Width = size, Height = size, Depth = size, MipLevels = 1,
+                Format = Format.R32_Float, BindFlags = BindFlags.ShaderResource,
+                CpuAccessFlags = CpuAccessFlags.None, Usage = ResourceUsage.Immutable,
+                OptionFlags = ResourceOptionFlags.None,
+            }, new[] { new SharpDX.DataBox(data.DataPointer, size * sizeof(float), size * size * sizeof(float)) });
+        }
 
         public void SetMode(ModeDescription targetMode)
         {
@@ -136,7 +186,6 @@ namespace AEther.WindowsForms
 
             if (!Chain.Description.ModeDescription.Equals(mode))
             {
-                BackBufferResource.Dispose();
                 BackBuffer.Dispose();
                 Context.ClearState();
                 Context.Flush();
@@ -151,16 +200,21 @@ namespace AEther.WindowsForms
 
         public void Dispose()
         {
-
+            if (IsDisposed)
+                return;
+            IsDisposed = true;
+            ShaderWatcher.EnableRaisingEvents = false;
+            ShaderWatcher.Changed -= ShaderWatcher_Changed;
+            ShaderWatcher.Dispose();
+            Context.ClearState();
+            Context.Flush();
+            BackBuffer.Dispose();
             Shaders.Dispose();
             Quad.Dispose();
             Chain.Dispose();
-            Context.ClearState();
-            Context.Flush();
             Context.Dispose();
             Device.Dispose();
 
-            Debug?.ReportLiveDeviceObjects(ReportingLevel.Detail);
             Debug?.Dispose();
 
         }
@@ -249,10 +303,12 @@ namespace AEther.WindowsForms
             //shaderDir = Directory.GetParent(shaderDir)?.FullName ?? string.Empty;
 #endif
             var shaderPath = Path.Join(shaderDir, "data", "fx");
+            shaderPath = ShaderDirectory ?? shaderPath;
             var shader = new ShaderManager(this, shaderPath);
             var watcher = new FileSystemWatcher(shaderPath)
             {
                 NotifyFilter = NotifyFilters.LastWrite,
+                IncludeSubdirectories = true,
                 EnableRaisingEvents = true,
             };
             return (shader, watcher);
@@ -272,7 +328,41 @@ namespace AEther.WindowsForms
 
         public void Present()
         {
-            Chain.Present(0, PresentFlags.None);
+            Chain.Present(1, PresentFlags.None);
+        }
+
+        /// <summary>Read back the rendered RGBA frame for visual regression review.</summary>
+        public void SaveFrame(string path)
+        {
+            var description = BackBufferResource.Description;
+            description.BindFlags = BindFlags.None;
+            description.CpuAccessFlags = CpuAccessFlags.Read;
+            description.OptionFlags = ResourceOptionFlags.None;
+            description.Usage = ResourceUsage.Staging;
+            using var staging = new SharpDX.Direct3D11.Texture2D(Device, description);
+            Context.CopyResource(BackBufferResource, staging);
+            var mapped = Context.MapSubresource(staging, 0, MapMode.Read, SharpDX.Direct3D11.MapFlags.None);
+            try
+            {
+                using var bitmap = new System.Drawing.Bitmap(description.Width, description.Height,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var locked = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                    System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+                try
+                {
+                    var row = new byte[description.Width * 4];
+                    for (var y = 0; y < description.Height; ++y)
+                    {
+                        System.Runtime.InteropServices.Marshal.Copy(mapped.DataPointer + y * mapped.RowPitch, row, 0, row.Length);
+                        for (var x = 0; x < row.Length; x += 4)
+                            (row[x], row[x + 2]) = (row[x + 2], row[x]);
+                        System.Runtime.InteropServices.Marshal.Copy(row, 0, locked.Scan0 + y * locked.Stride, row.Length);
+                    }
+                }
+                finally { bitmap.UnlockBits(locked); }
+                bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            finally { Context.UnmapSubresource(staging, 0); }
         }
 
         RenderTargetView[] RTViews = Array.Empty<RenderTargetView>();

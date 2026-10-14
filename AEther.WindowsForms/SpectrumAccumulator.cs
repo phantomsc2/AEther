@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 namespace AEther.WindowsForms
 {
 
-    public abstract class SpectrumAccumulator
+    public abstract class SpectrumAccumulator : IDisposable
     {
 
         public event EventHandler? OnUpdate;

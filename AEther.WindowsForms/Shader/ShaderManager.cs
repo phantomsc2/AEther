@@ -61,16 +61,7 @@ namespace AEther.WindowsForms
             }
 
 
-#if DEBUG
-            var comments = "Macros: " + string.Join(", ", macros?.Select(m => $"({m.Name},{m.Definition})") ?? Enumerable.Empty<string>());
-            var disassembly = compiled.Bytecode.Disassemble(DisassemblyFlags.EnableInstructionNumbering, comments);
-            var disassemblyFile = new FileInfo(Path.Join(BasePath, "disassembly", key));
-            Task.Run(() =>
-            {
-                using var disassemblyWriter = File.CreateText(disassemblyFile.FullName);
-                disassemblyWriter.Write(disassembly);
-            });
-#endif
+            // Keep compilation free of file writes: the watcher must not reload its own output.
 
             return compiled.Bytecode;
 

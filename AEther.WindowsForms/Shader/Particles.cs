@@ -44,6 +44,7 @@ namespace AEther.WindowsForms
             Buffer.Dispose();
             ShaderSimulate.Dispose();
             ShaderDraw.Dispose();
+            Model.Dispose();
         }
     }
 }

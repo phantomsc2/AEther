@@ -69,17 +69,8 @@ namespace AEther.WindowsForms
             where T : struct
         {
 
-            var context = Buffer.Device.ImmediateContext;
-
-            context.MapSubresource(
-                Buffer,
-                MapMode.WriteDiscard,
-                SharpDX.Direct3D11.MapFlags.None,
-                out DataStream stream);
-
-            stream.WriteRange(values.Array, values.Offset, values.Count);
-
-            context.UnmapSubresource(Buffer, 0);
+            using var mapping = new ContextMapping(Buffer);
+            mapping.WriteRange(values.Array!, values.Offset, values.Count);
 
         }
 

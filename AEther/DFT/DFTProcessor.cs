@@ -32,9 +32,8 @@ namespace AEther
 
             //Console.WriteLine(Vector<float>.Count);
 
-            var cosines = useSIMD
-                ? WindowCandidates.Last(w => 2 * w.Length - 1 <= Vector<double>.Count)
-                : HannWindow;
+            // Window choice is a signal-processing decision, independent of CPU vector width.
+            var cosines = HannWindow;
 
             //cosines = RectWindow;
 
@@ -58,7 +57,7 @@ namespace AEther
                     .Select(f => new DFTFilter(f, domain.Resolution, sampleRate))
                     .ToArray();
             }
-            else if (useSIMD)
+            else if (useSIMD && window.Length <= Vector<double>.Count)
             {
                 Filters = domain
                     .Select(f => new WindowedDFTFilterSIMD(f, domain.Resolution, sampleRate, window))
