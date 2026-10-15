@@ -1,5 +1,4 @@
-﻿using AEther.DMX;
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -12,12 +11,11 @@ namespace AEther.WindowsForms
         public readonly StatisticsModule Statistics;
         public readonly SampleSource Source;
         public readonly Analyzer Analyzer;
-        public readonly DMXController DMX;
         public readonly GraphicsModule GraphicsModule;
         Task? StopTask;
         bool IsDisposed;
 
-        public Session(MainForm form, SampleSource source, ListBox states, AnalyzerOptions options, DMXOptions dmxOptions)
+        public Session(MainForm form, SampleSource source, ListBox states, AnalyzerOptions options)
         {
             Form = form;
             Statistics = new StatisticsModule(form);
@@ -27,14 +25,12 @@ namespace AEther.WindowsForms
 
             try
             {
-                DMX = new DMXController(options.Domain, dmxOptions);
                 var analysisRate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
                 var historyCount = (int)Math.Clamp(Math.Ceiling(analysisRate * options.HistorySeconds), 2, 16384);
                 GraphicsModule = new GraphicsModule(form.Graphics, states, Source.Format.ChannelCount, options.Domain.Length, historyCount, analysisRate, options.HistoryPresentationDelayMilliseconds / 1000, options);
             }
             catch
             {
-                DMX?.Dispose();
                 Source.Dispose();
                 Analyzer.Stop();
                 throw;
@@ -59,7 +55,6 @@ namespace AEther.WindowsForms
         private void Analyzer_SamplesAnalyzed(object? sender, SampleEvent<double> evt)
         {
             Statistics.Process(evt);
-            using (Analyzer.Profile.Measure("subscriber.dmx_ms")) DMX.Process(evt);
             using (Analyzer.Profile.Measure("subscriber.graphics_ms")) GraphicsModule.Process(evt);
         }
 
@@ -102,7 +97,6 @@ namespace AEther.WindowsForms
             GC.SuppressFinalize(this);
             Source.Dispose();
             GraphicsModule.Dispose();
-            DMX.Dispose();
         }
 
     }

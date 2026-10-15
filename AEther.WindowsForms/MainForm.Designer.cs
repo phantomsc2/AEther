@@ -1,4 +1,4 @@
-﻿namespace AEther.WindowsForms
+namespace AEther.WindowsForms
 {
     partial class MainForm
     { 
@@ -35,13 +35,10 @@
             this.States = new System.Windows.Forms.ListBox();
             this.AnalyzerOptionsGroup = new System.Windows.Forms.GroupBox();
             this.AnalyzerOptions = new System.Windows.Forms.PropertyGrid();
-            this.DMXOptionsGroup = new System.Windows.Forms.GroupBox();
-            this.DMXOptions = new System.Windows.Forms.PropertyGrid();
             this.Panel.SuspendLayout();
             this.InputGroup.SuspendLayout();
             this.StatesGroup.SuspendLayout();
             this.AnalyzerOptionsGroup.SuspendLayout();
-            this.DMXOptionsGroup.SuspendLayout();
             this.SuspendLayout();
             // 
             // Panel
@@ -51,15 +48,13 @@
             this.Panel.Controls.Add(this.InputGroup, 0, 0);
             this.Panel.Controls.Add(this.StatesGroup, 0, 1);
             this.Panel.Controls.Add(this.AnalyzerOptionsGroup, 0, 2);
-            this.Panel.Controls.Add(this.DMXOptionsGroup, 0, 3);
             this.Panel.Dock = System.Windows.Forms.DockStyle.Left;
             this.Panel.Location = new System.Drawing.Point(0, 0);
             this.Panel.Name = "Panel";
-            this.Panel.RowCount = 4;
+            this.Panel.RowCount = 3;
             this.Panel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 60F));
             this.Panel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 120F));
             this.Panel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.Panel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 150F));
             this.Panel.Size = new System.Drawing.Size(220, 681);
             this.Panel.TabIndex = 0;
             this.Panel.Visible = false;
@@ -113,7 +108,7 @@
             this.AnalyzerOptionsGroup.Dock = System.Windows.Forms.DockStyle.Fill;
             this.AnalyzerOptionsGroup.Location = new System.Drawing.Point(3, 183);
             this.AnalyzerOptionsGroup.Name = "AnalyzerOptionsGroup";
-            this.AnalyzerOptionsGroup.Size = new System.Drawing.Size(214, 345);
+            this.AnalyzerOptionsGroup.Size = new System.Drawing.Size(214, 495);
             this.AnalyzerOptionsGroup.TabIndex = 2;
             this.AnalyzerOptionsGroup.TabStop = false;
             this.AnalyzerOptionsGroup.Text = "Analyzer";
@@ -124,32 +119,10 @@
             this.AnalyzerOptions.HelpVisible = false;
             this.AnalyzerOptions.Location = new System.Drawing.Point(3, 19);
             this.AnalyzerOptions.Name = "AnalyzerOptions";
-            this.AnalyzerOptions.Size = new System.Drawing.Size(208, 323);
+            this.AnalyzerOptions.Size = new System.Drawing.Size(208, 473);
             this.AnalyzerOptions.TabIndex = 1;
             this.AnalyzerOptions.ToolbarVisible = false;
             this.AnalyzerOptions.PropertyValueChanged += new System.Windows.Forms.PropertyValueChangedEventHandler(this.Options_PropertyValueChanged);
-            // 
-            // DMXOptionsGroup
-            // 
-            this.DMXOptionsGroup.Controls.Add(this.DMXOptions);
-            this.DMXOptionsGroup.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.DMXOptionsGroup.Location = new System.Drawing.Point(3, 534);
-            this.DMXOptionsGroup.Name = "DMXOptionsGroup";
-            this.DMXOptionsGroup.Size = new System.Drawing.Size(214, 144);
-            this.DMXOptionsGroup.TabIndex = 3;
-            this.DMXOptionsGroup.TabStop = false;
-            this.DMXOptionsGroup.Text = "DMX";
-            // 
-            // DMXOptions
-            // 
-            this.DMXOptions.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.DMXOptions.HelpVisible = false;
-            this.DMXOptions.Location = new System.Drawing.Point(3, 19);
-            this.DMXOptions.Name = "DMXOptions";
-            this.DMXOptions.Size = new System.Drawing.Size(208, 122);
-            this.DMXOptions.TabIndex = 0;
-            this.DMXOptions.ToolbarVisible = false;
-            this.DMXOptions.PropertyValueChanged += new System.Windows.Forms.PropertyValueChangedEventHandler(this.DMXOptions_PropertyValueChanged);
             // 
             // MainForm
             // 
@@ -166,7 +139,6 @@
             this.InputGroup.ResumeLayout(false);
             this.StatesGroup.ResumeLayout(false);
             this.AnalyzerOptionsGroup.ResumeLayout(false);
-            this.DMXOptionsGroup.ResumeLayout(false);
             this.ResumeLayout(false);
 
         }
@@ -180,7 +152,5 @@
         private System.Windows.Forms.ListBox States;
         private System.Windows.Forms.GroupBox AnalyzerOptionsGroup;
         private System.Windows.Forms.PropertyGrid AnalyzerOptions;
-        private System.Windows.Forms.GroupBox DMXOptionsGroup;
-        private System.Windows.Forms.PropertyGrid DMXOptions;
     }
 }

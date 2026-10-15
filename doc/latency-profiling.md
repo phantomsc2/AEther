@@ -10,7 +10,7 @@ Interpret the profile:
 - `capture.queue_ms`: callback entry to worker dequeue, including copying and scheduling. Growing values suggest backlog or worker starvation.
 - `analysis.total_ms`: whole batch CPU/wait cost including subscribers. At 48 kHz and resolution 256 the batch budget is about 3.90 ms; sustained costs above this cannot keep up.
 - Decode, waveform features, DFT and split stages explain analysis cost. DFT/split records are per channel, so account for both stereo channels. Waveform features are currently calculated even though the visual session uses separated spectral controls.
-- `analysis.subscribers_ms`: synchronous downstream processing. DMX and graphics are recorded separately. Graphics lock wait reveals contention with texture uploads on the render thread.
+- `analysis.subscribers_ms`: synchronous downstream processing, including graphics. Graphics lock wait reveals contention with texture uploads on the render thread.
 - Frame audio-state/upload, draw submission and Present wait explain render-side CPU blocking. Draw submission is not GPU execution; Present wait can include pacing and GPU backlog. These measurements do not establish scanout latency.
 
 Stages are nested: do not sum all summary rows. Warmup, pauses and scene changes can affect maxima. Compare median and p95 as well as max.
@@ -33,8 +33,8 @@ Loopback now derives from WasapiCapture, retains its loopback and conversion fla
 
 The subsequent capture-only probe tested 1, 2, 5 and 10 ms requests, each for three seconds while audio played. All delivered 10 ms packets and approximately 10 ms callback intervals (p95 intervals 10.086–10.111 ms). The minimal metadata handler took 2.4–3.2 microseconds on average; this excludes library copying and analysis costs. The default request is now 1 ms, with event synchronization; on this endpoint the engine grants the same 10 ms cadence without increasing callback overhead.
 
-The existing CSCore path, run in a separate process, delivered callbacks at 15.645 ms median / 16.209 ms p95. This is a comparison of this project's current configurations, not a universal library ranking. Both use WASAPI. CSCore and NAudio COM wrapper types conflict when both are activated in the same probe process, so separate runs are required.
+The former CSCore path, run in a separate process, delivered callbacks at 15.645 ms median / 16.209 ms p95. This historical comparison concerns the configurations measured then, not a universal library ranking. Both used WASAPI. The CSCore adapter has since been removed.
 
-Reproduce with `dotnet run --project tools/AEther.CaptureProbe -- <output.csv>` and a separate `dotnet run --project tools/AEther.CaptureProbe -- --cscore <output.csv>`. Only packet size/timing metadata is saved. Keep music playing throughout each sweep.
+Measure the current NAudio adapter with `dotnet run --project tools/AEther.CaptureProbe -- <output.csv>`. Only packet size/timing metadata is saved. Keep music playing throughout each sweep.
 
 True sub-10-ms shared audio periods require supported engine/driver periods and a different initialization path. [IAudioClient3 period initialization](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclient3-initializesharedaudiostream) supports specific period constraints and lists only EVENTCALLBACK as a supported stream flag. [NAudio's newer capture documentation](https://github.com/naudio/NAudio/blob/main/Docs/WasapiRecorder.md) explicitly excludes loopback from its IAudioClient3 low-latency mode. Merely requesting a smaller legacy loopback buffer cannot establish a 1 ms engine cadence. A future exploration could use a separate compatible render client to lower the shared engine period, with measurements; that affects the shared endpoint and is outside this buffer-setting change.

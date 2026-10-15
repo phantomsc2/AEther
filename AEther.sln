@@ -9,10 +9,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.WindowsForms", "AEth
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.NAudio", "AEther.NAudio\AEther.NAudio.csproj", "{D67E66B6-493A-478A-B116-0B5A30C16A90}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.CLI", "AEther.CLI\AEther.CLI.csproj", "{1D7C2841-9A2A-470A-B9CE-2F351BC38483}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.Bass", "AEther.Bass\AEther.Bass.csproj", "{454D2A8B-27C4-4DF8-A655-38914BE2B1DD}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.Benchmarks", "AEther.Benchmarks\AEther.Benchmarks.csproj", "{4BE668EA-2163-40A4-BABC-18DE7EDFF4A4}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.Tests", "AEther.Tests\AEther.Tests.csproj", "{F7E3FE8C-8B2F-45A4-8542-1EFA073FEE30}"
@@ -22,10 +18,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		TestFiles\test_input.wav = TestFiles\test_input.wav
 		TestFiles\test_sine.wav = TestFiles\test_sine.wav
 	EndProjectSection
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.CSCore", "AEther.CSCore\AEther.CSCore.csproj", "{284C9EF5-2AA8-4A58-9202-A8BD151FCCAF}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AEther.DMX", "AEther.DMX\AEther.DMX.csproj", "{4A1CD670-17EA-4C4B-9805-7BCBA8C7D015}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ideas", "ideas", "{15DC4DFC-AA42-4EA1-9F09-348C7B206A28}"
 EndProject
@@ -52,14 +44,6 @@ Global
 		{D67E66B6-493A-478A-B116-0B5A30C16A90}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D67E66B6-493A-478A-B116-0B5A30C16A90}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D67E66B6-493A-478A-B116-0B5A30C16A90}.Release|Any CPU.Build.0 = Release|Any CPU
-		{1D7C2841-9A2A-470A-B9CE-2F351BC38483}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{1D7C2841-9A2A-470A-B9CE-2F351BC38483}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{1D7C2841-9A2A-470A-B9CE-2F351BC38483}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{1D7C2841-9A2A-470A-B9CE-2F351BC38483}.Release|Any CPU.Build.0 = Release|Any CPU
-		{454D2A8B-27C4-4DF8-A655-38914BE2B1DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{454D2A8B-27C4-4DF8-A655-38914BE2B1DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{454D2A8B-27C4-4DF8-A655-38914BE2B1DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{454D2A8B-27C4-4DF8-A655-38914BE2B1DD}.Release|Any CPU.Build.0 = Release|Any CPU
 		{4BE668EA-2163-40A4-BABC-18DE7EDFF4A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{4BE668EA-2163-40A4-BABC-18DE7EDFF4A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4BE668EA-2163-40A4-BABC-18DE7EDFF4A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -68,14 +52,6 @@ Global
 		{F7E3FE8C-8B2F-45A4-8542-1EFA073FEE30}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F7E3FE8C-8B2F-45A4-8542-1EFA073FEE30}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F7E3FE8C-8B2F-45A4-8542-1EFA073FEE30}.Release|Any CPU.Build.0 = Release|Any CPU
-		{284C9EF5-2AA8-4A58-9202-A8BD151FCCAF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{284C9EF5-2AA8-4A58-9202-A8BD151FCCAF}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{284C9EF5-2AA8-4A58-9202-A8BD151FCCAF}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{284C9EF5-2AA8-4A58-9202-A8BD151FCCAF}.Release|Any CPU.Build.0 = Release|Any CPU
-		{4A1CD670-17EA-4C4B-9805-7BCBA8C7D015}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{4A1CD670-17EA-4C4B-9805-7BCBA8C7D015}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{4A1CD670-17EA-4C4B-9805-7BCBA8C7D015}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{4A1CD670-17EA-4C4B-9805-7BCBA8C7D015}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

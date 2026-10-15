@@ -162,6 +162,4 @@ stability, exact response integration at different frame rates, camera continuit
 - The original fluid and feedback simulations still need stability and frame-rate audits;
   the analytic CPU spring is frame-rate independent, not a claim about every existing shader.
 - Migrate SharpDX/Effects to modern bindings and explicit shader pipelines, one verified scene at a time.
-- Consolidate legacy audio backends. CSCore still produces compatibility warnings.
-- Audit experimental DMX protocol/timing, fixtures and shutdown independently before live use.
 - Test failed device initialization, device changes, resize/fullscreen, and full DJ-set duration.

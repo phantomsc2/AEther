@@ -117,11 +117,10 @@ namespace AEther.Tests
             analyzer.SamplesAnalyzed += (_, _) => throw new InvalidOperationException("subscriber failed");
             analyzer.PostSamples(Audio(160));
             analyzer.Stop();
-            Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
                 await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5)));
             analyzer.PostSamples(Audio(80));
             Assert.That(analyzer.DroppedInputCount, Is.EqualTo(1));
-            await Task.CompletedTask;
         }
 
         [Test]

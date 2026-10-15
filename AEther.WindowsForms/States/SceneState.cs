@@ -78,7 +78,7 @@ namespace AEther.WindowsForms
 
         const int ShadowBufferSize = 1 << 10;
         const int AirlightSize = 1 << 8;
-        const bool UseInstancing = true;
+        static readonly bool UseInstancing = true;
 
         readonly Shader MandelboxShader;
         readonly Shader PresentShader;

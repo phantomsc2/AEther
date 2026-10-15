@@ -1,5 +1,4 @@
-using AEther.DMX;
-using AEther.NAudio;
+﻿using AEther.NAudio;
 using System;
 using System.Buffers;
 using System.Linq;
@@ -33,7 +32,6 @@ namespace AEther.WindowsForms
             Input.Items.AddRange(Recorder.GetAvailableDeviceNames().ToArray());
             Input.SelectedIndex = 0;
             AnalyzerOptions.SelectedObject = new AnalyzerOptions();
-            DMXOptions.SelectedObject = new DMXOptions();
             Ready = true;
         }
 
@@ -66,10 +64,6 @@ namespace AEther.WindowsForms
             {
                 throw new InvalidCastException();
             }
-            if (DMXOptions.SelectedObject is not DMXOptions dmxOptions)
-            {
-                throw new InvalidCastException();
-            }
             SampleSource source = Input.SelectedItem?.ToString() switch
             {
                 LoopbackEntry => new Loopback(),
@@ -79,7 +73,7 @@ namespace AEther.WindowsForms
             Session? session = null;
             try
             {
-                session = new(this, source, States, options, dmxOptions);
+                session = new(this, source, States, options);
                 session.Start();
                 Session = session;
             }
@@ -261,11 +255,6 @@ namespace AEther.WindowsForms
         }
 
         private async void Input_SelectedValueChanged(object? sender, EventArgs e)
-        {
-            await ResetAsync();
-        }
-
-        private async void DMXOptions_PropertyValueChanged(object s, PropertyValueChangedEventArgs e)
         {
             await ResetAsync();
         }

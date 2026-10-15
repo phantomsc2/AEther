@@ -9,14 +9,12 @@ using AEther;
 
 // Captures timing/size metadata only; audio samples are never saved.
 var lines = new List<string> { "mode,count,packet_median_ms,packet_p95_ms,interval_median_ms,interval_p95_ms,callback_mean_us" };
-// Run CSCore in a separate process: both wrappers' COM types collide if
-// activated in one process on this runtime.
-foreach (var request in args.Contains("--cscore") ? new[] { 0 } : new[] { 1, 2, 5, 10 })
+foreach (var request in new[] { 1, 2, 5, 10 })
 {
-    var mode = request == 0 ? "CSCore-default" : $"NAudio-request-{request}ms";
+    var mode = $"NAudio-request-{request}ms";
     try
     {
-        SampleSource source = request == 0 ? new AEther.CSCore.Loopback() : new AEther.NAudio.Loopback(request);
+        SampleSource source = new AEther.NAudio.Loopback(request);
         var packets = new List<double>(); var intervals = new List<double>();
         long previous = 0; double callbackMicroseconds = 0;
         source.DataAvailable += (_, data) =>

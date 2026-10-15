@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk" ToolsVersion="Current">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows7.0</TargetFramework>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <FileUpgradeFlags>40</FileUpgradeFlags>
@@ -236,8 +236,6 @@
     <PackageReference Include="SharpDX.Mathematics" Version="4.2.0" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\AEther.CSCore\AEther.CSCore.csproj" />
-    <ProjectReference Include="..\AEther.DMX\AEther.DMX.csproj" />
     <ProjectReference Include="..\AEther.NAudio\AEther.NAudio.csproj" />
     <ProjectReference Include="..\AEther\AEther.csproj" />
   </ItemGroup>
