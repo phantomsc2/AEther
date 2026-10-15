@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Threading.Channels;
+using System.Numerics;
 
 namespace AEther.Vortice;
 
@@ -25,6 +26,9 @@ public sealed class AudioHistory
     public double Seconds { get; }
     public float[][] History { get; }
     public float[][] Spectrum { get; }
+    /// <summary>Bounded tone/transient/noise envelopes, advanced in audio-row time.</summary>
+    public Vector3 Components { get; private set; }
+    public float FractalEnergy { get; private set; }
     public double MusicalTime { get; private set; }
     public double MusicalVelocity { get; private set; }
     // Depth travel follows the same smoothed drive as motion. The renderer
@@ -119,6 +123,7 @@ public sealed class AudioHistory
             for (var i = 0; i < peak.Length; i++) peak[i] = Math.Max(peak[i], packet.Samples[i]);
             var power = 0.0;
             var transientPower = 0.0;
+            double tonePower = 0, noisePower = 0;
             for (var i = 0; i < packet.Samples.Length; i += 4)
             {
                 // Alpha is the original linear magnitude; RGB have independent class gains.
@@ -126,9 +131,21 @@ public sealed class AudioHistory
                 power += magnitude * magnitude;
                 var transient = (double)packet.Samples[i + 1];
                 transientPower += transient * transient;
+                tonePower += (double)packet.Samples[i] * packet.Samples[i];
+                noisePower += (double)packet.Samples[i + 2] * packet.Samples[i + 2];
                 Flash = Math.Max(Flash, packet.Samples[i + 1]);
             }
             Energy = (float)Math.Sqrt(power / (2 * Bands));
+            static float Bounded(double power, int count)
+            {
+                double rms = Math.Sqrt(power / count);
+                return (float)(rms / (.2 + rms));
+            }
+            var demand = new Vector3(Bounded(tonePower, 2 * Bands), Bounded(transientPower, 2 * Bands), Bounded(noisePower, 2 * Bands));
+            Components += (demand - Components) * new Vector3((float)(1 - Math.Exp(-1 / (.06 * rate))),
+                (float)(1 - Math.Exp(-1 / (.12 * rate))), (float)(1 - Math.Exp(-1 / (.15 * rate))));
+            var energyDemand = Energy / (.06f + Energy);
+            FractalEnergy += (energyDemand - FractalEnergy) * (float)(1 - Math.Exp(-1 / (.12 * rate)));
             // Accumulate drive by sample duration so frame rate does not change
             // how much force a passage supplies to the slice's momentum.
             movementImpulse += (3 * Energy + 6 * power / (2 * Bands)
@@ -171,6 +188,8 @@ public sealed class AudioHistory
         {
             foreach (var spectrum in Spectrum) Array.Clear(spectrum);
             Energy = 0;
+            Components *= (float)Math.Exp(-dt / .35);
+            FractalEnergy *= (float)Math.Exp(-dt / .35);
         }
     }
 }

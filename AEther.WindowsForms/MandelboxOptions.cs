@@ -5,14 +5,35 @@ namespace AEther.WindowsForms;
 
 public sealed class MandelboxOptions
 {
-    AntialiasingQuality antialiasing = AntialiasingQuality.Medium;
+    AntialiasingQuality antialiasing = AntialiasingQuality.None;
     int maximumIterations = 10;
     float movementSpeed = 3;
     float scale = -1.5f;
     float bilateralStrength = 1, bilateralFrequencySigma = 1, bilateralTimeSigma = 1, bilateralRangeSigma = .1f;
     bool filteredHistogramView;
+    float fluidFlow = 1, fluidHalfLife = 1.4f, fluidDiffusion = .001f, fluidNoise = 1, fluidCurl = .45f;
 
     public event EventHandler? Changed;
+
+    [DisplayName("Fluid outward flow"), DefaultValue(1f)]
+    [Description("MandelFluid expansion speed, 0 to 3. Tones and mist travel from the center through the rhythmic structure.")]
+    public float FluidFlow { get => fluidFlow; set => SetFilterValue(ref fluidFlow, value, 0, 3); }
+
+    [DisplayName("Fluid half-life (seconds)"), DefaultValue(1.4f)]
+    [Description("MandelFluid pigment lifetime, 0.1 to 10 seconds. Longer values leave lingering ambient plumes.")]
+    public float FluidHalfLife { get => fluidHalfLife; set => SetFilterValue(ref fluidHalfLife, value, .1f, 10); }
+
+    [DisplayName("Fluid diffusion"), DefaultValue(.001f)]
+    [Description("Maximum noise-driven MandelFluid mixing, 0 to 0.01. Pure tones remain crystalline; noise increases diffusion toward this level.")]
+    public float FluidDiffusion { get => fluidDiffusion; set => SetFilterValue(ref fluidDiffusion, value, 0, .01f); }
+
+    [DisplayName("Fluid noise"), DefaultValue(1f)]
+    [Description("MandelFluid noise-driven mist and turbulence, 0 to 3. Noise and distortion drive overall movement and mixing.")]
+    public float FluidNoise { get => fluidNoise; set => SetFilterValue(ref fluidNoise, value, 0, 3); }
+
+    [DisplayName("Fluid curl"), DefaultValue(.45f)]
+    [Description("MandelFluid vorticity confinement, 0 to 2. Restores small curls as the fluid spreads.")]
+    public float FluidCurl { get => fluidCurl; set => SetFilterValue(ref fluidCurl, value, 0, 2); }
 
     [DisplayName("Filtered histogram view"), DefaultValue(false)]
     [Description("Show bilateral-filtered STN amplitudes in the histogram analyzer view. False shows raw history. The combined magnitude view remains raw.")]

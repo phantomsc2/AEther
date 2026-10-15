@@ -39,7 +39,7 @@ public sealed class SettingsForm : Form
         layout.Controls.Add(scene, 0, 3);
         layout.Controls.Add(new Label { Text = "Display", AutoSize = true }, 0, 4);
         layout.Controls.Add(display, 0, 5);
-        layout.Controls.Add(new Label { Text = "Mandelbox", AutoSize = true }, 0, 6);
+        layout.Controls.Add(new Label { Text = "Mandelbox / MandelFluid", AutoSize = true }, 0, 6);
         layout.Controls.Add(mandelboxProperties, 0, 7);
         layout.Controls.Add(properties, 0, 8); layout.Controls.Add(timing, 0, 9); layout.Controls.Add(status, 0, 10);
         SetTiming(null);
@@ -86,6 +86,7 @@ public sealed class SettingsForm : Form
             + $"Analysis CPU: {Stat("analysis.total_ms")}\n"
             + $"Draw CPU: {Stat("render.draw_cpu_ms")}\n"
             + $"Present wait: {Stat("render.present_wait_ms")} | {fps}\n"
+            + $"Output: {session.Renderer.OutputDescription}\n"
             + $"History delay: {audio.PresentationDelay * 1000:F0} ms | Drops: {analyzer.DroppedInputCount} input, {audio.DroppedRows} visual\n"
             + "Capture to draw excludes device buffering and display scanout.";
     }

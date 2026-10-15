@@ -123,7 +123,11 @@ float3 Shade(float2 uv, float sampleWidth)
     ray = lerp(ray, currentRay, center);
     float dust = smoothstep(.28, .85, age);
     float trail = exp(-2.3 * age);
+#ifdef MANDEL_FLUID
+    float palettePhase = .11 * MovementTime;
+#else
     float palettePhase = .11 * S;
+#endif
     float3 rayPalette = .5 + .5 * cos(6.2831853 * (tonalFrequency * .9 + palettePhase + float3(.04, .38, .62)));
     float3 hullPalette = .5 + .5 * cos(6.2831853 * (frequency * 1.3 - palettePhase + float3(.04, .38, .62)));
     // Let real fold depth carve the beams, fading unresolved relief toward its
@@ -144,11 +148,38 @@ float3 Shade(float2 uv, float sampleWidth)
     float4 dispersed = .5 * (History(frequency - .07 * dust, age, right)
                             + History(frequency + .07 * dust, age, right));
     float broad = 2.0 * max(0, dispersed.g) * dust * trail;
+#ifdef MANDEL_FLUID
+    // Energy reveals the underlying field throughout a passage. The material
+    // supplies body; notes retain a directional ray near the source, then spread.
+    float3 drives = saturate(float3(PoseX, PoseY, PoseZ)); // tone, transient, noise
+    float together = pow(max(0, drives.x * drives.y * drives.z), 1.0 / 3.0);
+    float interaction = .35 + .65 * together;
+    float energy = saturate(VisualBreath);
+    float3 field = hullPalette * energy * (.07 + .52 * tonalRelief);
+    float plumeBlend = smoothstep(.08, .85, radius);
+    float3 body = FluidLight(uv, tonalRelief) * lerp(.4, 1.0, plumeBlend);
+    float3 beams = rayPalette * sustain * lerp(.8, .24, plumeBlend)
+        + sustainedHullPalette * sustainedHull * .25;
+    float noiseAir = 1 - exp(-2 * max(0, hull.b));
+    float3 light = field + (body + beams) * interaction;
+    // Recorded onsets remain crisp and ordered by history age. They illuminate
+    // and expose the field rather than accumulating as long-lived pigment.
+    float front = 1 - exp(-4 * max(0, hull.g) * trail);
+    light *= 1 + front * (2.5 + 2 * together) + .18 * drives.z * noiseAir;
+    light += hullPalette * attack * (1 - .7 * dust) * (.65 + .35 * together)
+        + float3(.36, .53, .67) * broad * .5;
+    float impact = 1 - exp(-3 * max(0, VisualFlash));
+    light *= 1 + 1.2 * impact;
+    float coreFlash = (1 - exp(-3 * max(0, currentHull.g))) * exp(-7 * radius);
+    light += float3(.6, .78, 1) * coreFlash * 1.5;
+#else
     float3 light = rayPalette * sustain
         + sustainedHullPalette * sustainedHull
         + hullPalette * attack * (1 - .7 * dust)
         + float3(.36, .53, .67) * broad;
     light += hullPalette * .2 * max(0, hull.b) * trail;
+#endif
+#ifndef MANDEL_FLUID
     // Bound the exposure response so a loud hit retains contour contrast.
     float impact = 1 - exp(-3 * VisualFlash);
     light *= 1 + 1.2 * impact;
@@ -156,6 +187,7 @@ float3 Shade(float2 uv, float sampleWidth)
     // subsequently propagates through the history field without repeated triggers.
     float coreFlash = (1 - exp(-3 * max(0, currentHull.g))) * exp(-7 * radius);
     light += float3(.6, .78, 1) * coreFlash * 1.5;
+#endif
     float vignette = 1 - .38 * smoothstep(.25, 2.5, length(screen));
     float3 color = 1 - exp(-light * vignette);
     return saturate(color);

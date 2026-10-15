@@ -110,6 +110,11 @@ public sealed class MainForm : Form
         session.Renderer.BilateralTimeSigma = settings.Mandelbox.BilateralTimeSigma;
         session.Renderer.BilateralRangeSigma = settings.Mandelbox.BilateralRangeSigma;
         session.Renderer.FilteredHistogramView = settings.Mandelbox.FilteredHistogramView;
+        session.Renderer.FluidFlow = settings.Mandelbox.FluidFlow;
+        session.Renderer.FluidHalfLife = settings.Mandelbox.FluidHalfLife;
+        session.Renderer.FluidDiffusion = settings.Mandelbox.FluidDiffusion;
+        session.Renderer.FluidNoise = settings.Mandelbox.FluidNoise;
+        session.Renderer.FluidCurl = settings.Mandelbox.FluidCurl;
     }
 
     void ShaderChanged(object sender, FileSystemEventArgs e)

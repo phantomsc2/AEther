@@ -7,6 +7,30 @@ namespace AEther.Tests;
 public class AudioHistoryTests
 {
     [Test]
+    public void ComponentEnvelopesDependOnAudioRowsRatherThanRenderBatching()
+    {
+        var batched = new AudioHistory(1, 100);
+        var individual = new AudioHistory(1, 100);
+        for (int row = 0; row < 12; row++)
+        {
+            var input = new SampleEvent<double>(new[] { .5, row % 2 == 0 ? .1 : .3, .2, .5 }, 4, DateTime.Now)
+                { AnalysisRow = row };
+            batched.Post(input, 1);
+            individual.Post(input, 1);
+            individual.Advance(.01);
+        }
+        batched.Advance(.12);
+        Assert.That(batched.Components, Is.EqualTo(individual.Components));
+        Assert.That(batched.FractalEnergy, Is.EqualTo(individual.FractalEnergy));
+        Assert.That(batched.Components.X, Is.InRange(0f, 1f));
+        Assert.That(batched.Components.Y, Is.InRange(0f, 1f));
+        Assert.That(batched.Components.Z, Is.InRange(0f, 1f));
+        Assert.That(batched.FractalEnergy, Is.InRange(0f, 1f));
+        var unchanged = batched.Components;
+        batched.Advance(0);
+        Assert.That(batched.Components, Is.EqualTo(unchanged));
+    }
+    [Test]
     public void FractalDepthDemandFollowsMovementSpeedFromZeroToTen()
     {
         var history = new AudioHistory(1, 100);

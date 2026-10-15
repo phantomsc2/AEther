@@ -11,7 +11,7 @@ using static Vortice.DXGI.DXGI;
 
 namespace AEther.Vortice;
 
-public enum Scene { Spectrum, Histogram, Mandelbox }
+public enum Scene { Spectrum, Histogram, Mandelbox, MandelFluid }
 public enum AntialiasingQuality { None, Medium, High }
 
 /// <summary>D3D11 fullscreen passes. All methods except PostAudio run on the window thread.</summary>
@@ -20,11 +20,16 @@ public sealed class Renderer : IDisposable
     readonly List<IDisposable> resources = [];
     ID3D11Device device = null!;
     ID3D11DeviceContext context = null!;
-    IDXGISwapChain1 swapChain = null!;
-    ID3D11RenderTargetView? target;
+    ColorOutput output = null!;
     ID3D11VertexShader vertex = null!;
     ID3D11PixelShader[] pixels = [];
     ID3D11PixelShader? bilateral;
+    ID3D11PixelShader outputPixel = null!;
+    MandelFluidSimulation.Programs fluidPrograms = null!;
+    MandelFluidSimulation? fluid;
+    Scene previousScene;
+    internal MandelFluidSimulation Fluid => fluid!;
+    internal MandelFluidSimulation.Programs FluidPrograms => fluidPrograms;
     readonly ID3D11ShaderResourceView[] fractalViews = new ID3D11ShaderResourceView[4];
     readonly ID3D11RenderTargetView[] filteredTargets = new ID3D11RenderTargetView[2];
     ID3D11Buffer frameBuffer = null!, sceneBuffer = null!;
@@ -50,13 +55,21 @@ public sealed class Renderer : IDisposable
     public float BilateralTimeSigma { get; set; } = 1;
     public float BilateralRangeSigma { get; set; } = .1f;
     public bool FilteredHistogramView { get; set; }
+    public float FluidFlow { get; set; } = 1;
+    public float FluidHalfLife { get; set; } = 1.4f;
+    public float FluidDiffusion { get; set; } = .001f;
+    public float FluidNoise { get; set; } = 1;
+    public float FluidCurl { get; set; } = .45f;
     public string? ShaderError { get; private set; }
     public string ShaderDirectory => shaderDirectory;
+    public bool HighPrecisionOutput => output.HighPrecision;
+    public string OutputDescription => output.Description;
+    internal float[] ReadPresentedPixels() => output.ReadPresentedPixels();
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
-        double historySeconds = 1, string? shaderDirectory = null)
+        double historySeconds = 1, string? shaderDirectory = null, bool highPrecisionOutput = true)
     {
         Audio = new(bands, analysisRate, historySeconds);
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
@@ -66,13 +79,7 @@ public sealed class Renderer : IDisposable
                 [FeatureLevel.Level_11_0], out device, out context).CheckError();
             Own(device); Own(context);
             using var factory = CreateDXGIFactory1<IDXGIFactory2>();
-            swapChain = Own(factory.CreateSwapChainForHwnd(device, window, new SwapChainDescription1
-            {
-                Width = (uint)Math.Max(1, width), Height = (uint)Math.Max(1, height),
-                Format = Format.R8G8B8A8_UNorm, BufferCount = 2,
-                BufferUsage = Usage.RenderTargetOutput, SampleDescription = new SampleDescription(1, 0),
-                SwapEffect = SwapEffect.FlipDiscard,
-            }));
+            output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput));
             factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
             frameBuffer = Own(device.CreateBuffer(80, BindFlags.ConstantBuffer));
             sceneBuffer = Own(device.CreateBuffer(64, BindFlags.ConstantBuffer));
@@ -132,6 +139,8 @@ public sealed class Renderer : IDisposable
     {
         ID3D11VertexShader? nextVertex = null;
         ID3D11PixelShader? nextBilateral = null;
+        ID3D11PixelShader? nextOutput = null;
+        MandelFluidSimulation.Programs? nextFluid = null;
         var nextPixels = new List<ID3D11PixelShader>();
         try
         {
@@ -141,10 +150,18 @@ public sealed class Renderer : IDisposable
             {
                 var name = scene + ".hlsl";
                 var source = common + "\n#line 1 \"" + name + "\"\n" + File.ReadAllText(Path.Combine(shaderDirectory, name));
+                if (scene == Scene.MandelFluid)
+                    source += "\n#line 1 \"Mandelbox.hlsl\"\n" + File.ReadAllText(Path.Combine(shaderDirectory, "Mandelbox.hlsl"));
                 nextPixels.Add(device.CreatePixelShader(Compiler.Compile(source, "PS", name, "ps_5_0").Span));
             }
             var filterSource = common + "\n" + File.ReadAllText(Path.Combine(shaderDirectory, "Bilateral.hlsl"));
             nextBilateral = device.CreatePixelShader(Compiler.Compile(filterSource, "PS", "Bilateral.hlsl", "ps_5_0").Span);
+            var outputSource = common + "\n" + File.ReadAllText(Path.Combine(shaderDirectory, "Present.hlsl"));
+            nextOutput = device.CreatePixelShader(Compiler.Compile(outputSource, "PS", "Present.hlsl", "ps_5_0").Span);
+            nextFluid = new(device, common + "\n" + File.ReadAllText(Path.Combine(shaderDirectory, "FluidSimulation.hlsl")));
+            outputPixel?.Dispose(); outputPixel = nextOutput;
+            fluidPrograms?.Dispose();
+            fluidPrograms = nextFluid;
             foreach (var pixel in pixels) pixel.Dispose();
             bilateral?.Dispose();
             bilateral = nextBilateral;
@@ -158,6 +175,8 @@ public sealed class Renderer : IDisposable
         {
             nextVertex?.Dispose();
             nextBilateral?.Dispose();
+            nextOutput?.Dispose();
+            nextFluid?.Dispose();
             foreach (var pixel in nextPixels) pixel.Dispose();
             ShaderError = error.Message;
             return false;
@@ -167,27 +186,28 @@ public sealed class Renderer : IDisposable
     public void Resize(int newWidth, int newHeight)
     {
         if (newWidth < 1 || newHeight < 1 || newWidth == width && newHeight == height) return;
-        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-        target?.Dispose(); target = null;
-        swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.Unknown, SwapChainFlags.None).CheckError();
-        using var backBuffer = swapChain.GetBuffer<ID3D11Texture2D>(0);
-        target = device.CreateRenderTargetView(backBuffer);
+        output.Resize(newWidth, newHeight);
         width = newWidth; height = newHeight;
+        // Resizing changes the physical domain. Recreate lazily on next fluid frame.
+        fluid?.Dispose(); fluid = null;
     }
 
     public unsafe void Render(bool present = true)
     {
-        if (target == null) return;
+        if (output.SceneTarget == null) return;
         var frameStart = Stopwatch.GetTimestamp();
         if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
         previousFrame = frameStart;
         var now = Audio.Now;
-        Audio.Advance(Math.Max(0, now - previousTime));
-        movementTime += (Audio.MusicalTime - previousMusicalTime) * Math.Max(0, MandelboxMovementSpeed);
+        var dt = Math.Max(0, now - previousTime);
+        Audio.Advance(dt);
+        var activity = Math.Clamp((Audio.Components.Z + .2f * Audio.Components.Y - .02f) / .53f, 0, 1);
+        var mobility = Scene == Scene.MandelFluid ? activity * activity * (3 - 2 * activity) : 1;
+        movementTime += (Audio.MusicalTime - previousMusicalTime) * Math.Max(0, MandelboxMovementSpeed) * mobility;
         previousMusicalTime = Audio.MusicalTime;
         previousTime = now;
         // Upload after draining the mailbox; capture/analysis never touches a graphics lock.
-        context.PSSetShaderResources(0, new ID3D11ShaderResourceView[4]);
+        context.PSSetShaderResources(0, new ID3D11ShaderResourceView[9]);
         for (var i = 0; i < 4; i++)
         {
             var source = i < 2 ? Audio.Spectrum[i] : Audio.History[i - 2];
@@ -198,7 +218,7 @@ public sealed class Renderer : IDisposable
         {
             A = new((float)now, 0, Audio.Shift, width / (float)height),
             B = new(Audio.Flash, 0, 0, Audio.TimeScale),
-            C = new(0, 0, 0, Audio.Energy),
+            C = new(Audio.Components, Audio.FractalEnergy),
             D = new(Audio.Energy, Audio.Flash, Audio.Flash * .3f, Audio.Energy),
             E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge,
                 Audio.FractalDepth * Math.Max(1, MandelboxIterations) / 10f),
@@ -219,7 +239,7 @@ public sealed class Renderer : IDisposable
         context.PSSetConstantBuffer(0, frameBuffer);
         context.PSSetConstantBuffer(1, sceneBuffer);
         context.PSSetShaderResources(0, views);
-        var filter = (Scene == Scene.Mandelbox || Scene == Scene.Histogram && FilteredHistogramView)
+        var filter = (Scene is Scene.Mandelbox or Scene.MandelFluid || Scene == Scene.Histogram && FilteredHistogramView)
             && BilateralStrength > 0;
         if (filter)
         {
@@ -232,36 +252,29 @@ public sealed class Renderer : IDisposable
             context.PSSetShaderResources(0, fractalViews);
             context.RSSetViewport(0, 0, width, height);
         }
-        context.OMSetRenderTargets(target);
+        if (Scene == Scene.MandelFluid)
+        {
+            fluid ??= new(device, context, width, height);
+            if (previousScene != Scene.MandelFluid || dt > .5) fluid.Clear();
+            fluid.Advance(dt, Audio, fluidPrograms, FluidFlow, FluidHalfLife, FluidDiffusion, FluidNoise, FluidCurl);
+            context.PSSetShaderResource(4, fluid.Dye);
+            context.RSSetViewport(0, 0, width, height);
+        }
+        previousScene = Scene;
+        context.OMSetRenderTargets(output.SceneTarget);
         context.PSSetShader(pixels[(int)Scene]);
         context.Draw(3, 0);
+        output.Draw(outputPixel, now);
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
         if (Audio.LatestCaptureTimestamp != 0)
             Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
         var presentStart = Stopwatch.GetTimestamp();
-        if (present) swapChain.Present(1, PresentFlags.None).CheckError();
+        if (present) output.Present();
         if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
     }
 
-    /// <summary>RGBA rows for deterministic render checks; call after Render(false).</summary>
-    public byte[] ReadPixels()
-    {
-        using var back = swapChain.GetBuffer<ID3D11Texture2D>(0);
-        var desc = back.Description;
-        desc.Usage = ResourceUsage.Staging; desc.BindFlags = BindFlags.None;
-        desc.CPUAccessFlags = CpuAccessFlags.Read;
-        using var staging = device.CreateTexture2D(desc);
-        context.CopyResource(staging, back);
-        var map = context.Map(staging, 0, MapMode.Read, global::Vortice.Direct3D11.MapFlags.None);
-        try
-        {
-            var result = new byte[width * height * 4];
-            for (var y = 0; y < height; y++)
-                Marshal.Copy(map.DataPointer + y * (int)map.RowPitch, result, y * width * 4, width * 4);
-            return result;
-        }
-        finally { context.Unmap(staging, 0); }
-    }
+    /// <summary>Display-encoded RGBA8 export; dithering avoids reintroducing bands in PNGs.</summary>
+    public byte[] ReadPixels(bool dither = true) => output.ReadPixels(dither);
 
     [StructLayout(LayoutKind.Sequential)]
     struct Frame { public Vector4 A, B, C, D, E; }
@@ -273,8 +286,9 @@ public sealed class Renderer : IDisposable
         if (disposed) return;
         disposed = true;
         context?.ClearState(); context?.Flush();
-        target?.Dispose(); vertex?.Dispose();
+        vertex?.Dispose(); outputPixel?.Dispose();
         bilateral?.Dispose();
+        fluid?.Dispose(); fluidPrograms?.Dispose();
         foreach (var pixel in pixels) pixel.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }

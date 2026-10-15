@@ -1,8 +1,9 @@
 # Vortice renderer milestone
 
-The current application has three D3D11 fullscreen passes: Spectrum, Histogram and
-Mandelbox. The former SharpDX Effects renderer, asset importer, geometry scenes and
-fluid simulations were removed. Earlier renderer documents describe historical work.
+The current application has four D3D11 scenes: Spectrum, Histogram, Mandelbox and
+MandelFluid. The SharpDX Effects renderer was removed; MandelFluid migrates its
+fluid/multigrid approach to native Vortice fullscreen passes. Earlier renderer
+documents describe historical work.
 
 ## Projects and ownership
 
@@ -49,6 +50,35 @@ During development source shaders are found relative to the repository; deployed
 the copied Shaders directory. The host debounces file changes. Reload constructs all new
 GPU shaders before replacing any working program. Failed reload preserves the old programs.
 
+## Output precision
+
+Scene colors are composed into an FP16 texture before presentation. `Present.hlsl`
+decodes the existing display-encoded colors with the sRGB transfer function and writes
+linear FP16 scRGB (`R16G16B16A16_FLOAT`, `RGB_FULL_G10_NONE_P709`) to the flip-model
+swap chain. This avoids rounding soft gradients to eight bits before Windows composes
+the image. The tone mapping and palette remain as authored; this change does not
+increase highlight brightness or expand the scene gamut.
+
+On HDR displays, reference white follows `DISPLAYCONFIG_SDR_WHITE_LEVEL`, queried for
+the containing output once per second. Polling follows monitor moves, HDR mode changes
+and the Windows SDR-brightness slider. SDR displays use a scale of one. An unavailable
+display query falls back to the nominal 80-nit scRGB reference white. See Microsoft's
+[Advanced Color guidance](https://learn.microsoft.com/en-us/windows/win32/direct3darticles/high-dynamic-range).
+
+If FP16 scRGB presentation is unsupported, output falls back to RGBA8 SDR with stable,
+decorrelated spatial dithering of half an eight-bit step per channel. Black and white
+remain exact, and the pattern does not flicker over static images. FP16 output is not
+dithered by the app; the compositor/driver manages conversion to the display signal.
+Final panel precision and any downstream processing can still limit visible gradients.
+
+`ReadPixels()` exports the scene as dithered, display-encoded RGBA8, independently of
+the monitor's white level. `ReadPixels(false)` disables export dithering for diagnostics.
+The GPU output check reads the actual swap chain, separately from the eight-bit export:
+`dotnet run --project tools/AEther.Smoke -- . --output-only`. It checks dark-gradient
+precision, the sRGB transfer function, exact black, stable unbiased fallback dithering,
+resize and failed presentation-shader reload. The test's dark ramp retains more than
+1,000 FP16 output levels versus at most 23 in the forced eight-bit path.
+
 ## Verification
 
 Run:
@@ -60,7 +90,7 @@ dotnet run --project tools/AEther.Smoke -- .
 ```
 
 The smoke tool uses synthetic stereo descriptors, without recording system audio. It
-checks all three scenes render visible, distinct images, recreates the renderer, resizes,
+checks all four scenes render visible, distinct images, recreates the renderer, resizes,
 reloads valid shaders, rejects an invalid shader while retaining working programs, and
 checks history expires during silence. PNGs go into its ignored artifacts directory.
 It also exercises invisible host windows with a synthetic source: settings ownership,

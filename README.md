@@ -37,6 +37,15 @@ linear colors and does not change the distance field or depth. The maximum depth
 to HEAD's 10 iterations; any positive integer is accepted. Musical drive controls depth using the
 original response, with the original log-distance interpolation and history mapping.
 Defaults live in code; settings are not persisted.
+Select **MandelFluid** in the scene menu for a fluid variation of Mandelbox.
+Aggregate energy keeps the fractal present throughout a passage. Tones form rays
+from the center and supply body material; pure tones settle into static crystalline
+structure. Noise and distortion drive movement, diffusion and broader mist. Rhythmic
+attacks produce crisp, outward histogram shockwaves and highlight the field without
+depositing material. The three components strengthen each other's response while
+remaining visible individually. Live controls cover flow, pigment half-life (default
+1.4 seconds), maximum noise-driven diffusion, noise and curl. Material accumulates
+smoothly toward finite capacity and dissipates when the sound ends.
 Movement speed defaults to 1 (the original speed); 3 triples it and 0 freezes the pose.
 Scale is adjustable in the same grid and defaults to -1.5. It changes the signed
 scale inside every iteration; the distance bound uses its absolute value.
@@ -48,6 +57,11 @@ Mono is mirrored; for multichannel inputs the first two channels are displayed.
 Edit `AEther.Vortice/Shaders/*.hlsl` while running from the repository to reload shaders.
 Compilation errors appear in settings and the last working shaders remain active.
 Published builds load shaders from the `Shaders` folder beside the executable.
+Presentation uses a 16-bit floating-point scRGB swap chain when supported, preserving
+smooth dark gradients on HDR displays. Windows' SDR reference-white setting controls
+the brightness on HDR monitors. An 8-bit fallback and PNG exports use stable spatial
+dithering. The settings timing panel reports the active output format. This improves
+precision while retaining the scenes' existing tone mapping and color range.
 See [renderer notes](doc/vortice-renderer.md) for the pipeline and verification commands.
 
 ## Audio capture
