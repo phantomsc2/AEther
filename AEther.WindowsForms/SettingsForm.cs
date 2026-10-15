@@ -13,7 +13,7 @@ public sealed class SettingsForm : Form
     readonly PropertyGrid properties = new() { Dock = DockStyle.Fill, ToolbarVisible = false };
     public AnalyzerOptions Options { get; } = new();
     public string InputName => input.SelectedItem?.ToString() ?? Loopback;
-    public Scene Scene => (Scene)(scene.SelectedItem ?? Scene.Mandelbox);
+    public Scene Scene => (Scene)(scene.SelectedItem ?? Scene.Spectrum);
     public int DisplayIndex => Math.Max(0, display.SelectedIndex);
     public event EventHandler? SettingsChanged;
     public event Action<Keys>? ShortcutRequested;
@@ -37,7 +37,7 @@ public sealed class SettingsForm : Form
         input.Items.Add(Loopback);
         input.Items.AddRange(Recorder.GetAvailableDeviceNames());
         input.SelectedIndex = 0;
-        scene.DataSource = Enum.GetValues<Scene>(); scene.SelectedItem = Scene.Mandelbox;
+        scene.DataSource = Enum.GetValues<Scene>(); scene.SelectedItem = Scene.Spectrum;
         foreach (var screen in Screen.AllScreens)
             display.Items.Add($"{screen.DeviceName} ({screen.Bounds.Width} × {screen.Bounds.Height})");
         display.SelectedIndex = Array.FindIndex(Screen.AllScreens, s => s.Primary);

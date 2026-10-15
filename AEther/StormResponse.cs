@@ -17,15 +17,14 @@ namespace AEther
         double Gain = 4;
         double TargetMovement = 1;
 
-        public StormResponse(AnalyzerOptions? options = null)
+        public StormResponse()
         {
-            options ??= new AnalyzerOptions();
-            OrbitInertia = options.OrbitInertiaSeconds;
+            OrbitInertia = 2.8;
             Turn = new(2 / OrbitInertia);
-            Lightning = new(new(0, options.FlashDecaySeconds, 0));
-            Glow = new(new(0, options.AfterglowSeconds, .5));
+            Lightning = new(new(0, .09, 0));
+            Glow = new(new(0, 1.2, .5));
             Cloud = new(new(.12, 2.8, .9));
-            Build = new(new(.35, options.BuildReleaseSeconds, OrbitInertia));
+            Build = new(new(.35, 5, OrbitInertia));
         }
 
         public double InputGain

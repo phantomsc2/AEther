@@ -210,9 +210,8 @@ namespace AEther.Tests
         }
 
         [Test]
-        public void DefaultsHaveNoHistoryPresentationDelay()
+        public void DefaultsUseShortJitterAndImmediateHistoryPlayhead()
         {
-            Assert.That(new AnalyzerOptions().HistoryPresentationDelayMilliseconds, Is.Zero);
             Assert.That(new AnalyzerOptions().JitterLength, Is.EqualTo(.01));
             var scroll = new HistoryScroll(256);
             for (var i = 0; i < 10; ++i) scroll.AddRow();
