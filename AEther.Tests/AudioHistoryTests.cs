@@ -7,23 +7,24 @@ namespace AEther.Tests;
 public class AudioHistoryTests
 {
     [Test]
-    public void FractalDepthFollowsMovementSpeedFromThreeToTen()
+    public void FractalDepthDemandFollowsMovementSpeedFromZeroToTen()
     {
         var history = new AudioHistory(1, 100);
-        Assert.That(history.FractalDepth, Is.EqualTo(3));
+        Assert.That(history.FractalDepth, Is.Zero);
         for (var row = 1; row <= 200; row++)
         {
             history.Post(new(new[] { .2, .2, .1, .5 }, 4, DateTime.Now) { AnalysisRow = row }, 1);
             history.Advance(.01);
-            Assert.That(history.FractalDepth, Is.InRange(3f, 10f));
+            Assert.That(history.FractalDepth, Is.InRange(0f, 10f));
             Assert.That(history.FractalDepth,
-                Is.EqualTo(3 + 7 * Math.Clamp(history.MusicalVelocity / 1.5, 0, 1)).Within(1e-6));
+                Is.EqualTo(10 * Math.Clamp(history.MusicalVelocity / .3, 0, 1)).Within(1e-6));
         }
         Assert.That(history.FractalDepth, Is.EqualTo(10).Within(.001));
         history.Advance(1.6);
-        Assert.That(history.FractalDepth, Is.EqualTo(3 + 7 * history.MusicalVelocity / 1.5).Within(.001));
-        history.Advance(15);
-        Assert.That(history.FractalDepth, Is.EqualTo(3).Within(.001));
+        Assert.That(history.FractalDepth,
+            Is.EqualTo(10 * Math.Clamp(history.MusicalVelocity / .3, 0, 1)).Within(.001));
+        history.Advance(20);
+        Assert.That(history.FractalDepth, Is.EqualTo(0).Within(.001));
     }
 
     [Test]

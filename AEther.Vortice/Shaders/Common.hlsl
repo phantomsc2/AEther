@@ -9,6 +9,9 @@ cbuffer FrameConstants : register(b0)
 cbuffer SceneConstants : register(b1)
 {
     float SliceDepth, HistoryWarp, TimeCompression, ViewFlags;
+    float Antialiasing, MovementTime, PalettePadding0, PalettePadding1;
+    float MandelboxScale, ScenePadding0, ScenePadding1, ScenePadding2;
+    float BilateralFrequencySigma, BilateralTimeSigma, BilateralRangeSigma, BilateralStrength;
 };
 Texture2D<float4> Spectrum0 : register(t0);
 Texture2D<float4> Spectrum1 : register(t1);

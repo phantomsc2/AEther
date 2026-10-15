@@ -29,8 +29,19 @@ The app starts windowed, captures the default system audio output and displays M
 - **[ / ]**: move the Mandelbox slice.
 - **Escape**: close the render window (or hide settings when settings has focus).
 
-Settings select audio input, scene, display and analyzer options. Every settings change
-restarts the whole session. Defaults live in code; there is no persisted configuration.
+Settings select audio input, scene, display and analyzer options. These changes restart
+the session. A separate Mandelbox property grid stays visible for every scene. Its
+antialiasing, maximum iterations and movement speed apply live without restarting
+audio: None uses one sample, Medium (default) uses 2×2, and High uses 4×4. AA averages
+linear colors and does not change the distance field or depth. The maximum depth defaults
+to HEAD's 10 iterations; any positive integer is accepted. Musical drive controls depth using the
+original response, with the original log-distance interpolation and history mapping.
+Defaults live in code; settings are not persisted.
+Movement speed defaults to 1 (the original speed); 3 triples it and 0 freezes the pose.
+Scale is adjustable in the same grid and defaults to -1.5. It changes the signed
+scale inside every iteration; the distance bound uses its absolute value.
+Speed changes preserve the current position and affect slice, rotation and zoom only.
+Depth travel, palette timing and audio-history propagation keep their existing rates.
 Histogram shows one second of history per stereo side by default, with now in the center.
 Mono is mirrored; for multichannel inputs the first two channels are displayed.
 

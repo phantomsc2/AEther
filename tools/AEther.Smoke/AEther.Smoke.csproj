@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="build/**/*.cs;artifacts/**/*.cs" />
     <ProjectReference Include="../../AEther.WindowsForms/AEther.WindowsForms.csproj" />
   </ItemGroup>
 </Project>

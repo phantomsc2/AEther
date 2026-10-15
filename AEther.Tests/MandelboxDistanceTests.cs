@@ -7,7 +7,7 @@ namespace AEther.Tests
     {
         // Independent finite differences check what the shader's scalar bound
         // means geometrically; the derivative is never taken from the recurrence.
-        static (double[] z, double bound) Orbit(double[] point)
+        static (double[] z, double bound) Orbit(double[] point, double scale = -1.5)
         {
             var z = (double[])point.Clone();
             var bound = 1.0;
@@ -18,13 +18,13 @@ namespace AEther.Tests
                 var radius2 = z[0] * z[0] + z[1] * z[1] + z[2] * z[2];
                 var fold = 1 / Math.Clamp(radius2, .25, 1);
                 for (var axis = 0; axis < 3; ++axis)
-                    z[axis] = -1.5 * fold * z[axis] + point[axis];
-                bound = 1.5 * fold * bound + 1;
+                    z[axis] = scale * fold * z[axis] + point[axis];
+                bound = Math.Abs(scale) * fold * bound + 1;
             }
             return (z, bound);
         }
 
-        static double[,] JacobianByFiniteDifferences(double[] point)
+        static double[,] JacobianByFiniteDifferences(double[] point, double scale = -1.5)
         {
             const double epsilon = 1e-6;
             var jacobian = new double[3, 3];
@@ -34,23 +34,24 @@ namespace AEther.Tests
                 var minus = (double[])point.Clone();
                 plus[axis] += epsilon;
                 minus[axis] -= epsilon;
-                var positive = Orbit(plus).z;
-                var negative = Orbit(minus).z;
+                var positive = Orbit(plus, scale).z;
+                var negative = Orbit(minus, scale).z;
                 for (var component = 0; component < 3; ++component)
                     jacobian[component, axis] = (positive[component] - negative[component]) / (2 * epsilon);
             }
             return jacobian;
         }
 
-        [Test]
-        public void ScalarRecurrenceBoundsTheLocalRadialDerivative()
+        [TestCase(-3.0), TestCase(-2.0), TestCase(-1.5), TestCase(-.5)]
+        [TestCase(0.0), TestCase(.5), TestCase(1.5), TestCase(2.0)]
+        public void ScalarRecurrenceBoundsTheLocalRadialDerivative(double scale)
         {
             for (var index = 1; index <= 300; ++index)
             {
                 var point = new[] { 2.3 * Math.Sin(index * 12.783),
                     2.3 * Math.Sin(index * 4.317), .15 + .3 * Math.Sin(index * 1.13) };
-                var (z, bound) = Orbit(point);
-                var jacobian = JacobianByFiniteDifferences(point);
+                var (z, bound) = Orbit(point, scale);
+                var jacobian = JacobianByFiniteDifferences(point, scale);
                 var radius = Math.Sqrt(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]);
                 var gradient2 = 0.0;
                 for (var axis = 0; axis < 3; ++axis)

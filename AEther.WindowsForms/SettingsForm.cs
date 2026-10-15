@@ -12,19 +12,24 @@ public sealed class SettingsForm : Form
     readonly Label status = new() { Dock = DockStyle.Fill, AutoEllipsis = true };
     readonly PropertyGrid properties = new() { Dock = DockStyle.Fill, ToolbarVisible = false };
     readonly Label timing = new() { Dock = DockStyle.Fill, AutoSize = false, Padding = new(0, 6, 0, 0) };
+    readonly PropertyGrid mandelboxProperties = new() { Name = "MandelboxProperties", Dock = DockStyle.Fill, ToolbarVisible = false, PropertySort = PropertySort.NoSort };
+    public MandelboxOptions Mandelbox { get; } = new();
     public AnalyzerOptions Options { get; } = new();
     public string InputName => input.SelectedItem?.ToString() ?? Loopback;
     public Scene Scene => (Scene)(scene.SelectedItem ?? Scene.Spectrum);
     public int DisplayIndex => Math.Max(0, display.SelectedIndex);
     public event EventHandler? SettingsChanged;
+    public event EventHandler? RenderingChanged;
     public event Action<Keys>? ShortcutRequested;
 
     public SettingsForm()
     {
-        Text = "AEther settings"; ClientSize = new(390, 720); MinimumSize = new(330, 400);
+        Text = "AEther settings"; ClientSize = new(390, 820); MinimumSize = new(330, 520);
         ShowInTaskbar = false; KeyPreview = true; StartPosition = FormStartPosition.CenterParent;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9, Padding = new(12) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 11, Padding = new(12) };
         for (var i = 0; i < 6; i++) layout.RowStyles.Add(new(SizeType.Absolute, i % 2 == 0 ? 22 : 32));
+        layout.RowStyles.Add(new(SizeType.Absolute, 22));
+        layout.RowStyles.Add(new(SizeType.Absolute, 285));
         layout.RowStyles.Add(new(SizeType.Percent, 100));
         layout.RowStyles.Add(new(SizeType.Absolute, 205));
         layout.RowStyles.Add(new(SizeType.Absolute, 80));
@@ -34,7 +39,9 @@ public sealed class SettingsForm : Form
         layout.Controls.Add(scene, 0, 3);
         layout.Controls.Add(new Label { Text = "Display", AutoSize = true }, 0, 4);
         layout.Controls.Add(display, 0, 5);
-        layout.Controls.Add(properties, 0, 6); layout.Controls.Add(timing, 0, 7); layout.Controls.Add(status, 0, 8);
+        layout.Controls.Add(new Label { Text = "Mandelbox", AutoSize = true }, 0, 6);
+        layout.Controls.Add(mandelboxProperties, 0, 7);
+        layout.Controls.Add(properties, 0, 8); layout.Controls.Add(timing, 0, 9); layout.Controls.Add(status, 0, 10);
         SetTiming(null);
         Controls.Add(layout);
         input.Items.Add(Loopback);
@@ -45,6 +52,8 @@ public sealed class SettingsForm : Form
             display.Items.Add($"{screen.DeviceName} ({screen.Bounds.Width} × {screen.Bounds.Height})");
         display.SelectedIndex = Array.FindIndex(Screen.AllScreens, s => s.Primary);
         properties.SelectedObject = Options;
+        mandelboxProperties.SelectedObject = Mandelbox;
+        Mandelbox.Changed += (_, _) => RenderingChanged?.Invoke(this, EventArgs.Empty);
         input.SelectedIndexChanged += Changed;
         scene.SelectedIndexChanged += Changed;
         display.SelectedIndexChanged += Changed;

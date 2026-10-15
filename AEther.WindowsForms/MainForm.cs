@@ -23,6 +23,7 @@ public sealed class MainForm : Form
         Controls.Add(canvas);
         AddOwnedForm(settings);
         settings.SettingsChanged += async (_, _) => await RestartAsync();
+        settings.RenderingChanged += (_, _) => ApplyRenderingSettings();
         settings.ShortcutRequested += key =>
         {
             if (key == Keys.F11) ToggleFullscreen();
@@ -71,6 +72,7 @@ public sealed class MainForm : Form
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
+                ApplyRenderingSettings();
                 Text = $"AEther — {settings.Scene}";
                 watcher = new(next.Renderer.ShaderDirectory, "*.hlsl") { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName };
                 watcher.Changed += ShaderChanged; watcher.Created += ShaderChanged; watcher.Renamed += ShaderChanged;
@@ -94,6 +96,20 @@ public sealed class MainForm : Form
         if (error == null || closing) return;
         try { BeginInvoke(() => { if (closing) return; settings.SetStatus(error.Message); settings.Show(this); }); }
         catch (InvalidOperationException) when (closing || IsDisposed) { }
+    }
+
+    void ApplyRenderingSettings()
+    {
+        if (session == null) return;
+        session.Renderer.MandelboxAntialiasing = settings.Mandelbox.Antialiasing;
+        session.Renderer.MandelboxIterations = settings.Mandelbox.MaximumIterations;
+        session.Renderer.MandelboxMovementSpeed = settings.Mandelbox.MovementSpeed;
+        session.Renderer.MandelboxScale = settings.Mandelbox.Scale;
+        session.Renderer.BilateralStrength = settings.Mandelbox.BilateralStrength;
+        session.Renderer.BilateralFrequencySigma = settings.Mandelbox.BilateralFrequencySigma;
+        session.Renderer.BilateralTimeSigma = settings.Mandelbox.BilateralTimeSigma;
+        session.Renderer.BilateralRangeSigma = settings.Mandelbox.BilateralRangeSigma;
+        session.Renderer.FilteredHistogramView = settings.Mandelbox.FilteredHistogramView;
     }
 
     void ShaderChanged(object sender, FileSystemEventArgs e)

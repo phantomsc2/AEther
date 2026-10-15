@@ -12,6 +12,7 @@ using static Vortice.DXGI.DXGI;
 namespace AEther.Vortice;
 
 public enum Scene { Spectrum, Histogram, Mandelbox }
+public enum AntialiasingQuality { None, Medium, High }
 
 /// <summary>D3D11 fullscreen passes. All methods except PostAudio run on the window thread.</summary>
 public sealed class Renderer : IDisposable
@@ -23,12 +24,16 @@ public sealed class Renderer : IDisposable
     ID3D11RenderTargetView? target;
     ID3D11VertexShader vertex = null!;
     ID3D11PixelShader[] pixels = [];
+    ID3D11PixelShader? bilateral;
+    readonly ID3D11ShaderResourceView[] fractalViews = new ID3D11ShaderResourceView[4];
+    readonly ID3D11RenderTargetView[] filteredTargets = new ID3D11RenderTargetView[2];
     ID3D11Buffer frameBuffer = null!, sceneBuffer = null!;
     readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
     readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
     readonly string shaderDirectory;
     int width, height;
     double previousTime;
+    double previousMusicalTime, movementTime;
     bool disposed;
     long previousFrame;
     public AudioHistory Audio { get; }
@@ -36,6 +41,15 @@ public sealed class Renderer : IDisposable
     public bool CombinedLevel { get; set; }
     public bool Intensity { get; set; }
     public float SliceDepth { get; set; }
+    public AntialiasingQuality MandelboxAntialiasing { get; set; } = AntialiasingQuality.Medium;
+    public int MandelboxIterations { get; set; } = 10;
+    public float MandelboxMovementSpeed { get; set; } = 1;
+    public float MandelboxScale { get; set; } = -1.5f;
+    public float BilateralStrength { get; set; } = .6f;
+    public float BilateralFrequencySigma { get; set; } = 1;
+    public float BilateralTimeSigma { get; set; } = 1;
+    public float BilateralRangeSigma { get; set; } = .1f;
+    public bool FilteredHistogramView { get; set; }
     public string? ShaderError { get; private set; }
     public string ShaderDirectory => shaderDirectory;
 
@@ -61,7 +75,7 @@ public sealed class Renderer : IDisposable
             }));
             factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
             frameBuffer = Own(device.CreateBuffer(80, BindFlags.ConstantBuffer));
-            sceneBuffer = Own(device.CreateBuffer(16, BindFlags.ConstantBuffer));
+            sceneBuffer = Own(device.CreateBuffer(64, BindFlags.ConstantBuffer));
             for (var i = 0; i < 4; i++)
             {
                 textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
@@ -72,6 +86,15 @@ public sealed class Renderer : IDisposable
                     BindFlags = BindFlags.ShaderResource,
                 }));
                 views[i] = Own(device.CreateShaderResourceView(textures[i]));
+                if (i < 2) fractalViews[i] = views[i];
+                else
+                {
+                    var desc = textures[i].Description;
+                    desc.BindFlags |= BindFlags.RenderTarget;
+                    var filtered = Own(device.CreateTexture2D(desc));
+                    fractalViews[i] = Own(device.CreateShaderResourceView(filtered));
+                    filteredTargets[i - 2] = Own(device.CreateRenderTargetView(filtered));
+                }
             }
             var sampler = Own(device.CreateSamplerState(new SamplerDescription
             {
@@ -108,6 +131,7 @@ public sealed class Renderer : IDisposable
     public bool ReloadShaders()
     {
         ID3D11VertexShader? nextVertex = null;
+        ID3D11PixelShader? nextBilateral = null;
         var nextPixels = new List<ID3D11PixelShader>();
         try
         {
@@ -119,7 +143,11 @@ public sealed class Renderer : IDisposable
                 var source = common + "\n#line 1 \"" + name + "\"\n" + File.ReadAllText(Path.Combine(shaderDirectory, name));
                 nextPixels.Add(device.CreatePixelShader(Compiler.Compile(source, "PS", name, "ps_5_0").Span));
             }
+            var filterSource = common + "\n" + File.ReadAllText(Path.Combine(shaderDirectory, "Bilateral.hlsl"));
+            nextBilateral = device.CreatePixelShader(Compiler.Compile(filterSource, "PS", "Bilateral.hlsl", "ps_5_0").Span);
             foreach (var pixel in pixels) pixel.Dispose();
+            bilateral?.Dispose();
+            bilateral = nextBilateral;
             vertex?.Dispose();
             vertex = nextVertex;
             pixels = nextPixels.ToArray();
@@ -129,6 +157,7 @@ public sealed class Renderer : IDisposable
         catch (Exception error)
         {
             nextVertex?.Dispose();
+            nextBilateral?.Dispose();
             foreach (var pixel in nextPixels) pixel.Dispose();
             ShaderError = error.Message;
             return false;
@@ -154,6 +183,8 @@ public sealed class Renderer : IDisposable
         previousFrame = frameStart;
         var now = Audio.Now;
         Audio.Advance(Math.Max(0, now - previousTime));
+        movementTime += (Audio.MusicalTime - previousMusicalTime) * Math.Max(0, MandelboxMovementSpeed);
+        previousMusicalTime = Audio.MusicalTime;
         previousTime = now;
         // Upload after draining the mailbox; capture/analysis never touches a graphics lock.
         context.PSSetShaderResources(0, new ID3D11ShaderResourceView[4]);
@@ -169,20 +200,40 @@ public sealed class Renderer : IDisposable
             B = new(Audio.Flash, 0, 0, Audio.TimeScale),
             C = new(0, 0, 0, Audio.Energy),
             D = new(Audio.Energy, Audio.Flash, Audio.Flash * .3f, Audio.Energy),
-            E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge, Audio.FractalDepth),
+            E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge,
+                Audio.FractalDepth * Math.Max(1, MandelboxIterations) / 10f),
         };
         context.UpdateSubresource(frame, frameBuffer);
-        var sceneParameters = new Vector4(SliceDepth, .95f, 4,
-            (CombinedLevel ? 1 : 0) + (Intensity ? 2 : 0));
+        var sceneParameters = new SceneParameters
+        {
+            A = new(SliceDepth, .95f, 4, (CombinedLevel ? 1 : 0) + (Intensity ? 2 : 0)),
+            B = new((int)MandelboxAntialiasing, (float)movementTime, 0, 0),
+            C = new(MandelboxScale, 0, 0, 0),
+            D = new(Math.Clamp(BilateralFrequencySigma, .1f, 2), Math.Clamp(BilateralTimeSigma, .1f, 2),
+                Math.Max(.0001f, BilateralRangeSigma), Math.Clamp(BilateralStrength, 0, 1)),
+        };
         context.UpdateSubresource(sceneParameters, sceneBuffer);
-        context.OMSetRenderTargets(target);
         context.RSSetViewport(0, 0, width, height);
         context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         context.VSSetShader(vertex);
-        context.PSSetShader(pixels[(int)Scene]);
         context.PSSetConstantBuffer(0, frameBuffer);
         context.PSSetConstantBuffer(1, sceneBuffer);
         context.PSSetShaderResources(0, views);
+        var filter = (Scene == Scene.Mandelbox || Scene == Scene.Histogram && FilteredHistogramView)
+            && BilateralStrength > 0;
+        if (filter)
+        {
+            // Filter once in history space, shared by all fractal/AA samples.
+            context.RSSetViewport(0, 0, Audio.Bands, Audio.Rows);
+            context.OMSetRenderTargets(filteredTargets);
+            context.PSSetShader(bilateral);
+            context.Draw(3, 0);
+            context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
+            context.PSSetShaderResources(0, fractalViews);
+            context.RSSetViewport(0, 0, width, height);
+        }
+        context.OMSetRenderTargets(target);
+        context.PSSetShader(pixels[(int)Scene]);
         context.Draw(3, 0);
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
         if (Audio.LatestCaptureTimestamp != 0)
@@ -214,6 +265,8 @@ public sealed class Renderer : IDisposable
 
     [StructLayout(LayoutKind.Sequential)]
     struct Frame { public Vector4 A, B, C, D, E; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct SceneParameters { public Vector4 A, B, C, D; }
 
     public void Dispose()
     {
@@ -221,6 +274,7 @@ public sealed class Renderer : IDisposable
         disposed = true;
         context?.ClearState(); context?.Flush();
         target?.Dispose(); vertex?.Dispose();
+        bilateral?.Dispose();
         foreach (var pixel in pixels) pixel.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }

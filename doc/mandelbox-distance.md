@@ -35,3 +35,32 @@ When loopback capture stops emitting packets, the renderer now writes zero rows 
 The shared camera response retains its long release but now has zero base travel and roll speed. After a track ends, movement gradually settles instead of drifting forever. The fractal's musical time `S` also stops accumulating when retained spectral power is zero; wall time still advances the history and response decay.
 
 A full Jacobian is useful if a later renderer needs accurate local normals or directional flow. The correct sphere fold, in its inversion interval and before changing `q`, has `J_sphere = a*(I - 2*q*q^T/dot(q,q))`. The complete iteration has `J_next = -1.5*J_sphere*J_box*J + I`. Even then, determinant alone would not describe propagation direction. The gradient of a chosen distance or potential field would be the relevant direction; its iso-contours would carry the advancing light.
+
+## Spatial antialiasing
+
+Distance estimation, log-distance depth interpolation, frequency/history coordinates and
+exposure follow HEAD. AA adds deterministic None (one center sample), Medium (2×2) and
+High (4×4) sampling, averaging linear output colors before gamma encoding. Every mode
+uses the same field and depth; there is no AA-dependent iteration suppression. Existing
+screen-derivative shading heuristics use each subpixel's footprint. They remain approximate,
+so quality changes can affect those filters as well as resolve additional spatial detail.
+
+The maximum iteration count accepts any positive integer, defaulting to HEAD's 10.
+Musical drive controls requested depth as before; at the default limit the original depth
+response is preserved. Quality and maximum depth apply live without restarting capture.
+The experimental linear propagation-distance setting, tracer and material injection are removed.
+
+GPU checks compare None directly against HEAD at a fixed fractional depth, check integer
+depth continuity, and compare spatial AA against averaged larger None renders with quad
+shading derivatives disabled in that reference fixture. Existing rendering, stereo,
+reload/resize, history expiry and settings lifecycle checks remain active.
+
+Very high requested depths retain the last finite estimate if the orbit or derivative
+approaches float overflow. This is a numerical-range guard, not a fixed iteration cap.
+
+Scale is a live Mandelbox property, default -1.5. The orbit uses the signed scale and
+the expansion bound uses abs(scale). Negative, zero and positive values are supported;
+fixed-point orbit/derivative stagnation ends evaluation at the last finite estimate.
+Finite-difference tests cover eight scales and GPU checks verify stable, distinct images
+and live scale updates preserved across a scene restart. The HEAD mapping fixture uses
+fixed colors to compare geometry/history independently of subsequent palette edits.
