@@ -6,13 +6,18 @@ namespace AEther.Vortice;
 /// <summary>Owned, bounded handoff. Only the render thread touches history or graphics resources.</summary>
 public sealed class AudioHistory
 {
-    readonly Channel<(double Time, float[] Samples)> pending;
-    readonly DateTime origin = DateTime.Now;
+    readonly Channel<(long Row, long Capture, long Completed, float[] Samples)> pending;
+
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly double rate;
     readonly float[] peak;
     long latestRow = -1;
     double lastAudio = double.NegativeInfinity;
+    double anchorTime, position;
+    long anchorRow, newestRow = -1;
+    bool anchored;
+    public PipelineProfile? Profile { get; set; }
+    public double PresentationDelay { get; }
     public int Bands { get; }
     public int Rows { get; }
     public double Seconds { get; }
@@ -22,21 +27,26 @@ public sealed class AudioHistory
     public float Flash { get; private set; }
     public float Energy { get; private set; }
     public double Now => clock.Elapsed.TotalSeconds;
-    public float Shift => (float)((Now * rate % Rows + .5) / Rows);
+    public float Shift => (float)(((position % Rows + Rows) % Rows + .5) / Rows);
     public float TimeScale => (float)(Seconds * rate / Rows);
+    // Limit sampling to retained row centers, including during startup or a backlog.
+    public float AvailableSpan => (float)(Math.Max(0, position - Math.Max(0, newestRow - Rows + 1)) / Rows);
     public long DroppedRows => Interlocked.Read(ref dropped);
     long dropped;
 
-    public AudioHistory(int bands, double analysisRate, double seconds = 1)
+    public AudioHistory(int bands, double analysisRate, double seconds = 1, double presentationDelay = .02)
     {
         if (bands <= 0 || analysisRate <= 0 || !double.IsFinite(analysisRate)
-            || seconds <= 0 || !double.IsFinite(seconds)) throw new ArgumentOutOfRangeException();
+            || seconds <= 0 || !double.IsFinite(seconds)
+            || presentationDelay < 0 || !double.IsFinite(presentationDelay)) throw new ArgumentOutOfRangeException();
         Bands = bands; rate = analysisRate; Seconds = seconds;
-        Rows = (int)Math.Clamp(Math.Ceiling(seconds * rate) + 2, 4, 16384);
+        PresentationDelay = presentationDelay;
+        // History duration and presentation delay both consume ring capacity.
+        Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
         peak = new float[8 * bands];
-        pending = Channel.CreateBounded<(double, float[])>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
+        pending = Channel.CreateBounded<(long, long, long, float[])>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
             AllowSynchronousContinuations = false,
@@ -54,27 +64,34 @@ public sealed class AudioHistory
             for (var i = 0; i < src.Length; i++)
                 owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, 1) : 0;
         }
-        // The event time identifies the first sample of the analysis block.
-        pending.Writer.TryWrite(((input.Time - origin).TotalSeconds + 1 / rate, owned));
+        // Audio rows are fixed by sample count; arrival timing is profiling data.
+        pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, owned));
     }
 
     public void Advance(double dt)
     {
         Flash *= (float)Math.Exp(-dt / .09);
         Array.Clear(peak);
-        var received = false;
+
         var now = Now;
-        var target = (long)Math.Floor(now * rate);
-        // Clear elapsed slots even when loopback stops delivering silence packets.
-        for (var row = Math.Max(latestRow + 1, target - Rows + 1); row <= target; row++)
-            for (var c = 0; c < 2; c++)
-                Array.Clear(History[c], (int)((row % Rows + Rows) % Rows) * Bands * 4, Bands * 4);
-        latestRow = target;
         while (pending.Reader.TryRead(out var packet))
         {
-            var row = (long)Math.Floor(packet.Time * rate);
-            if (row < target - Rows + 1 || row > target + 1) continue;
-            row = Math.Min(row, target);
+            if (!anchored)
+            {
+                anchorTime = now;
+                anchorRow = packet.Row;
+                anchored = true;
+            }
+            var row = packet.Row;
+            newestRow = Math.Max(newestRow, row);
+            // Skipped analysis rows remain empty, including after ring wrap.
+            for (var clear = Math.Max(latestRow + 1, row - Rows + 1); clear <= row; clear++)
+                for (var c = 0; c < 2; c++)
+                    Array.Clear(History[c], (int)((clear % Rows + Rows) % Rows) * Bands * 4, Bands * 4);
+            latestRow = Math.Max(latestRow, row);
+            if (row < latestRow - Rows + 1) continue;
+            if (packet.Capture != 0) Profile?.Elapsed("render.capture_to_consume_ms", packet.Capture);
+            if (packet.Completed != 0) Profile?.Elapsed("render.analysis_to_consume_ms", packet.Completed);
             var offset = (int)((row % Rows + Rows) % Rows) * Bands * 4;
             for (var c = 0; c < 2; c++)
                 packet.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
@@ -88,11 +105,19 @@ public sealed class AudioHistory
             }
             Energy = (float)Math.Sqrt(power / (2 * Bands));
             MusicalTime += power / (2 * Bands * rate);
-            lastAudio = packet.Time;
-            received = true;
+            lastAudio = now;
+
         }
-        if (received)
-            for (var c = 0; c < 2; c++) peak.AsSpan(c * Bands * 4, Bands * 4).CopyTo(Spectrum[c]);
+        // Maximum over exactly the events drained since the previous frame.
+        for (var c = 0; c < 2; c++) peak.AsSpan(c * Bands * 4, Bands * 4).CopyTo(Spectrum[c]);
+        if (anchored)
+        {
+            var desired = anchorRow + (now - anchorTime - PresentationDelay) * rate;
+            // If a burst exceeds the delay reserve, move forward enough to retain the visible window.
+            var minimum = Math.Min(newestRow, Math.Max(0, newestRow - Rows + 1 + Seconds * rate));
+            position = Math.Clamp(desired, minimum, newestRow);
+            if (desired > newestRow) Profile?.Record("render.presentation_stall_ms", (desired - newestRow) * 1000 / rate);
+        }
         if (now - lastAudio > .15)
         {
             foreach (var spectrum in Spectrum) Array.Clear(spectrum);
@@ -100,3 +125,4 @@ public sealed class AudioHistory
         }
     }
 }
+

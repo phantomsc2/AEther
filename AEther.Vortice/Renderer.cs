@@ -164,7 +164,7 @@ public sealed class Renderer : IDisposable
             B = new(Audio.Flash, 0, 0, Audio.TimeScale),
             C = new(0, 0, 0, Audio.Energy),
             D = new(Audio.Energy, Audio.Flash, Audio.Flash * .3f, Audio.Energy),
-            E = new((float)Audio.MusicalTime, 0, 0, 0),
+            E = new((float)Audio.MusicalTime, Audio.AvailableSpan, 0, 0),
         };
         context.UpdateSubresource(frame, frameBuffer);
         var sceneParameters = new Vector4(SliceDepth, .7f, 4,

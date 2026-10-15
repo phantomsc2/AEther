@@ -18,6 +18,7 @@ public sealed class Session : IDisposable
         {
             var rate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
             Renderer = new(handle, width, height, options.Domain.Length, rate, options.HistorySeconds);
+            Renderer.Audio.Profile = Analyzer.Profile;
         }
         catch { Analyzer.Stop(); source.Dispose(); throw; }
         source.DataAvailable += OnAudio;
@@ -40,3 +41,4 @@ public sealed class Session : IDisposable
     }
     public void Dispose() { source.Dispose(); Renderer.Dispose(); }
 }
+
