@@ -1,7 +1,5 @@
 ﻿using System;
 using System.ComponentModel;
-using System.IO;
-using System.Xml.Serialization;
 
 namespace AEther
 {
@@ -9,6 +7,7 @@ namespace AEther
     public class AnalyzerOptions
     {
 
+        [Browsable(false)]
         public Domain Domain => Domain.FromRange(MinFrequency, MaxFrequency, FrequencyResolution);
 
         [Category("Pipeline")]
@@ -34,21 +33,6 @@ namespace AEther
 
         [Category("Visualization")]
         public double HistorySeconds { get; set; } = 1;
-
-        [Category("Visualization")]
-        public double HistoryPresentationDelayMilliseconds { get; set; } = 0;
-
-        [Category("Storm responses")]
-        public double FlashDecaySeconds { get; set; } = .09;
-
-        [Category("Storm responses")]
-        public double AfterglowSeconds { get; set; } = 1.2;
-
-        [Category("Storm responses")]
-        public double OrbitInertiaSeconds { get; set; } = 2.8;
-
-        [Category("Storm responses")]
-        public double BuildReleaseSeconds { get; set; } = 5;
 
         [Category("Splitter")]
         public double SeparationFloorDb { get; set; } = -80;
@@ -101,9 +85,6 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(MaxParallelization));
             if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)
                 throw new ArgumentOutOfRangeException(nameof(HistorySeconds));
-            if (!double.IsFinite(HistoryPresentationDelayMilliseconds)
-                || HistoryPresentationDelayMilliseconds < 0 || HistoryPresentationDelayMilliseconds > 250)
-                throw new ArgumentOutOfRangeException(nameof(HistoryPresentationDelayMilliseconds));
             foreach (var width in new[] { SinuoidWidth, TransientWidth, NoiseWidth })
                 if (!double.IsFinite(width) || width * FrequencyResolution < 2)
                     throw new ArgumentOutOfRangeException(nameof(width), "Filter widths in octaves need at least two frequency samples.");
@@ -117,34 +98,6 @@ namespace AEther
             if (!double.IsFinite(QuantileHistorySeconds) || QuantileHistorySeconds <= 0)
                 throw new ArgumentOutOfRangeException(nameof(QuantileHistorySeconds));
             if (!Enum.IsDefined(SplitOrder)) throw new ArgumentOutOfRangeException(nameof(SplitOrder));
-            if (!double.IsFinite(FlashDecaySeconds) || FlashDecaySeconds <= 0
-                || !double.IsFinite(AfterglowSeconds) || AfterglowSeconds <= 0
-                || !double.IsFinite(OrbitInertiaSeconds) || OrbitInertiaSeconds <= 0
-                || !double.IsFinite(BuildReleaseSeconds) || BuildReleaseSeconds <= 0)
-                throw new ArgumentOutOfRangeException(nameof(OrbitInertiaSeconds));
-        }
-
-        public static AnalyzerOptions ReadFromFile(string path)
-        {
-
-            var file = new FileInfo(path);
-            var serializer = new XmlSerializer(typeof(AnalyzerOptions));
-            using var stream = file.Open(FileMode.Open, FileAccess.Read);
-            var result = serializer.Deserialize(stream);
-            if (result is not AnalyzerOptions options)
-                throw new InvalidCastException();
-            return options;
-
-        }
-
-        public void WriteToFile(string path)
-        {
-
-            var file = new FileInfo(path);
-            var serializer = new XmlSerializer(typeof(AnalyzerOptions));
-            using var stream = file.Open(FileMode.Create, FileAccess.Write);
-            serializer.Serialize(stream, this);
-
         }
 
     }

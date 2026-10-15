@@ -1,9 +1,0 @@
-﻿
-cbuffer CameraConstants : register(b1)
-{
-	float4x4 View;
-	float4x4 Projection;
-	float3 ViewPosition;
-	float FarPlane;
-	float4x4 ViewDirectionMatrix;
-};

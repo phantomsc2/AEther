@@ -9,6 +9,11 @@ namespace AEther
         DateTime Time
     )
     {
+        public long SampleIndex { get; init; }
+        public long AnalysisRow { get; init; }
+        public long ByteIndex { get; init; }
+        public long CaptureTimestamp { get; init; }
+        public long AnalysisTimestamp { get; init; }
 
         public Memory<T> GetChannel(int channelIndex)
         {

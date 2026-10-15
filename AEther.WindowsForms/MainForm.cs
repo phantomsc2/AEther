@@ -1,263 +1,201 @@
-﻿using AEther.NAudio;
-using System;
-using System.Buffers;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Threading;
-using System.Windows.Forms;
+using AEther.NAudio;
+using System.Runtime.InteropServices;
 
-namespace AEther.WindowsForms
+namespace AEther.WindowsForms;
+
+public sealed class MainForm : Form
 {
-    public partial class MainForm : Form
+    readonly Panel canvas = new() { Dock = DockStyle.Fill, BackColor = Color.Black };
+    readonly SettingsForm settings = new();
+    readonly SemaphoreSlim sessionGate = new(1, 1);
+    readonly System.Windows.Forms.Timer reloadTimer = new() { Interval = 250 };
+    readonly System.Windows.Forms.Timer timingTimer = new() { Interval = 500 };
+    readonly Func<SampleSource>? createSource;
+    Session? session;
+    FileSystemWatcher? watcher;
+    bool closing, shutdownComplete, fullscreen;
+    Rectangle windowBounds;
+
+    public MainForm(Func<SampleSource>? createSource = null)
     {
-
-        public const string LoopbackEntry = "Loopback";
-
-        public readonly Graphics Graphics;
-        Session? Session;
-        readonly SemaphoreSlim SessionGate = new(1, 1);
-        readonly System.Windows.Forms.Timer ReloadTimer = new() { Interval = 250 };
-        bool IsShuttingDown;
-        bool ShutdownComplete;
-        bool Ready;
-
-        public MainForm()
+        this.createSource = createSource;
+        Text = "AEther"; ClientSize = new(1264, 681); KeyPreview = true;
+        Controls.Add(canvas);
+        AddOwnedForm(settings);
+        settings.SettingsChanged += async (_, _) => await RestartAsync();
+        settings.ShortcutRequested += key =>
         {
-            InitializeComponent();
-            Graphics = new Graphics(Handle);
-            Graphics.OnShaderChange += Graphics_OnShaderChange;
-            ReloadTimer.Tick += ReloadTimer_Tick;
-            Input.Items.Clear();
-            Input.Items.Add(LoopbackEntry);
-            Input.Items.AddRange(Recorder.GetAvailableDeviceNames().ToArray());
-            Input.SelectedIndex = 0;
-            AnalyzerOptions.SelectedObject = new AnalyzerOptions();
-            Ready = true;
-        }
-
-        private void Graphics_OnShaderChange(object? sender, string e)
+            if (key == Keys.F11) ToggleFullscreen();
+            if (key == Keys.F5) _ = RestartAsync();
+        };
+        canvas.Resize += (_, _) =>
         {
-            if (IsShuttingDown || IsDisposed || !IsHandleCreated)
-                return;
+            if (WindowState != FormWindowState.Minimized)
+                session?.Renderer.Resize(canvas.ClientSize.Width, canvas.ClientSize.Height);
+        };
+        reloadTimer.Tick += (_, _) =>
+        {
+            reloadTimer.Stop();
+            if (session is { } active && !active.Renderer.ReloadShaders())
+            { settings.SetStatus(active.Renderer.ShaderError!); settings.Show(this); }
+            else settings.SetStatus("Shaders reloaded.");
+        };
+        Application.Idle += OnIdle;
+        timingTimer.Tick += (_, _) => { if (settings.Visible) settings.SetTiming(session); };
+        timingTimer.Start();
+    }
+
+    protected override async void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        await RestartAsync();
+    }
+
+    async Task RestartAsync()
+    {
+        if (closing || !IsHandleCreated) return;
+        await sessionGate.WaitAsync();
+        try
+        {
+            if (closing) return;
+            await StopSessionAsync();
+            if (closing) return;
+            MoveToDisplay();
+            SampleSource source = createSource?.Invoke() ?? (settings.InputName == SettingsForm.Loopback
+                ? new Loopback() : new Recorder(settings.InputName));
+            Session? next = null;
             try
             {
-                BeginInvoke((Action)(() =>
-                {
-                    if (IsShuttingDown)
-                        return;
-                    ReloadTimer.Stop();
-                    ReloadTimer.Start();
-                }));
-            }
-            catch (InvalidOperationException) when (IsShuttingDown || IsDisposed) { }
-        }
-
-        private async void ReloadTimer_Tick(object? sender, EventArgs e)
-        {
-            ReloadTimer.Stop();
-            await ResetAsync(validateShaders: true);
-        }
-
-        async Task StartAsync()
-        {
-            if (AnalyzerOptions.SelectedObject is not AnalyzerOptions options)
-            {
-                throw new InvalidCastException();
-            }
-            SampleSource source = Input.SelectedItem?.ToString() switch
-            {
-                LoopbackEntry => new Loopback(),
-                string s => new Recorder(s),
-                _ => throw new Exception(),
-            };
-            Session? session = null;
-            try
-            {
-                session = new(this, source, States, options);
-                session.Start();
-                Session = session;
+                next = new(canvas.Handle, canvas.ClientSize.Width, canvas.ClientSize.Height, source, settings.Options);
+                next.Renderer.Scene = settings.Scene;
+                next.CaptureStopped += CaptureStopped;
+                next.Start();
+                session = next;
+                Text = $"AEther — {settings.Scene}";
+                watcher = new(next.Renderer.ShaderDirectory, "*.hlsl") { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName };
+                watcher.Changed += ShaderChanged; watcher.Created += ShaderChanged; watcher.Renamed += ShaderChanged;
+                watcher.EnableRaisingEvents = true;
+                settings.SetStatus("Running. Space: settings · F11: fullscreen\nF5: restart · R: level · I: intensity · [ / ]: slice");
             }
             catch
             {
-                if (session is not null)
-                {
-                    try { await session.StopAsync(); }
-                    finally { session.Dispose(); }
-                }
-                else
-                    source.Dispose();
+                session = null;
+                if (next != null) { try { await next.StopAsync(); } finally { next.Dispose(); } }
+                else source.Dispose();
                 throw;
             }
-
         }
-
-        public async Task StopAsync()
-        {
-            await SessionGate.WaitAsync();
-            try
-            {
-                await StopCoreAsync();
-            }
-            finally { SessionGate.Release(); }
-        }
-
-        async Task StopCoreAsync()
-        {
-            var session = Session;
-            Session = null;
-            if (session is null)
-                return;
-            try { await session.StopAsync(); }
-            finally { session.Dispose(); }
-        }
-
-        public void Render()
-        {
-            if (Session is Session session)
-            {
-                session.Render();
-            }
-        }
-
-        void ToggleFullscreen()
-        {
-            if (Graphics.IsFullscreen)
-            {
-                Graphics.IsFullscreen = false;
-                Graphics.SetMode(Graphics.NativeMode with
-                {
-                    Width = ClientSize.Width,
-                    Height = ClientSize.Height,
-                });
-            }
-            else
-            {
-                Graphics.IsFullscreen = true;
-                Graphics.SetMode(Graphics.NativeMode);
-            }
-        }
-
-        async Task ResetAsync(bool validateShaders = false)
-        {
-            if (!Ready || !Created || IsShuttingDown)
-            {
-                return;
-            }
-            await SessionGate.WaitAsync();
-            try
-            {
-                if (IsShuttingDown)
-                    return;
-                if (validateShaders)
-                    Graphics.ValidateShaders();
-                var selected = States.SelectedIndex;
-                await StopCoreAsync();
-                if (!IsShuttingDown)
-                {
-                    await StartAsync();
-                    if (selected >= 0 && selected < States.Items.Count)
-                        States.SelectedIndex = selected;
-                }
-            }
-            catch (Exception error)
-            {
-                MessageBox.Show(this, error.Message, "AEther could not restart", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally { SessionGate.Release(); }
-        }
-
-        protected override void OnResizeEnd(EventArgs e)
-        {
-            base.OnResizeEnd(e);
-            Graphics.SetMode(Graphics.NativeMode with
-            {
-                Width = ClientSize.Width,
-                Height = ClientSize.Height,
-            });
-        }
-
-        protected async override void OnFormClosing(FormClosingEventArgs e)
-        {
-            if (ShutdownComplete)
-            {
-                base.OnFormClosing(e);
-                return;
-            }
-            e.Cancel = true;
-            base.OnFormClosing(e);
-            if (IsShuttingDown)
-                return;
-            IsShuttingDown = true;
-            ReloadTimer.Stop();
-            Graphics.OnShaderChange -= Graphics_OnShaderChange;
-            try { await StopAsync(); }
-            catch (Exception error)
-            {
-                System.Diagnostics.Debug.WriteLine(error);
-            }
-            finally
-            {
-                Graphics.Dispose();
-                ReloadTimer.Dispose();
-                ShutdownComplete = true;
-                Close();
-            }
-        }
-
-        protected async override void OnShown(EventArgs e)
-        {
-            base.OnShown(e);
-            Graphics.SetMode(Graphics.NativeMode with
-            {
-                Width = ClientSize.Width,
-                Height = ClientSize.Height,
-            });
-            await ResetAsync();
-        }
-
-        protected async override void OnKeyDown(KeyEventArgs e)
-        {
-            base.OnKeyDown(e);
-            switch (e.KeyCode)
-            {
-                case Keys.Space:
-                    Panel.Visible ^= true;
-                    break;
-                case Keys.F5:
-                    await ResetAsync();
-                    break;
-                case Keys.F9:
-                    if (Session is Session profilingSession)
-                    {
-                        var profile = profilingSession.Analyzer.Profile;
-                        if (!profile.Enabled)
-                            profile.Start();
-                        else
-                        {
-                            var folder = System.IO.Path.Combine(AppContext.BaseDirectory, "profiles");
-                            var path = await Task.Run(() => profile.Save(folder));
-                            MessageBox.Show(this, path, "Profile saved (CSV and summary)");
-                        }
-                    }
-                    break;
-                case Keys.F11:
-                    ToggleFullscreen();
-                    break;
-                case Keys.Escape:
-                    Close();
-                    break;
-            }
-        }
-
-        private async void Options_PropertyValueChanged(object s, PropertyValueChangedEventArgs e)
-        {
-            await ResetAsync();
-        }
-
-        private async void Input_SelectedValueChanged(object? sender, EventArgs e)
-        {
-            await ResetAsync();
-        }
-
+        catch (Exception error) { settings.SetStatus(error.Message); settings.Show(this); }
+        finally { sessionGate.Release(); }
     }
+
+    void CaptureStopped(object? sender, Exception? error)
+    {
+        if (error == null || closing) return;
+        try { BeginInvoke(() => { if (closing) return; settings.SetStatus(error.Message); settings.Show(this); }); }
+        catch (InvalidOperationException) when (closing || IsDisposed) { }
+    }
+
+    void ShaderChanged(object sender, FileSystemEventArgs e)
+    {
+        if (closing) return;
+        try { BeginInvoke(() => { if (closing) return; reloadTimer.Stop(); reloadTimer.Start(); }); }
+        catch (InvalidOperationException) when (closing || IsDisposed) { }
+    }
+
+    async Task StopSessionAsync()
+    {
+        reloadTimer.Stop(); watcher?.Dispose(); watcher = null;
+        var previous = session; session = null;
+        if (previous == null) return;
+        previous.CaptureStopped -= CaptureStopped;
+        try { await previous.StopAsync(); } finally { previous.Dispose(); }
+    }
+
+    void MoveToDisplay()
+    {
+        var screen = Screen.AllScreens[Math.Min(settings.DisplayIndex, Screen.AllScreens.Length - 1)];
+        if (fullscreen) Bounds = screen.Bounds;
+        else if (Screen.FromControl(this).DeviceName != screen.DeviceName)
+            Location = new(screen.WorkingArea.Left + 40, screen.WorkingArea.Top + 40);
+    }
+
+    void ToggleFullscreen()
+    {
+        if (!fullscreen)
+        {
+            windowBounds = Bounds; WindowState = FormWindowState.Normal;
+            FormBorderStyle = FormBorderStyle.None; fullscreen = true; MoveToDisplay();
+        }
+        else
+        {
+            fullscreen = false; FormBorderStyle = FormBorderStyle.Sizable; Bounds = windowBounds;
+        }
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        switch (keyData)
+        {
+            case Keys.Space:
+                if (settings.Visible) settings.Hide(); else settings.Show(this);
+                return true;
+            case Keys.F11: ToggleFullscreen(); return true;
+            case Keys.F5: _ = RestartAsync(); return true;
+            case Keys.Escape: Close(); return true;
+            case Keys.R: if (session != null) session.Renderer.CombinedLevel ^= true; return true;
+            case Keys.I: if (session != null) session.Renderer.Intensity ^= true; return true;
+            case Keys.OemOpenBrackets: if (session != null) session.Renderer.SliceDepth -= .05f; return true;
+            case Keys.OemCloseBrackets: if (session != null) session.Renderer.SliceDepth += .05f; return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    void OnIdle(object? sender, EventArgs e)
+    {
+        while (!closing && session != null && !PeekMessage(out _, IntPtr.Zero, 0, 0, 0))
+        {
+            if (WindowState == FormWindowState.Minimized) break;
+            try { session.Renderer.Render(); }
+            catch (Exception error)
+            {
+                settings.SetStatus(error.Message); settings.Show(this);
+                _ = StopAfterRenderFailureAsync(); break;
+            }
+        }
+    }
+
+    async Task StopAfterRenderFailureAsync()
+    {
+        await sessionGate.WaitAsync();
+        try { await StopSessionAsync(); }
+        catch (Exception error) { if (!closing) settings.SetStatus(error.Message); }
+        finally { sessionGate.Release(); }
+    }
+
+    protected override async void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (shutdownComplete) { base.OnFormClosing(e); return; }
+        e.Cancel = true; base.OnFormClosing(e);
+        if (closing) return;
+        closing = true; Application.Idle -= OnIdle;
+        await sessionGate.WaitAsync();
+        try { await StopSessionAsync(); }
+        catch (Exception error) { System.Diagnostics.Debug.WriteLine(error); }
+        finally
+        {
+            sessionGate.Release(); reloadTimer.Dispose(); timingTimer.Dispose(); settings.Dispose();
+            shutdownComplete = true; Close();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct NativeMessage
+    {
+        public IntPtr Window; public uint Message; public UIntPtr WParam; public IntPtr LParam;
+        public uint Time; public Point Position; public uint Private;
+    }
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool PeekMessage(out NativeMessage message, IntPtr window, uint min, uint max, uint remove);
 }

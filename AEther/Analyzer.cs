@@ -29,6 +29,9 @@ namespace AEther
         readonly Channel<(SampleEvent<byte> Event, long Arrival)> Input;
         readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         long Dropped;
+        long capturedBytes;
+        long previousArrival;
+        readonly DateTime audioOrigin = DateTime.Now;
 
         /// <summary>Capture callbacks rejected because the input queue was full or closed.</summary>
         public long DroppedInputCount => Interlocked.Read(ref Dropped);
@@ -75,9 +78,13 @@ namespace AEther
             if (data.IsEmpty)
                 return;
             var arrival = Stopwatch.GetTimestamp();
+            var previous = Interlocked.Exchange(ref previousArrival, arrival);
+            if (previous != 0)
+                Profile.Record("capture.arrival_interval_ms", Stopwatch.GetElapsedTime(previous, arrival).TotalMilliseconds);
             Profile.Record("capture.packet_ms", data.Length * 1000.0 / Format.Size / Format.SampleRate);
             var captureStart = DateTime.Now - TimeSpan.FromSeconds(data.Length / (double)Format.Size / Format.SampleRate);
-            var evt = RentEvent<byte>(data.Length, 1, captureStart);
+            var byteIndex = Interlocked.Add(ref capturedBytes, data.Length) - data.Length;
+            var evt = RentEvent<byte>(data.Length, 1, captureStart) with { ByteIndex = byteIndex };
             data.CopyTo(evt.Samples.AsSpan());
             if (!Input.Writer.TryWrite((evt, arrival)))
             {
@@ -97,6 +104,7 @@ namespace AEther
         {
             var filled = 0;
             var batchTime = DateTime.Now;
+            long expectedByte = 0, batchIndex = 0, captureTimestamp = 0;
             try
             {
                 await Started.Task;
@@ -107,17 +115,30 @@ namespace AEther
                     try
                     {
                         var offset = 0;
+                        if (input.ByteIndex != expectedByte) filled = 0;
+                        expectedByte = input.ByteIndex + input.SampleCount;
                         while (offset < input.SampleCount)
                         {
                             if (filled == 0)
-                                batchTime = input.Time + TimeSpan.FromSeconds(offset / (double)Format.Size / Format.SampleRate);
+                            {
+                                var position = input.ByteIndex + offset;
+                                var remainder = position % Batch.Length;
+                                if (remainder != 0)
+                                {
+                                    offset += (int)Math.Min(Batch.Length - remainder, input.SampleCount - offset);
+                                    continue;
+                                }
+                                batchIndex = position / Batch.Length;
+                                batchTime = audioOrigin + TimeSpan.FromSeconds(batchIndex * (double)BatchSize / Format.SampleRate);
+                                captureTimestamp = packet.Arrival;
+                            }
                             var count = Math.Min(Batch.Length - filled, input.SampleCount - offset);
                             input.Samples.AsSpan(offset, count).CopyTo(Batch.AsSpan(filled));
                             filled += count;
                             offset += count;
                             if (filled == Batch.Length)
                             {
-                                AnalyzeBatch(batchTime);
+                                AnalyzeBatch(batchTime, batchIndex, captureTimestamp);
                                 filled = 0;
                             }
                         }
@@ -137,7 +158,7 @@ namespace AEther
             }
         }
 
-        void AnalyzeBatch(DateTime time)
+        void AnalyzeBatch(DateTime time, long row, long captureTimestamp)
         {
             using var totalTiming = Profile.Measure("analysis.total_ms");
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
@@ -176,7 +197,9 @@ namespace AEther
                     Splitter[c].Process(spectrum.GetChannel(c), output.GetChannel(c));
                 }
                 // Publish immediately; render pacing belongs to the renderer.
-                Profile.Record("analysis.batch_age_ms", Math.Max(0, (DateTime.Now - time).TotalMilliseconds));
+                output = output with { SampleIndex = row * BatchSize, AnalysisRow = row,
+                    CaptureTimestamp = captureTimestamp, AnalysisTimestamp = Stopwatch.GetTimestamp() };
+                Profile.Elapsed("analysis.capture_to_completion_ms", captureTimestamp);
                 using (Profile.Measure("analysis.subscribers_ms"))
                     SamplesAnalyzed?.Invoke(this, output);
             }

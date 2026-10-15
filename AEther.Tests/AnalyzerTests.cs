@@ -37,6 +37,33 @@ namespace AEther.Tests
         }
 
         [Test]
+        public async Task DroppedCaptureLeavesAnalysisRowsMissing()
+        {
+            var analyzer = new Analyzer(Format, Options(2));
+            var rows = new List<long>();
+            var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            analyzer.SamplesAnalyzed += (_, evt) =>
+            {
+                rows.Add(evt.AnalysisRow);
+                Assert.That(evt.SampleIndex, Is.EqualTo(evt.AnalysisRow * 80));
+                if (rows.Count == 2) drained.TrySetResult();
+            };
+            for (var i = 0; i < 6; i++) analyzer.PostSamples(Audio(80));
+            analyzer.Start();
+            try
+            {
+                await drained.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                analyzer.PostSamples(Audio(80));
+            }
+            finally
+            {
+                analyzer.Stop();
+                await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            Assert.That(rows, Is.EqualTo(new long[] { 0, 1, 6 }));
+        }
+
+        [Test]
         public async Task ExactBatchPublishesWithoutWaitingForAnotherCallback()
         {
             var analyzer = new Analyzer(Format, Options());
