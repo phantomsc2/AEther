@@ -10,10 +10,34 @@ Audio analysis and audio-reactive DirectX visualization on Windows using NAudio.
 - **AEther.Benchmarks**: using [BenchmarkDotNet](https://benchmarkdotnet.org/)
 - **AEther.NAudio**: audio input with [NAudio](https://github.com/naudio/NAudio)
 - **AEther.Tests**: using [NUnit](https://nunit.org/)
-- **AEther.WindowsForms**: outputs DirectX visualization with [Windows Forms](https://github.com/dotnet/winforms) and [SharpDX](http://sharpdx.org/)
+- **AEther.Vortice**: D3D11 fullscreen shaders, audio textures and runtime shader compilation
+- **AEther.WindowsForms**: render window, separate settings window and application lifecycle
 
 - **tools/AEther.CaptureProbe**: measures NAudio loopback packet timing
 - **tools/AEther.Smoke**: exercises analysis and rendering with synthetic audio
+
+## Running
+
+Install the .NET 10 SDK, then run `dotnet run --project AEther.WindowsForms`.
+The app starts windowed, captures the default system audio output and displays Mandelbox.
+
+- **Space**: show or hide settings. Closing settings keeps the render window running.
+- **F11**: toggle borderless fullscreen on the selected display.
+- **F5**: rebuild the capture/analysis/render session.
+- **R**: toggle combined level view in Spectrum and Histogram.
+- **I**: toggle Spectrum intensity view.
+- **[ / ]**: move the Mandelbox slice.
+- **Escape**: close the render window (or hide settings when settings has focus).
+
+Settings select audio input, scene, display and analyzer options. Every settings change
+restarts the whole session. Defaults live in code; there is no persisted configuration.
+Histogram shows one second of history per stereo side by default, with now in the center.
+Mono is mirrored; for multichannel inputs the first two channels are displayed.
+
+Edit `AEther.Vortice/Shaders/*.hlsl` while running from the repository to reload shaders.
+Compilation errors appear in settings and the last working shaders remain active.
+Published builds load shaders from the `Shaders` folder beside the executable.
+See [renderer notes](doc/vortice-renderer.md) for the pipeline and verification commands.
 
 ## Audio capture
 

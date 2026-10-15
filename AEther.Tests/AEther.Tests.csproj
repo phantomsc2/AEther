@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AEther.NAudio\AEther.NAudio.csproj" />
     <ProjectReference Include="..\AEther\AEther.csproj" />
+    <ProjectReference Include="../AEther.Vortice/AEther.Vortice.csproj" />
   </ItemGroup>
 
 </Project>
