@@ -1,5 +1,11 @@
 # Sliding DFT audit
 
+## Window configuration
+
+`AnalyzerOptions.WindowFunction` selects a `DFTWindow` and defaults to `Hann`. In the Windows Forms settings, choose **DFT > Window function**; the existing settings-change handler restarts the session with the selected window. In code, use e.g. `new AnalyzerOptions { WindowFunction = DFTWindow.FlatTop }`. Direct processor callers can supply the optional fifth constructor argument. Unknown enum values are rejected before analysis starts. The selected window is included in profile metadata.
+
+The choices are Hann, Rectangular, Hamming, Blackman, Nuttall and FlatTop. Hamming and Blackman use their exact rational coefficients; the rounded alternatives and separate Exact entries have been removed. Nuttall uses the correctly spelled name and retains Nuttall4b coefficients. FlatTop adds a distinct amplitude-measurement option: its flatter response reduces off-bin level error at the cost of a much wider peak and nine DFT states. Its five cosine coefficients follow [SciPy's flat-top implementation](https://github.com/scipy/scipy/blob/main/scipy/signal/windows/_windows.py). It uses the existing scalar fallback when it exceeds the SIMD width.
+
 The current implementation is mathematically correct for valid inputs and the default Hann window. The SIMD implementation computes the same filter as `WindowedDFTFilter`, not the unwindowed `DFTFilter`. This audit concerns the current working tree, which already fixes the old window-bin offset and coherent-gain normalization.
 
 ## Recurrence and phase
@@ -30,20 +36,47 @@ This is a periodic Hann (denominator N), not the symmetric N-1 variant. Both are
 
 Both implementations have the same ring length, bins, rotations, sample difference, window weights, active-lane summation order and gain. `ComplexVector` performs the ordinary complex product independently in each lane. SIMD packs the neighboring window components, not time samples. Padding has zero weight and cannot affect output.
 
-The processor always selects Hann, independently of vector width. If three window components do not fit, it falls back to scalar. Blackman and Nuttall require five and seven components respectively, so they use scalar on this host's four-double vectors.
+The processor defaults to Hann, independently of vector width. If the selected window's components do not fit, it falls back to scalar. Blackman, Nuttall and FlatTop require five, seven and nine components respectively, so they use scalar on this host's four-double vectors.
 
-`DFTAuditTests` uses an independent direct time-domain sum, covering startup, ring boundaries, irregular chunks, DC + tone + noise, frequencies from 27.5 to 23,000 Hz, and rectangular/Hann/Hamming/Blackman/Nuttall windows. On this host:
+`DFTAuditTests` uses an independent direct time-domain sum, covering startup, ring boundaries, irregular chunks, DC + tone + noise, frequencies from 27.5 to 23,000 Hz, and all six selectable windows. On this host:
 
 | Check | Result |
 | --- | --- |
 | Vector width / accelerated | 4 doubles / yes |
-| Direct-reference combinations | 25 |
+| Direct-reference combinations | 30 |
 | SIMD-supported combinations | 15 |
 | Maximum scalar/SIMD complex difference | 0 in tested cases |
-| Maximum normalized direct-reference difference | 2.002086e-15 |
+| Maximum normalized direct-reference difference | 2.534240e-15 |
 | 10 million constant samples, then 2N zeros | maximum residual 8.418188e-15 |
 
-Existing tests also cover on-bin sine gain, a 40-band scalar/SIMD processor comparison and one million sine samples followed by silence. Equality on this host does not promise bitwise equality on every JIT/CPU; numerical tolerance is the portable contract.
+Tests also cover on-bin sine gain and a 40-band scalar/SIMD processor comparison for every choice, the selected window reaching both analyzer channels, reduced half-bin amplitude error for FlatTop, and one million Hann-windowed sine samples followed by silence. Equality on this host does not promise bitwise equality on every JIT/CPU; numerical tolerance is the portable contract.
+
+## SIMD throughput and window selection (2026-10-15)
+
+A temporary console probe referencing the Release AEther assembly measured the default 65-band Hann processor at 48 kHz, one channel, with parallelism disabled. Runtime: .NET 10.0.13; hardware-accelerated vectors: four doubles. Each pair received a one-second warmup; timings are medians of seven alternating-order rounds of 1,000 calls. These are local throughput measurements, not BenchmarkDotNet results or end-to-end capture/render timings.
+
+| Input block | Scalar per call | SIMD per call | Speedup |
+| --- | --- | --- | --- |
+| 187 samples | 63.6 us | 47.9 us | 1.33x |
+| 1024 samples | 343.8 us | 234.6 us | 1.47x |
+
+SIMD is useful and does not change spectral quality. Its current single-vector design cannot accelerate five-state Blackman or seven-state Nuttall on this host. Multiple vector groups would allow both, at additional computation cost. Other candidates to benchmark are keeping state/coefficient vectors in local variables across each block, using explicit real/imaginary vectors in the hot loop, and vectorizing across filters. Cross-filter packing needs a plan for their different ring lengths. These are proposed experiments, not measured improvements. `Vector.IsHardwareAccelerated` should also be considered when selecting the SIMD path.
+
+Before consolidation, the probe evaluated each finite periodic window's analytic frequency response for N=4096 at 0.001-bin intervals through 64 bins. The first minimum and the maximum response after it give the following historical leakage comparison. The Exact rows now correspond to the Hamming and Blackman choices; the rounded alternatives are no longer exposed. ENBW is computed from the cosine coefficients. The widths are DFT bins (sampleRate/N), not the log-spaced display bands.
+
+| Window | States | Peak sidelobe | First minimum from center | ENBW |
+| --- | --- | --- | --- | --- |
+| Rectangular | 1 | -13.26 dB | 1 bin | 1.0000 |
+| Hann | 3 | -31.47 dB | 2 bins | 1.5000 |
+| Hamming | 3 | -42.67 dB | 2 bins | 1.3628 |
+| Hamming Exact | 3 | -41.69 dB | 2 bins | 1.3528 |
+| Blackman | 5 | -58.11 dB | 3 bins | 1.7268 |
+| Blackman Exact | 5 | -68.24 dB | 3 bins | 1.6937 |
+| Nuttall | 7 | -93.32 dB | 4 bins | 2.0212 |
+
+All seven original arrays were valid cosine windows. The renamed `NuttallWindow` specifically represents Nuttall4b (continuous first derivative), not the Blackman-Nuttall/Nuttall4c variant returned by SciPy's `nuttall`. See the coefficient table in [Heinzel et al.](https://holometer.fnal.gov/GH_FFT.pdf). "Exact" is a coefficient variant, not a universal quality ranking. In particular, exact Blackman has slower far-sidelobe decay than ordinary Blackman; see [SciPy's Blackman notes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.windows.blackman.html).
+
+Hann remains the general-purpose default. The window option allows Hamming at the same three-state cost, or Blackman/Nuttall for greater sidelobe rejection. Hamming's boundary discontinuity gives slower far-sidelobe decay than Hann. Wider main lobes can hide a nearby weak tone despite lower sidelobes; preserving main-lobe width with Blackman or Nuttall requires longer windows and more latency. Compare windows with two unequal tones over multiple separations, off-bin tones, and attacks, rather than sidelobe level alone. Noise-power comparisons additionally require ENBW normalization; the existing coherent-gain normalization is for sinusoidal amplitude.
 
 ## What the filters actually resolve
 

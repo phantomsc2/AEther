@@ -88,6 +88,6 @@ public class AudioHistoryTests
         history.Post(new(new[] { double.NaN, double.PositiveInfinity, -1.0, 2.0 }, 4,
             DateTime.Now - TimeSpan.FromSeconds(.01)), 1);
         history.Advance(0);
-        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { 0f, 0f, 0f, 1f }));
+        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { 0f, 0f, 0f, 2f }));
     }
 }

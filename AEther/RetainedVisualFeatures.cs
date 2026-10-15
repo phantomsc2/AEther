@@ -3,7 +3,7 @@ using System.Linq;
 
 namespace AEther
 {
-    /// <summary>Visual energy proxy from retained spectral levels; no raw residual bypass.</summary>
+    /// <summary>Visual energy proxy from linear spectral magnitudes.</summary>
     public sealed class RetainedVisualFeatures
     {
         readonly double[] Frequencies;
@@ -27,8 +27,8 @@ namespace AEther
                 double channelPower = 0;
                 for (var k = 0; k < Frequencies.Length; ++k)
                 {
-                    var level = Math.Clamp(channel[4 * k + 3], 0, 1);
-                    var squared = level > 0 ? Math.Pow(10, 10 * (level - 1)) : 0;
+                    var level = channel[4 * k + 3];
+                    var squared = level * level;
                     channelPower += squared;
                     if (Frequencies[k] < 160) low += squared;
                     else if (Frequencies[k] < 1600) body += squared;

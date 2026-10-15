@@ -9,7 +9,7 @@ namespace AEther.Tests
         [Test]
         public void SteadyToneDoesNotAlternateItsDominantBandAroundTheTemporalBaseline()
         {
-            var options = new AnalyzerOptions();
+            var options = new AnalyzerOptions { SplitGain = 1 };
             var domain = options.Domain;
             var frequencies = domain.ToArray();
             const int bin = 30, rate = 48000, batch = 187;
@@ -38,7 +38,7 @@ namespace AEther.Tests
         [Test]
         public void InaudibleSpectralContrastsDoNotCreateBrightDiagnosticChannels()
         {
-            var options = new AnalyzerOptions();
+            var options = new AnalyzerOptions { SplitGain = 1 };
             var splitter = new Splitter(options.Domain, options);
             var input = Enumerable.Repeat(-10.0, options.Domain.Length).ToArray();
             var output = new double[4 * input.Length];
@@ -47,7 +47,7 @@ namespace AEther.Tests
             splitter.Process(input, output);
             Assert.That(output[4 * 30 + 1], Is.Zero);
             for (var i = 0; i < 80; ++i) splitter.Process(input, output);
-            Assert.That(output[4 * 30], Is.Zero);
+            Assert.That(output[4 * 30], Is.EqualTo(Math.Pow(10, -8.5)).Within(1e-20));
         }
     }
 }

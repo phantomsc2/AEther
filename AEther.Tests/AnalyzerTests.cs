@@ -173,10 +173,44 @@ namespace AEther.Tests
             => Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, Options(capacity)));
 
         [Test]
+        public async Task SelectedWindowReachesEveryAudioChannel([Values] DFTWindow window)
+        {
+            var options = Options();
+            options.WindowFunction = window;
+            var analyzer = new Analyzer(Format, options);
+            var rows = Collect(analyzer);
+            var bytes = Audio(80);
+            analyzer.PostSamples(bytes);
+            analyzer.Stop();
+            await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(rows.Count, Is.EqualTo(1));
+            for (var c = 0; c < Format.ChannelCount; ++c)
+            {
+                var processor = new DFTProcessor(options.Domain, Format.SampleRate, false, 0, window);
+                var samples = Enumerable.Range(0, 80)
+                    .Select(i => (double)BitConverter.ToSingle(bytes, (2 * i + c) * sizeof(float))).ToArray();
+                processor.Process(samples);
+                var expected = new double[options.Domain.Length];
+                processor.Output(expected);
+                for (var k = 0; k < expected.Length; ++k)
+                    Assert.That(rows[0][c * 4 * expected.Length + 4 * k + 3],
+                        Is.EqualTo(options.SplitGain * Math.Pow(10, expected[k])).Within(1e-12));
+            }
+        }
+
+        [Test]
+        public void RejectsUnknownWindowBeforeStartingAnalysis()
+        {
+            var options = Options();
+            options.WindowFunction = (DFTWindow)999;
+            Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, options));
+        }
+
+        [Test]
         public void RejectsInvalidFilterWindowsAndFrequencies()
         {
             var options = Options();
-            options.SinuoidLength = 0;
+            options.MedianLength = 0;
             Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, options));
             options = Options();
             options.MaxFrequency = 5000;

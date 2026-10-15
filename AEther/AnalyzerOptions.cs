@@ -3,7 +3,6 @@ using System.ComponentModel;
 
 namespace AEther
 {
-    public enum SplitterOrder { TimeThenFrequency, FrequencyThenTime }
     public class AnalyzerOptions
     {
 
@@ -31,42 +30,35 @@ namespace AEther
         [Category("DFT")]
         public bool SIMDEnabled { get; set; } = true;
 
+        [Category("DFT")]
+        [DisplayName("Window function")]
+        [DefaultValue(DFTWindow.Hann)]
+        [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
+        public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
+
         [Category("Visualization")]
         public double HistorySeconds { get; set; } = 1;
 
         [Category("Splitter")]
-        public double SeparationFloorDb { get; set; } = -80;
+        [DefaultValue(3.0)]
+        [Description("Global linear amplitude gain applied after classification to all split outputs and their total.")]
+        public double SplitGain { get; set; } = 3.0;
 
         [Category("Splitter")]
-        public double SinuoidWidth { get; set; } = .3;
+        [Description("Horizontal evidence: causal median history in seconds.")]
+        public double MedianLength { get; set; } = .3;
 
         [Category("Splitter")]
-        public double SinuoidLength { get; set; } = .3;
+        [Description("Vertical evidence: centered median width in octaves.")]
+        public double MedianWidth { get; set; } = 3;
 
         [Category("Splitter")]
-        public double TransientWidth { get; set; } = 3;
+        [Description("Class membership is zero below this evidence ratio (at least 0.5).")]
+        public double FuzzyLower { get; set; } = .7;
 
         [Category("Splitter")]
-        public double TransientLength { get; set; } = .03;
-
-        [Category("Splitter")]
-        public double NoiseWidth { get; set; } = 1;
-
-        [Category("Splitter")]
-        public double NoiseLength { get; set; } = .1;
-
-        [Category("Splitter")]
-        [Description("Shared post-filter EMA time constant in seconds; zero disables it. Transients attack immediately and use this time for release.")]
-        public double JitterLength { get; set; } = .01;
-
-        [Category("Splitter")]
-        public SplitterOrder SplitOrder { get; set; } = SplitterOrder.TimeThenFrequency;
-
-        [Category("Splitter")]
-        public bool AdaptiveSpectrumRange { get; set; } = true;
-
-        [Category("Splitter")]
-        public double QuantileHistorySeconds { get; set; } = 60;
+        [Description("Class membership is one above this evidence ratio (at most 1).")]
+        public double FuzzyUpper { get; set; } = .8;
 
         public void Validate(SampleFormat format)
         {
@@ -83,21 +75,25 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(FrequencyResolution));
             if (MaxParallelization < 0)
                 throw new ArgumentOutOfRangeException(nameof(MaxParallelization));
+            if (!Enum.IsDefined(WindowFunction))
+                throw new ArgumentOutOfRangeException(nameof(WindowFunction));
             if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)
                 throw new ArgumentOutOfRangeException(nameof(HistorySeconds));
-            foreach (var width in new[] { SinuoidWidth, TransientWidth, NoiseWidth })
-                if (!double.IsFinite(width) || width * FrequencyResolution < 2)
-                    throw new ArgumentOutOfRangeException(nameof(width), "Filter widths in octaves need at least two frequency samples.");
-            foreach (var length in new[] { SinuoidLength, TransientLength, NoiseLength })
-                if (!double.IsFinite(length) || length * TimeResolution < 2)
-                    throw new ArgumentOutOfRangeException(nameof(length), "Filter lengths in seconds need at least two time samples.");
-            if (!double.IsFinite(SeparationFloorDb) || SeparationFloorDb > 0 || SeparationFloorDb < -200)
-                throw new ArgumentOutOfRangeException(nameof(SeparationFloorDb));
-            if (!double.IsFinite(JitterLength) || JitterLength < 0)
-                throw new ArgumentOutOfRangeException(nameof(JitterLength));
-            if (!double.IsFinite(QuantileHistorySeconds) || QuantileHistorySeconds <= 0)
-                throw new ArgumentOutOfRangeException(nameof(QuantileHistorySeconds));
-            if (!Enum.IsDefined(SplitOrder)) throw new ArgumentOutOfRangeException(nameof(SplitOrder));
+            ValidateSplitter(FrequencyResolution, TimeResolution);
+        }
+
+        internal void ValidateSplitter(int resolution, double rate)
+        {
+            if (!double.IsFinite(SplitGain) || SplitGain < 0)
+                throw new ArgumentOutOfRangeException(nameof(SplitGain));
+            if (!double.IsFinite(MedianWidth) || MedianWidth * resolution < 2)
+                throw new ArgumentOutOfRangeException(nameof(MedianWidth), "Median width needs at least two frequency samples.");
+            if (!double.IsFinite(MedianLength) || MedianLength * rate < 2)
+                throw new ArgumentOutOfRangeException(nameof(MedianLength), "Median history needs at least two time samples.");
+            if (!double.IsFinite(FuzzyLower) || FuzzyLower < .5 || FuzzyLower >= 1)
+                throw new ArgumentOutOfRangeException(nameof(FuzzyLower));
+            if (!double.IsFinite(FuzzyUpper) || FuzzyUpper <= FuzzyLower || FuzzyUpper > 1)
+                throw new ArgumentOutOfRangeException(nameof(FuzzyUpper));
         }
 
     }

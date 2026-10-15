@@ -10,33 +10,33 @@ namespace AEther
 
         public static readonly double[] RectWindow = new[] { 1.0 };
         public static readonly double[] HannWindow = new[] { 0.5, 0.5 };
-        public static readonly double[] HammingWindow = new[] { .54, .46 };
-        public static readonly double[] HammingExactWindow = new[] { 25 / 46.0, 21 / 46.0 };
-        public static readonly double[] BlackmanWindow = new[] { .42, .5, .08 };
-        public static readonly double[] BlackmanExactWindow = new[] { 3969 / 9304.0, 4620 / 9304.0, 715 / 9304.0 };
-        public static readonly double[] NuttalWindow = new[] { .355768, .487396, .144232, .012604 };
+        // Use the exact coefficient variants for Hamming and Blackman.
+        public static readonly double[] HammingWindow = new[] { 25 / 46.0, 21 / 46.0 };
+        public static readonly double[] BlackmanWindow = new[] { 3969 / 9304.0, 4620 / 9304.0, 715 / 9304.0 };
+        // Nuttall4b: continuous first derivative at the window boundary.
+        public static readonly double[] NuttallWindow = new[] { .355768, .487396, .144232, .012604 };
+        // Five-term flat top, as used by scipy.signal.windows.flattop.
+        public static readonly double[] FlatTopWindow = new[] { .21557895, .41663158, .277263158, .083578947, .006947368 };
 
-        public static readonly double[][] WindowCandidates = new[]
+        public static double[] GetWindowCosines(DFTWindow window) => window switch
         {
-            RectWindow,
-            HannWindow,
-            BlackmanWindow,
-            NuttalWindow,
+            DFTWindow.Hann => HannWindow,
+            DFTWindow.Rectangular => RectWindow,
+            DFTWindow.Hamming => HammingWindow,
+            DFTWindow.Blackman => BlackmanWindow,
+            DFTWindow.Nuttall => NuttallWindow,
+            DFTWindow.FlatTop => FlatTopWindow,
+            _ => throw new ArgumentOutOfRangeException(nameof(window)),
         };
 
         readonly IDFTFilter[] Filters;
         readonly ParallelOptions? ParallelOptions;
 
-        public DFTProcessor(Domain domain, double sampleRate, bool useSIMD, int maxParallelism)
+        public DFTProcessor(Domain domain, double sampleRate, bool useSIMD, int maxParallelism,
+            DFTWindow windowFunction = DFTWindow.Hann)
         {
-
-            //Console.WriteLine(Vector<float>.Count);
-
             // Window choice is a signal-processing decision, independent of CPU vector width.
-            var cosines = HannWindow;
-
-            //cosines = RectWindow;
-
+            var cosines = GetWindowCosines(windowFunction);
             var window = CreateWindow(cosines);
 
             if (0 < maxParallelism)
@@ -46,10 +46,6 @@ namespace AEther
                     MaxDegreeOfParallelism = maxParallelism,
                 };
             }
-
-            //Filters = domain
-            //    .Select(f => new DFTFilter(f, domain.Resolution, sampleRate))
-            //    .ToArray();
 
             if (cosines.Length == 1)
             {

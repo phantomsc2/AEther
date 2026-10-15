@@ -25,8 +25,7 @@ namespace AEther.Tests
         [Test]
         public void AuditComplexParityAndDirectReferenceAcrossWindowsFrequenciesAndChunking()
         {
-            var windows = new[] { DFTProcessor.RectWindow, DFTProcessor.HannWindow,
-                DFTProcessor.HammingWindow, DFTProcessor.BlackmanWindow, DFTProcessor.NuttalWindow };
+            var windows = Enum.GetValues<DFTWindow>().Select(DFTProcessor.GetWindowCosines);
             var random = new Random(713);
             double maximumParityError = 0, maximumReferenceError = 0;
             var cases = 0;

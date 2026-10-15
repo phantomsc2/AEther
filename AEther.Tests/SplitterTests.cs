@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using NUnit.Framework;
 
@@ -6,42 +6,164 @@ namespace AEther.Tests
 {
     public class SplitterTests
     {
-        [Test]
-        public void SilenceHasNoTonalOrTransientEnergyIncludingAfterWarmup()
+        static readonly Domain Domain = new(27.5, 8, 65);
+        static double[] Flat(double magnitude) => Enumerable.Repeat(Math.Log10(magnitude), Domain.Length).ToArray();
+        static Splitter Create() => new(Domain, new AnalyzerOptions { SplitGain = 1, MedianLength = .5, MedianWidth = 1 }, 10);
+
+        [TestCase(.5, 0)]
+        [TestCase(.7, 0)]
+        [TestCase(.725, .1464466094067262)]
+        [TestCase(.75, .5)]
+        [TestCase(.775, .8535533905932737)]
+        [TestCase(.8, 1)]
+        [TestCase(1, 1)]
+        public void SineMaskMatchesPaperRaisedCosine(double evidence, double membership)
         {
-            var domain = new Domain(27.5, 8, 65);
-            var splitter = new Splitter(domain, new AnalyzerOptions());
-            var input = Enumerable.Repeat(-10.0, domain.Length).ToArray();
-            var output = new double[4 * domain.Length];
-            for (var frame = 0; frame < 200; ++frame)
+            var splitter = Create();
+            var input = Flat(1 - evidence);
+            input[30] = Math.Log10(evidence);
+            var output = new double[4 * Domain.Length];
+            splitter.Process(input, output);
+            Assert.That(output[120], Is.EqualTo(evidence * membership).Within(1e-14));
+            Assert.That(output[121], Is.Zero);
+            Assert.That(output[122], Is.EqualTo(evidence * (1 - membership)).Within(1e-14));
+        }
+
+        [TestCase(.5, 0)]
+        [TestCase(.7, 0)]
+        [TestCase(.725, .1464466094067262)]
+        [TestCase(.75, .5)]
+        [TestCase(.775, .8535533905932737)]
+        [TestCase(.8, 1)]
+        [TestCase(1, 1)]
+        public void TransientMaskMatchesPaperRaisedCosine(double evidence, double membership)
+        {
+            var splitter = Create();
+            var output = new double[4 * Domain.Length];
+            for (var n = 0; n < 8; ++n) splitter.Process(Flat(1 - evidence), output);
+            splitter.Process(Flat(evidence), output);
+            Assert.That(output[120], Is.Zero);
+            Assert.That(output[121], Is.EqualTo(evidence * membership).Within(1e-14));
+            Assert.That(output[122], Is.EqualTo(evidence * (1 - membership)).Within(1e-14));
+        }
+
+        [Test]
+        public void FlatSpectrumIsNoiseAndSustainedNarrowRidgeIsSine()
+        {
+            var splitter = Create();
+            var output = new double[4 * Domain.Length];
+            var input = Flat(.01);
+            input[30] = Math.Log10(.5);
+            for (var n = 0; n < 20; ++n) splitter.Process(input, output);
+            Assert.That(output[120], Is.EqualTo(.5).Within(1e-14));
+            Assert.That(output[121], Is.Zero);
+            Assert.That(output[122], Is.Zero);
+            Assert.That(output[2], Is.EqualTo(.01).Within(1e-14));
+        }
+
+        [Test]
+        public void CausalMedianUsesActualRateAndAttackSettlesWithoutReleaseTail()
+        {
+            var splitter = Create(); // 0.5 s at 10 Hz = five frames, not the options' 256 Hz.
+            var output = new double[4 * Domain.Length];
+            for (var n = 0; n < 8; ++n) splitter.Process(Flat(.01), output);
+            for (var n = 0; n < 2; ++n)
             {
+                splitter.Process(Flat(1), output);
+                Assert.That(output[121], Is.EqualTo(1));
+            }
+            splitter.Process(Flat(1), output);
+            Assert.That(output[121], Is.Zero);
+            Assert.That(output[122], Is.EqualTo(1));
+            splitter.Process(Flat(0), output);
+            Assert.That(output, Is.All.Zero, "median evidence must not retain output after input stops");
+        }
+
+        [Test]
+        public void ComponentsSumToCurrentMagnitudeAcrossMixedHistoryAndFrequencyEdges()
+        {
+            var splitter = Create();
+            var random = new Random(789);
+            var input = new double[Domain.Length];
+            var output = new double[4 * Domain.Length];
+            for (var n = 0; n < 150; ++n)
+            {
+                for (var k = 0; k < input.Length; ++k)
+                    input[k] = random.NextDouble() < .1 ? double.NegativeInfinity : -12 + 14 * random.NextDouble();
                 splitter.Process(input, output);
-                Assert.That(output, Is.All.Zero, $"silence frame {frame}");
+                for (var k = 0; k < input.Length; ++k)
+                {
+                    var magnitude = Math.Pow(10, input[k]);
+                    var i = 4 * k;
+                    Assert.That(output.AsSpan(i, 3).ToArray(), Is.All.InRange(0, magnitude));
+                    Assert.That(output[i] + output[i + 1] + output[i + 2],
+                        Is.EqualTo(magnitude).Within(Math.Max(1e-300, magnitude * 1e-14)));
+                    Assert.That(output[i + 3], Is.EqualTo(magnitude));
+                }
             }
         }
 
         [Test]
-        public void SustainedPeakIsRedAndBroadbandAttackIsGreenThenSettles()
+        public void GainChangesScaleEveryComponentWithoutChangingClassification()
         {
-            var domain = new Domain(27.5, 8, 65);
-            var splitter = new Splitter(domain, new AnalyzerOptions());
-            var input = Enumerable.Repeat(-3.0, domain.Length).ToArray();
-            var output = new double[4 * domain.Length];
-            for (var frame = 0; frame < 80; ++frame)
-                splitter.Process(input, output);
-            input[30] = -1;
-            for (var frame = 0; frame < 80; ++frame)
-                splitter.Process(input, output);
-            Assert.That(output[4 * 30], Is.GreaterThan(0));
-            Assert.That(output[4 * 30 + 1], Is.Zero);
-            for (var bin = 0; bin < input.Length; ++bin)
-                input[bin] += 1;
+            var quiet = Create();
+            var loud = new Splitter(Domain, new AnalyzerOptions { SplitGain = 100, MedianLength = .5, MedianWidth = 1 }, 10);
+            var random = new Random(42);
+            var input = new double[Domain.Length];
+            var gained = new double[input.Length];
+            var a = new double[4 * input.Length];
+            var b = new double[a.Length];
+            for (var n = 0; n < 100; ++n)
+            {
+                for (var k = 0; k < input.Length; ++k)
+                {
+                    input[k] = -8 + 6 * random.NextDouble();
+                    gained[k] = input[k];
+                }
+                quiet.Process(input, a);
+                loud.Process(gained, b);
+                for (var i = 0; i < a.Length; ++i)
+                    Assert.That(b[i], Is.EqualTo(100 * a[i]).Within(1e-12));
+            }
+        }
+
+        [Test]
+        public void ZeroEvidenceAndInvalidValuesStayFiniteAndQuietValuesAreNotFloored()
+        {
+            var splitter = Create();
+            var input = Flat(0);
+            var output = new double[4 * Domain.Length];
             splitter.Process(input, output);
+            Assert.That(output, Is.All.Zero);
+            input[0] = double.NaN;
+            input[1] = double.PositiveInfinity;
+            input[2] = 309; // linear conversion overflows
             splitter.Process(input, output);
-            Assert.That(output.Where((_, i) => i % 4 == 1).Max(), Is.GreaterThan(0));
-            for (var frame = 0; frame < 80; ++frame)
-                splitter.Process(input, output);
-            Assert.That(output.Where((_, i) => i % 4 == 1).Max(), Is.LessThan(1e-6), "exponential release should settle below visible levels");
+            Assert.That(output, Is.All.Zero);
+            Array.Fill(input, -10);
+            splitter.Process(input, output);
+            Assert.That(output[3], Is.EqualTo(1e-10));
+            Assert.That(output[0] + output[1] + output[2], Is.EqualTo(1e-10).Within(1e-24));
+        }
+
+        [Test]
+        public void RejectsDimensionsBeforeUpdatingHistory()
+        {
+            var splitter = Create();
+            Assert.Throws<ArgumentException>(() => splitter.Process(new double[1], new double[4 * Domain.Length]));
+            Assert.Throws<ArgumentException>(() => splitter.Process(Flat(1), new double[1]));
+        }
+
+        [TestCase(.4, .8)]
+        [TestCase(.7, .7)]
+        [TestCase(.8, .7)]
+        [TestCase(.7, 1.1)]
+        [TestCase(double.NaN, .8)]
+        [TestCase(.7, double.PositiveInfinity)]
+        public void RejectsInvalidOrOverlappingMaskBounds(double lower, double upper)
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() => new Splitter(Domain,
+                new AnalyzerOptions { FuzzyLower = lower, FuzzyUpper = upper }));
         }
     }
 }

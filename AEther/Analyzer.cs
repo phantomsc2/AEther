@@ -49,9 +49,11 @@ namespace AEther
             Profile.Describe("Batch budget ms", (BatchSize * 1000.0 / Format.SampleRate).ToString("F6", System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Frequency bins", Domain.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("SIMD enabled", options.SIMDEnabled.ToString());
+            Profile.Describe("Window function", options.WindowFunction.ToString());
             Batch = new byte[checked(BatchSize * Format.Size)];
             DFT = Enumerable.Range(0, Format.ChannelCount)
-                .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled, options.MaxParallelization)).ToArray();
+                .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled,
+                    options.MaxParallelization, options.WindowFunction)).ToArray();
             Splitter = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
             Transients = Enumerable.Range(0, Format.ChannelCount)

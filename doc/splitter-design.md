@@ -1,67 +1,85 @@
-# Four-way moving-filter experiment
+﻿# Fuzzy STN baseline
 
-Defaults are one second of history, zero history presentation delay, independent windows: sinuoids 0.3 s / 0.3 octaves, transients 0.03 s / 3 octaves, noise 0.1 s / 1 octave. Frequency weighting has been removed. The PropertyGrid exposes `SinuoidLength`, `SinuoidWidth`, `TransientLength`, `TransientWidth`, `NoiseLength`, `NoiseWidth` and `SplitOrder`. Length is seconds; width is octaves.
+`Splitter` implements the single-stage enhanced fuzzy masks from Fierro and Välimäki,
+[Enhanced Fuzzy Decomposition of Sound Into Sines, Transients, and Noise](https://arxiv.org/abs/2210.14041),
+Eqs. (2)-(5), (8), and (23)-(24). This is a causal adaptation to AEther's existing
+log-frequency DFT, not the paper's full two-stage STFT/ISTFT algorithm.
 
-Input log amplitude is converted to linear power above the absolute separation floor. Subtraction in dB used to make noise consume the full floor-to-bed interval while ridges and attacks received only a dB contrast. This gave blue a floor-dependent advantage. Power differences instead measure excess energy:
+## Evidence
 
-```text
-P_floor = 10^(SeparationFloorDb / 10)
-L = max(10^(raw_dB / 10) - P_floor, 0)
-spike(input, filtered) = max(input - filtered, 0)
-pass(input, filtered) = filtered
-```
-
-`Mt` is a causal temporal median. `Mf` is a centered frequency median on the logarithmic frequency axis. Each branch uses its own time and frequency window. Temporal sample counts are rounded to odd sizes using the actual analysis rate; at 256 Hz the nominal 100 ms window has 27 samples. Frequency edges use truncated neighborhoods without wrapping.
-
-For each branch, use its corresponding Mt/Mf windows. Define Dt(X) = max(X - Mt(X), 0), and Df(X) = max(X - Mf(X), 0).
+DFTProcessor supplies log10 magnitude. Convert it back to linear magnitude A:
 
 ```text
-Time then frequency:
-  sinuoid   = Df_sinuoid(Mt_sinuoid(L))
-  transient = Mf_transient(Dt_transient(L))
-  noise     = Mf_noise(Mt_noise(L))
-
-Frequency then time:
-  sinuoid   = Mt_sinuoid(Df_sinuoid(L))
-  transient = Dt_transient(Mf_transient(L))
-  noise     = Mt_noise(Mf_noise(L))
-
-residual = max(L - sinuoid - transient - noise, 0)
+A = 10^input
+H = temporal_median(A)
+V = frequency_median(A)
+Rs = H / (H + V)
+Rt = 1 - Rs
 ```
 
-Independent windows can overlap or leave uncovered energy; the residual is a discarded remainder, not a fourth independently filtered classifier. Pass branches keep their filtered signal and memory after falls.
-Medians are nonlinear, so these orders are not equivalent. Time first is the default because it establishes sustained structure before finding ridges. Frequency first is available for direct comparison with broad attacks. Pass branches use the filtered signal itself, including their short memory after the source falls. The four values are nonnegative descriptors rather than an exact additive audio reconstruction. "Noise" means smooth in both dimensions, not a probabilistic label or a separated instrument.
+The time median uses only the current and previous frames. Its window is
+`MedianLength` seconds (default 0.3), converted to an odd count at the actual analysis
+rate. At startup its history contains the first frame, then grows as frames arrive;
+there is no lookahead or synthetic zero padding. Thus the first broadband frame has
+no prior quiet context and is classified as noise.
 
-## Output and residual isolation
+The frequency median is centered, with truncated neighborhoods at the edges.
+`MedianWidth` is measured in octaves (default 3), since the DFT bins are logarithmically
+spaced. These are the only two evidence windows. If H and V are both zero, Rs = Rt = 0.5.
+The implementation scales the ratio before division to avoid overflow.
 
-After median separation, all three power components use a shared `JitterLength` EMA time constant, default 0.01 seconds. Zero bypasses the post-filter. It uses the actual analysis rate, not the requested resolution:
+## Classification
+
+The same raised-cosine membership function is used for sines and transients:
 
 ```text
-a = exp(-1 / (actual_analysis_rate * JitterLength))
-H_out = a*H_previous + (1-a)*sinuoid
-N_out = a*N_previous + (1-a)*noise
-T_out = max(transient, a*T_previous)
+f(a) = 0                                          if a <= lower
+       sin(pi/2 * (a-lower)/(upper-lower))^2        if lower < a < upper
+       1                                          if a >= upper
+
+S = f(Rs)
+T = f(Rt)
+N = 1 - S - T
 ```
 
-Sinuoid and noise state start at the first separated value. Transients retain instant attack and exponential release. Residual is computed before this stage; post-filter tails do not change separation or leak residual into visuals. Common brightness, alpha and retained visual controls use the post-filtered power. Structural median windows remain independent of this shared 10 ms relaxation.
+`FuzzyLower` defaults to 0.7 and `FuzzyUpper` to 0.8, the paper's example single-stage
+bounds. Validation requires 0.5 <= lower < upper <= 1, preventing overlapping S/T
+masks and negative N. These are evidence ratios, not amplitude thresholds.
 
-Red carries sinuoids, green transients, blue noise. The working values are linear power. Residual is calculated and exposed through `Splitter.ResidualDb` as `10*log10(1 + residual/P_floor)` (diagnostic dB above the floor), but is never packed into textures. Alpha holds the combined retained absolute level; `R` in Spectrum and Histogram shows this level in grayscale. It therefore excludes residual as well.
+## Output
 
-The shared .01/.99 quantile normalization is retained, with 60-second exponentially weighted history, slowly published bounds and a minimum 24 dB span. It learns only from retained levels. Silent input freezes its estimates. All components use the same brightness mapping and physical amplitude shares:
+Each bin is packed as linear `SplitGain * [S*A, T*A, N*A, A]` into the existing RGBA layout.
+`SplitGain` is a global amplitude multiplier, defaults to 3.0, and is applied only after
+classification. Zero mutes the output; one gives the unscaled baseline. It does not
+change the evidence or masks, and does not clip values at one.
+RGB adds up to alpha within floating-point precision. This is additive spectral
+magnitude allocation, not a reconstruction of three time-domain audio signals.
+No inverse transform is involved. The same real masks could partition complex
+coefficients if a reconstruction path is added later.
 
-```text
-P = sinuoid + transient + noise
-retained_dB = 10*log10(P_floor + P)
-span = max(24, Q99 - Q01, Q99 - SeparationFloorDb)
-brightness = clamp((retained_dB - SeparationFloorDb) / span, 0, 1)
-RGB = brightness * sqrt([sinuoid, transient, noise] / P)
-alpha = P > 0 ? clamp(1 + retained_dB/100, 0, 1) : 0
-```
+There is no floor subtraction, residual discard, adaptive normalization, per-component
+boost, or post-smoothing. Noise is the complementary class, not an independent filter.
+Medians determine the masks only; they never supply output amplitude. Zero input
+therefore produces zero output immediately, even while the time median retains history.
 
-RGB is zero when P is zero. Fixed normalization uses a 100 dB span. Squared RGB proportions equal the retained component power proportions, even when common brightness saturates. A 20 dB stronger tone or attack contributes approximately 99% of local power; a purely steady broadband passage stays blue. The quantile floor is not subtracted from the noise branch, which would hide a noise-only passage after adaptation. There are no per-component gain trackers, boosts or normalization windows. This remains a structural power decomposition, not calibrated instrument separation; median pass branches can retain energy after input falls.
+Nonfinite input and overflow during linear conversion are treated as zero. Finite
+quiet input is preserved: the existing DFT's numerical floor of 1e-10 magnitude
+remains a tiny nonzero output. Values above nominal full scale are preserved.
 
-Raw waveform onset and RMS events remain available from the analyzer for measurement, but the visual session no longer subscribes to them. Otherwise a discarded residual could still trigger lightning, travel or musical-time animation through that bypass. The visual envelopes and `S` clock now derive from retained spectral level and transient channels. Spectral power is an artistic energy proxy because the DFT bands overlap; it is not advertised as calibrated waveform RMS.
+The renderer receives linear magnitudes. Alpha is also linear; visual feature
+extraction squares it directly for its power proxy. The GPU handoff preserves values
+above one (within float range). Final display saturation and existing artistic response
+envelopes remain rendering behavior, outside the splitter. Spectrum still takes
+component maxima across rows received in one render frame, so its peak overview need
+not be additive; individual history rows and splitter output are additive.
+
+Old branch-order, independent S/T/N window, jitter, separation-floor, and quantile
+settings have been removed. The former SpectralRange normalizer has been removed.
 
 ## Verification
 
-Tests cover sustained ridges, broad attacks, smooth broadband noise, isolated residuals, falling levels, silence, numerical input, quantile adaptation, both filter orders, and exclusion of residual from the visual energy clock and lightning. The renderer smoke tool sends one second of synthesized chords and broadband attacks through the actual DFT and splitter, then renders the histogram and fractal. The combined retained grayscale view is captured for comparison; no visual displays residual.
+Tests cover the raised-cosine transition and plateaus for both S and T, flat-spectrum
+noise, sustained ridges, a broad attack settling at the actual analysis rate, immediate
+zero output, additive conservation through mixed history including frequency edges,
+gain equivariance, invalid inputs and bounds, quiet input, and downstream linear
+magnitude interpretation. A steady waveform tone also exercises the real DFT and splitter.

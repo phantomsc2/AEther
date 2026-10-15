@@ -63,7 +63,7 @@ public sealed class AudioHistory
         {
             var src = input.GetChannel(Math.Min(c, channelCount - 1)).Span;
             for (var i = 0; i < src.Length; i++)
-                owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, 1) : 0;
+                owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
         }
         // Audio rows are fixed by sample count; arrival timing is profiling data.
         pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, owned));
@@ -101,8 +101,9 @@ public sealed class AudioHistory
             var power = 0.0;
             for (var i = 0; i < packet.Samples.Length; i += 4)
             {
-                power += packet.Samples[i] * packet.Samples[i] + packet.Samples[i + 1] * packet.Samples[i + 1]
-                    + packet.Samples[i + 2] * packet.Samples[i + 2];
+                // Alpha is the original linear magnitude; RGB are additive amplitude shares.
+                var magnitude = (double)packet.Samples[i + 3];
+                power += magnitude * magnitude;
                 Flash = Math.Max(Flash, packet.Samples[i + 1]);
             }
             Energy = (float)Math.Sqrt(power / (2 * Bands));

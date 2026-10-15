@@ -88,18 +88,22 @@ namespace AEther.Tests
         }
 
         [Test]
-        public void ContrastsBelowTheAudibleFloorDoNotFlashTheScene()
+        public void LinearSpectralControlsScaleWithInputMagnitude()
         {
             var domain = new Domain(27.5, 8, 65);
             var data = new double[4 * domain.Length];
             for (var i = 0; i < domain.Length; ++i)
             {
-                data[4 * i] = 10;
-                data[4 * i + 1] = 10;
-                data[4 * i + 3] = .1;
+                data[4 * i] = .2;
+                data[4 * i + 1] = .3;
+                data[4 * i + 3] = .5;
             }
-            Assert.That(new SpectralControlExtractor(domain, 1).Process(new(data, data.Length, DateTime.Now)),
-                Is.EqualTo(default(SpectralControls)));
+            var extractor = new SpectralControlExtractor(domain, 1);
+            var first = extractor.Process(new(data, data.Length, DateTime.Now));
+            for (var i = 0; i < data.Length; ++i) data[i] *= .1;
+            var quieter = extractor.Process(new(data, data.Length, DateTime.Now));
+            Assert.That(quieter.LowSustain, Is.EqualTo(.1 * first.LowSustain).Within(1e-12));
+            Assert.That(quieter.HighTransient, Is.EqualTo(.1 * first.HighTransient).Within(1e-12));
         }
 
         [Test]

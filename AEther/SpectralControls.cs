@@ -33,13 +33,10 @@ namespace AEther
                 var channel = input.GetChannel(c).Span;
                 for (var k = 0; k < LowWeights.Length; ++k)
                 {
-                    var level = Math.Clamp(channel[4 * k + 3], 0, 1);
-                    // Ignore contrasts buried below about -80 dBFS, rather than magnifying silence.
-                    var gate = Math.Clamp((level - .2) / .3, 0, 1);
-                    var sustained = Math.Max(0, channel[4 * k]) * gate;
+                    var sustained = Math.Max(0, channel[4 * k]);
                     low += sustained * sustained * LowWeights[k];
                     weight += LowWeights[k];
-                    high = Math.Max(high, Math.Max(0, channel[4 * k + 1]) * gate * HighWeights[k]);
+                    high = Math.Max(high, Math.Max(0, channel[4 * k + 1]) * HighWeights[k]);
                 }
             }
             return new(Math.Sqrt(low / Math.Max(1e-12, weight)), high);

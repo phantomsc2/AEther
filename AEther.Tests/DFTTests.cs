@@ -68,11 +68,11 @@ namespace AEther.Tests
         }
 
         [Test]
-        public void SIMDIsAnOptimizationAndDoesNotChangeWindowOrGain()
+        public void SIMDIsAnOptimizationAndDoesNotChangeWindowOrGain([Values] DFTWindow window)
         {
             var domain = new Domain(100, 8, 40);
-            var scalar = new DFTProcessor(domain, 48000, false, 0);
-            var simd = new DFTProcessor(domain, 48000, true, 0);
+            var scalar = new DFTProcessor(domain, 48000, false, 0, window);
+            var simd = new DFTProcessor(domain, 48000, true, 0, window);
             var random = new Random(23);
             var input = Enumerable.Range(0, 16000).Select(_ => random.NextDouble() - .5).ToArray();
             scalar.Process(input);
@@ -83,6 +83,40 @@ namespace AEther.Tests
             simd.Output(actual);
             for (var i = 0; i < expected.Length; ++i)
                 Assert.That(actual[i], Is.EqualTo(expected[i]).Within(1e-9));
+        }
+
+        [Test]
+        public void EveryWindowHasUnitOnBinGain([Values] DFTWindow window)
+        {
+            var processor = new DFTProcessor(new Domain(1000, 8, 1), 48000, true, 0, window);
+            var samples = Enumerable.Range(0, 4 * 528)
+                .Select(i => .7 * Math.Sin(2 * Math.PI * 1000 * i / 48000 + .37)).ToArray();
+            processor.Process(samples);
+            var output = new double[1];
+            processor.Output(output);
+            Assert.That(Math.Pow(10, output[0]), Is.EqualTo(.7).Within(1e-10));
+        }
+
+        [Test]
+        public void FlatTopReducesHalfBinAmplitudeError()
+        {
+            double Amplitude(DFTWindow window)
+            {
+                var filter = new WindowedDFTFilter(1000, 8, 48000,
+                    DFTProcessor.CreateWindow(DFTProcessor.GetWindowCosines(window)));
+                filter.Process(Enumerable.Range(0, 4 * filter.Length)
+                    .Select(i => .7 * Math.Sin(2 * Math.PI * 11.5 * i / filter.Length + .37)).ToArray());
+                return 2 * filter.GetOutput().Magnitude;
+            }
+            Assert.That(Math.Abs(Amplitude(DFTWindow.FlatTop) / .7 - 1), Is.LessThan(.002));
+            Assert.That(Amplitude(DFTWindow.Hann), Is.LessThan(.7 * .9));
+        }
+
+        [Test]
+        public void RejectsUnknownWindow()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new DFTProcessor(new Domain(1000, 8, 1), 48000, true, 0, (DFTWindow)999));
         }
 
         [Test]
