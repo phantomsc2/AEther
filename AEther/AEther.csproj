@@ -24,9 +24,4 @@
   <ItemGroup>
     <Compile Remove="Session - Copy.cs" />
   </ItemGroup>
-  <ItemGroup>
-	<PackageReference Include="System.Runtime.Experimental" Version="7.0.0-preview.2.22152.2" />
-    <PackageReference Include="System.IO.Pipelines" Version="11.0.0-rc.2.26504.105" />
-    <PackageReference Include="System.Threading.Tasks.Dataflow" Version="11.0.0-rc.2.26504.105" />
-  </ItemGroup>
 </Project>

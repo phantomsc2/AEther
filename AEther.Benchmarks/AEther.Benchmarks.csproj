@@ -13,7 +13,7 @@
     <None Remove="test_sine.wav" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageReference Include="SharpDX.Mathematics" Version="4.2.0" />
   </ItemGroup>
   <ItemGroup>

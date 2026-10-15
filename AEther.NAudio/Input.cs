@@ -8,6 +8,15 @@ namespace AEther.NAudio
 
         public override SampleFormat Format { get; }
 
+        /// <summary>
+        /// WASAPI packets with their original flags, device frame position and QPC position
+        /// (in 100-nanosecond units). The buffer is valid only during the callback.
+        /// TimestampError marks positions that must not be used for timing.
+        /// DataAvailable remains the common audio-only callback; subscribe to one or the other
+        /// when feeding an analyzer to avoid processing packets twice.
+        /// </summary>
+        public event CaptureDataAvailableHandler? PacketAvailable;
+
         protected readonly IWaveIn? Device;
         protected readonly WasapiRecorder? WasapiDevice;
         WaveFormat WaveFormat => WasapiDevice?.WaveFormat ?? Device!.WaveFormat;
@@ -15,18 +24,44 @@ namespace AEther.NAudio
         public Input(IWaveIn device)
         {
             Device = device;
-            Device.DataAvailable += Device_DataAvailable;
-            Device.RecordingStopped += Device_RecordingStopped;
-            Format = ToSampleFormat(device.WaveFormat);
+            try
+            {
+                Format = ToSampleFormat(device.WaveFormat);
+                device.DataAvailable += Device_DataAvailable;
+                device.RecordingStopped += Device_RecordingStopped;
+            }
+            catch
+            {
+                device.DataAvailable -= Device_DataAvailable;
+                device.RecordingStopped -= Device_RecordingStopped;
+                device.Dispose();
+                throw;
+            }
         }
 
         protected Input(WasapiRecorder device)
         {
             WasapiDevice = device;
-            Format = ToSampleFormat(device.WaveFormat);
-            device.DataAvailable += (buffer, flags, devicePosition, qpcPosition) =>
-                DataAvailable?.Invoke(this, buffer);
-            device.RecordingStopped += Device_RecordingStopped;
+            try
+            {
+                Format = ToSampleFormat(device.WaveFormat);
+                device.DataAvailable += Wasapi_DataAvailable;
+                device.RecordingStopped += Device_RecordingStopped;
+            }
+            catch
+            {
+                device.DataAvailable -= Wasapi_DataAvailable;
+                device.RecordingStopped -= Device_RecordingStopped;
+                device.Dispose();
+                throw;
+            }
+        }
+
+        private void Wasapi_DataAvailable(ReadOnlySpan<byte> buffer,
+            global::NAudio.CoreAudioApi.AudioClientBufferFlags flags, long devicePosition, long qpcPosition)
+        {
+            PacketAvailable?.Invoke(buffer, flags, devicePosition, qpcPosition);
+            DataAvailable?.Invoke(this, buffer);
         }
         private void Device_RecordingStopped(object? sender, StoppedEventArgs e)
         {

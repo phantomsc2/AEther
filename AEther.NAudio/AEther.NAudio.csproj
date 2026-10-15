@@ -9,8 +9,7 @@
 	<LangVersion>preview</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="NAudio" Version="3.2.0-preview.1" />
-    <PackageReference Include="System.IO.Pipelines" Version="11.0.0-rc.2.26504.105" />
+    <PackageReference Include="NAudio" Version="3.1.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AEther\AEther.csproj" />
