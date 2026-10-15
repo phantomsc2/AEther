@@ -48,17 +48,18 @@ masks and negative N. These are evidence ratios, not amplitude thresholds.
 
 ## Output
 
-Each bin is packed as linear `SplitGain * [S*A, T*A, N*A, A]` into the existing RGBA layout.
-`SplitGain` is a global amplitude multiplier, defaults to 3.0, and is applied only after
-classification. Zero mutes the output; one gives the unscaled baseline. It does not
-change the evidence or masks, and does not clip values at one.
-RGB adds up to alpha within floating-point precision. This is additive spectral
+Each bin is packed as linear `[SineGain*S*A, TransientGain*T*A, NoiseGain*N*A, A]`
+into the existing RGBA layout. The three class gains default to 3.0 and apply only
+after classification. Zero mutes that class; one gives its unscaled baseline.
+Magnitude (alpha) is always unscaled. Gains do not change evidence or masks and
+do not clip values at one. RGB need not add up to alpha; the partition invariant
+holds only before gain (or with all three gains at one). This is spectral
 magnitude allocation, not a reconstruction of three time-domain audio signals.
 No inverse transform is involved. The same real masks could partition complex
 coefficients if a reconstruction path is added later.
 
-There is no floor subtraction, residual discard, adaptive normalization, per-component
-boost, or post-smoothing. Noise is the complementary class, not an independent filter.
+There is no floor subtraction, residual discard, adaptive normalization, or
+post-smoothing. Noise is the complementary class, not an independent filter.
 Medians determine the masks only; they never supply output amplitude. Zero input
 therefore produces zero output immediately, even while the time median retains history.
 

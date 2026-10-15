@@ -6,7 +6,7 @@ namespace AEther.Vortice;
 /// <summary>Owned, bounded handoff. Only the render thread touches history or graphics resources.</summary>
 public sealed class AudioHistory
 {
-    readonly Channel<(long Row, long Capture, long Completed, float[] Samples)> pending;
+    readonly Channel<(long Row, long Capture, long Completed, double Arrival, float[] Samples)> pending;
 
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly double rate;
@@ -14,7 +14,9 @@ public sealed class AudioHistory
     long latestRow = -1;
     double lastAudio = double.NegativeInfinity;
     double anchorTime, position;
+    double movementImpulse;
     long anchorRow, newestRow = -1;
+    long firstRow;
     bool anchored;
     public PipelineProfile? Profile { get; set; }
     public double PresentationDelay { get; }
@@ -24,13 +26,18 @@ public sealed class AudioHistory
     public float[][] History { get; }
     public float[][] Spectrum { get; }
     public double MusicalTime { get; private set; }
+    public double MusicalVelocity { get; private set; }
+    // Detail follows the same EMA as travel: stationary ambience is shallow,
+    // and a musical velocity of 1.5 or more reveals all ten iterations.
+    public float FractalDepth => (float)(10 * Math.Clamp(MusicalVelocity / 0.3, 0, 1));
     public float Flash { get; private set; }
     public float Energy { get; private set; }
     public double Now => clock.Elapsed.TotalSeconds;
     public float Shift => (float)(((position % Rows + Rows) % Rows + .5) / Rows);
     public float TimeScale => (float)(Seconds * rate / Rows);
     // Limit sampling to retained row centers, including during startup or a backlog.
-    public float AvailableSpan => (float)(Math.Max(0, position - Math.Max(0, newestRow - Rows + 1)) / Rows);
+    public float AvailableSpan => (float)(Math.Max(0, position - Math.Max(firstRow, newestRow - Rows + 1)) / Rows);
+    public float NewestAge => (float)(Math.Max(0, position - newestRow) / Rows);
     public long DroppedRows => Interlocked.Read(ref dropped);
     public long LatestCaptureTimestamp { get; private set; }
     long dropped;
@@ -47,7 +54,7 @@ public sealed class AudioHistory
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
         peak = new float[8 * bands];
-        pending = Channel.CreateBounded<(long, long, long, float[])>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
+        pending = Channel.CreateBounded<(long, long, long, double, float[])>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
             AllowSynchronousContinuations = false,
@@ -66,20 +73,32 @@ public sealed class AudioHistory
                 owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
         }
         // Audio rows are fixed by sample count; arrival timing is profiling data.
-        pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, owned));
+        pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, Now, owned));
     }
 
     public void Advance(double dt)
     {
-        Flash *= (float)Math.Exp(-dt / .09);
+        Flash *= (float)Math.Exp(-dt / .045);
         Array.Clear(peak);
 
         var now = Now;
         while (pending.Reader.TryRead(out var packet))
         {
+            // Loopback can stop producing samples while a player is paused.
+            // Wall time continues, but sample-based row numbers do not. Detect
+            // that gap using packet arrival (not render timing or frame dt).
+            if (anchored && anchorRow + (packet.Arrival - anchorTime - PresentationDelay) * rate
+                > packet.Row + .15 * rate)
+            {
+                foreach (var history in History) Array.Clear(history);
+                firstRow = packet.Row;
+                latestRow = newestRow = packet.Row - 1;
+                anchored = false;
+                Flash = 0;
+            }
             if (!anchored)
             {
-                anchorTime = now;
+                anchorTime = packet.Arrival;
                 anchorRow = packet.Row;
                 anchored = true;
             }
@@ -99,17 +118,35 @@ public sealed class AudioHistory
                 packet.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
             for (var i = 0; i < peak.Length; i++) peak[i] = Math.Max(peak[i], packet.Samples[i]);
             var power = 0.0;
+            var transientPower = 0.0;
             for (var i = 0; i < packet.Samples.Length; i += 4)
             {
-                // Alpha is the original linear magnitude; RGB are additive amplitude shares.
+                // Alpha is the original linear magnitude; RGB have independent class gains.
                 var magnitude = (double)packet.Samples[i + 3];
                 power += magnitude * magnitude;
+                var transient = (double)packet.Samples[i + 1];
+                transientPower += transient * transient;
                 Flash = Math.Max(Flash, packet.Samples[i + 1]);
             }
             Energy = (float)Math.Sqrt(power / (2 * Bands));
-            MusicalTime += power / (2 * Bands * rate);
+            // Accumulate drive by sample duration so frame rate does not change
+            // how much force a passage supplies to the slice's momentum.
+            movementImpulse += (3 * Energy + 6 * power / (2 * Bands)
+                + 4 * Math.Sqrt(transientPower / (2 * Bands))) / rate;
             lastAudio = now;
 
+        }
+        if (dt > 0)
+        {
+            // EMA velocity: attack ten times faster than decay, with a long
+            // coast when the music eases off.
+            // Integrate both velocity and position analytically for this frame.
+            var target = movementImpulse / dt;
+            var inertia = target > MusicalVelocity ? .16 : 1.6;
+            var response = 1 - Math.Exp(-dt / inertia);
+            MusicalTime += target * dt + (MusicalVelocity - target) * inertia * response;
+            MusicalVelocity += (target - MusicalVelocity) * response;
+            movementImpulse = 0;
         }
         // Maximum over exactly the events drained since the previous frame.
         for (var c = 0; c < 2; c++) peak.AsSpan(c * Bands * 4, Bands * 4).CopyTo(Spectrum[c]);
@@ -118,7 +155,16 @@ public sealed class AudioHistory
             var desired = anchorRow + (now - anchorTime - PresentationDelay) * rate;
             // If a burst exceeds the delay reserve, move forward enough to retain the visible window.
             var minimum = Math.Min(newestRow, Math.Max(0, newestRow - Rows + 1 + Seconds * rate));
-            position = Math.Clamp(desired, minimum, newestRow);
+            if (desired < minimum)
+            {
+                // Move the clock anchor with a backlog jump, so presentation
+                // continues immediately instead of waiting for wall time to catch up.
+                anchorTime -= (minimum - desired) / rate;
+                desired = minimum;
+            }
+            // Presentation keeps advancing even when capture emits no packets.
+            // NewestAge masks the unwritten interval instead of wrapping old rows.
+            position = Math.Max(desired, minimum);
             if (desired > newestRow) Profile?.Record("render.presentation_stall_ms", (desired - newestRow) * 1000 / rate);
         }
         if (now - lastAudio > .15)

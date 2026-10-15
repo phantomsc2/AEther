@@ -8,7 +8,7 @@ namespace AEther.Tests
     {
         static readonly Domain Domain = new(27.5, 8, 65);
         static double[] Flat(double magnitude) => Enumerable.Repeat(Math.Log10(magnitude), Domain.Length).ToArray();
-        static Splitter Create() => new(Domain, new AnalyzerOptions { SplitGain = 1, MedianLength = .5, MedianWidth = 1 }, 10);
+        static Splitter Create() => new(Domain, new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1, MedianLength = .5, MedianWidth = 1 }, 10);
 
         [TestCase(.5, 0)]
         [TestCase(.7, 0)]
@@ -104,10 +104,10 @@ namespace AEther.Tests
         }
 
         [Test]
-        public void GainChangesScaleEveryComponentWithoutChangingClassification()
+        public void IndependentGainsScaleOnlyTheirClassesAndLeaveMagnitudeUnscaled()
         {
             var quiet = Create();
-            var loud = new Splitter(Domain, new AnalyzerOptions { SplitGain = 100, MedianLength = .5, MedianWidth = 1 }, 10);
+            var loud = new Splitter(Domain, new AnalyzerOptions { SineGain = 2, TransientGain = 7, NoiseGain = 0, MedianLength = .5, MedianWidth = 1 }, 10);
             var random = new Random(42);
             var input = new double[Domain.Length];
             var gained = new double[input.Length];
@@ -122,8 +122,13 @@ namespace AEther.Tests
                 }
                 quiet.Process(input, a);
                 loud.Process(gained, b);
-                for (var i = 0; i < a.Length; ++i)
-                    Assert.That(b[i], Is.EqualTo(100 * a[i]).Within(1e-12));
+                for (var i = 0; i < a.Length; i += 4)
+                {
+                    Assert.That(b[i], Is.EqualTo(2 * a[i]).Within(1e-12));
+                    Assert.That(b[i + 1], Is.EqualTo(7 * a[i + 1]).Within(1e-12));
+                    Assert.That(b[i + 2], Is.Zero);
+                    Assert.That(b[i + 3], Is.EqualTo(a[i + 3]));
+                }
             }
         }
 
@@ -152,6 +157,17 @@ namespace AEther.Tests
             var splitter = Create();
             Assert.Throws<ArgumentException>(() => splitter.Process(new double[1], new double[4 * Domain.Length]));
             Assert.Throws<ArgumentException>(() => splitter.Process(Flat(1), new double[1]));
+        }
+
+        [Test]
+        public void RejectsInvalidClassGains([Values(0, 1, 2)] int component,
+            [Values(-1.0, double.NaN, double.PositiveInfinity)] double gain)
+        {
+            var options = new AnalyzerOptions();
+            if (component == 0) options.SineGain = gain;
+            else if (component == 1) options.TransientGain = gain;
+            else options.NoiseGain = gain;
+            Assert.Throws<ArgumentOutOfRangeException>(() => new Splitter(Domain, options));
         }
 
         [TestCase(.4, .8)]

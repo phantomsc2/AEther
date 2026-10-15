@@ -194,7 +194,7 @@ namespace AEther.Tests
                 processor.Output(expected);
                 for (var k = 0; k < expected.Length; ++k)
                     Assert.That(rows[0][c * 4 * expected.Length + 4 * k + 3],
-                        Is.EqualTo(options.SplitGain * Math.Pow(10, expected[k])).Within(1e-12));
+                        Is.EqualTo(Math.Pow(10, expected[k])).Within(1e-12));
             }
         }
 

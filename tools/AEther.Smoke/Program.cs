@@ -11,6 +11,7 @@ using AEther.Vortice;
 
 internal static class Program
 {
+    static long nextSeedRow;
     [STAThread]
     static int Main(string[] args)
     {
@@ -39,6 +40,22 @@ internal static class Program
                     var pixels = renderer.ReadPixels();
                     if (pixels.Where((_, i) => i % 4 != 3).Count(v => v > 10) < 100)
                         throw new InvalidOperationException($"{scene} rendered no visible audio.");
+                    if (scene == Scene.Mandelbox)
+                    {
+                        // Each edge must contain visible field, including the wide-screen sides.
+                        foreach (var edge in new[] { 0, 1, 2, 3 })
+                        {
+                            var lit = 0;
+                            for (var n = 0; n < (edge < 2 ? 360 : 640); n++)
+                            {
+                                var x = edge < 2 ? (edge == 0 ? 0 : 639) : n;
+                                var y = edge < 2 ? n : (edge == 2 ? 0 : 359);
+                                var i = (y * 640 + x) * 4;
+                                if (pixels[i] + pixels[i + 1] + pixels[i + 2] > 30) lit++;
+                            }
+                            if (lit < 20) throw new Exception($"Mandelbox edge {edge} is empty.");
+                        }
+                    }
                     hashes.Add(Convert.ToHexString(SHA256.HashData(pixels)));
                     Save(pixels, 640, 360, Path.Combine(output, $"vortice-{scene}-{restart}.png"));
                     renderer.Render();
@@ -66,17 +83,77 @@ internal static class Program
                 var silent = renderer.ReadPixels();
                 if (silent.Where((_, i) => i % 4 != 3).Any(v => v != 0))
                     throw new Exception("History failed to expire during silent capture.");
+                var musicalTime = renderer.Audio.MusicalTime;
+                var velocity = renderer.Audio.MusicalVelocity;
+                renderer.Scene = Scene.Mandelbox;
+                renderer.Render(false);
+                if (renderer.Audio.MusicalTime < musicalTime || renderer.Audio.MusicalVelocity > velocity)
+                    throw new Exception("Silent Mandelbox momentum failed to coast down.");
+                if (renderer.ReadPixels().Where((_, i) => i % 4 != 3).Any(v => v != 0))
+                    throw new Exception("Mandelbox hits failed to expire during silent capture.");
+                // Resume consecutive sample rows after the packet-free pause.
+                // Keep the same renderer and scene; recreating them hides clock bugs.
+                Seed(renderer);
+                renderer.Render(false);
+                if (renderer.Audio.NewestAge > .03f)
+                    throw new Exception("Resumed audio remained behind the presentation clock.");
+                var resumed = renderer.ReadPixels();
+                if (resumed.Where((_, i) => i % 4 != 3).Count(v => v > 10) < 10000)
+                    throw new Exception("Mandelbox history stayed dark after resuming audio.");
+                Save(resumed, 640, 360, Path.Combine(output, $"vortice-Mandelbox-resumed-{restart}.png"));
             }
-            Console.WriteLine("Vortice: all scenes, resize, shader reload, silence expiry and session recreation passed.");
+            Console.WriteLine("Vortice: all scenes, resize, shader reload, silence expiry, pause/resume and session recreation passed.");
+            CheckStereoCircle(form.Handle, shaderDirectory, output);
             CheckWindows();
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
 
+    static void CheckStereoCircle(IntPtr window, string shaders, string output)
+    {
+        for (var channel = 0; channel < 2; channel++)
+            for (var treble = 0; treble < 2; treble++)
+            {
+                using var renderer = new Renderer(window, 640, 360, 64, 256, 1, shaders);
+                var data = new double[512];
+                for (var band = treble == 0 ? 0 : 48; band < (treble == 0 ? 16 : 64); band++)
+                {
+                    var i = channel * 256 + band * 4;
+                    data[i] = data[i + 3] = .5;
+                }
+                for (var row = 0; row < 256; row++)
+                    renderer.PostAudio(new(data, 256, DateTime.Now) { AnalysisRow = row }, 2);
+                renderer.Render(false);
+                var pixels = renderer.ReadPixels();
+                long active = 0, silent = 0, top = 0, bottom = 0;
+                for (var y = 0; y < 360; y++)
+                    for (var x = 0; x < 640; x++)
+                    {
+                        var i = (y * 640 + x) * 4;
+                        var light = pixels[i] + pixels[i + 1] + pixels[i + 2];
+                        if ((x < 320 ? 0 : 1) != channel) { silent += light; continue; }
+                        active += light;
+                        // Near the vertical axis the angular frequency endpoints
+                        // are anchored even while the sides blend into the fractal.
+                        if (Math.Abs(x - 320) > 8) continue;
+                        if (y < 80) top += light;
+                        if (y >= 280) bottom += light;
+                    }
+                if (active < 1000 || silent != 0)
+                    throw new Exception($"Stereo circle channel {channel} leaked or rendered no audio.");
+                if (treble == 0 ? bottom <= top : top <= bottom)
+                    throw new Exception("Stereo circle frequency orientation is reversed.");
+                Save(pixels, 640, 360, Path.Combine(output, $"stereo-circle-{channel}-{treble}.png"));
+            }
+        Console.WriteLine("Stereo circle: isolated left/right channels, bass bottom and treble top passed.");
+    }
+
     static void Seed(Renderer renderer)
     {
         var end = DateTime.Now;
+        var firstRow = nextSeedRow;
+        nextSeedRow += 256;
         for (var row = 0; row < 256; row++)
         {
             var data = new double[512];
@@ -89,7 +166,8 @@ internal static class Program
                     data[i + 2] = .08;
                     data[i + 3] = .65;
                 }
-            renderer.PostAudio(new(data, 256, end - TimeSpan.FromSeconds((256 - row) / 256.0)), 2);
+            renderer.PostAudio(new(data, 256, end - TimeSpan.FromSeconds((256 - row) / 256.0))
+                { AnalysisRow = firstRow + row }, 2);
         }
     }
 

@@ -4,7 +4,7 @@ cbuffer FrameConstants : register(b0)
     float Transient, Motion, MotionVelocity, HistorySpan;
     float PoseX, PoseY, PoseZ, VisualBreath;
     float VisualEnergy, VisualFlash, VisualGlow, VisualSustain;
-    float S, HistoryAvailable; float2 Padding;
+    float S, HistoryAvailable, HistoryNewestAge, FractalDepth;
 };
 cbuffer SceneConstants : register(b1)
 {

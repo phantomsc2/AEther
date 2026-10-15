@@ -41,12 +41,22 @@ namespace AEther
 
         [Category("Splitter")]
         [DefaultValue(3.0)]
-        [Description("Global linear amplitude gain applied after classification to all split outputs and their total.")]
-        public double SplitGain { get; set; } = 3.0;
+        [Description("Linear amplitude gain for sines after classification. Does not scale magnitude.")]
+        public double SineGain { get; set; } = 3.0;
+
+        [Category("Splitter")]
+        [DefaultValue(3.0)]
+        [Description("Linear amplitude gain for transients after classification. Does not scale magnitude.")]
+        public double TransientGain { get; set; } = 3.0;
+
+        [Category("Splitter")]
+        [DefaultValue(3.0)]
+        [Description("Linear amplitude gain for noise after classification. Does not scale magnitude.")]
+        public double NoiseGain { get; set; } = 1.0;
 
         [Category("Splitter")]
         [Description("Horizontal evidence: causal median history in seconds.")]
-        public double MedianLength { get; set; } = .3;
+        public double MedianLength { get; set; } = .2;
 
         [Category("Splitter")]
         [Description("Vertical evidence: centered median width in octaves.")]
@@ -84,8 +94,12 @@ namespace AEther
 
         internal void ValidateSplitter(int resolution, double rate)
         {
-            if (!double.IsFinite(SplitGain) || SplitGain < 0)
-                throw new ArgumentOutOfRangeException(nameof(SplitGain));
+            if (!double.IsFinite(SineGain) || SineGain < 0)
+                throw new ArgumentOutOfRangeException(nameof(SineGain));
+            if (!double.IsFinite(TransientGain) || TransientGain < 0)
+                throw new ArgumentOutOfRangeException(nameof(TransientGain));
+            if (!double.IsFinite(NoiseGain) || NoiseGain < 0)
+                throw new ArgumentOutOfRangeException(nameof(NoiseGain));
             if (!double.IsFinite(MedianWidth) || MedianWidth * resolution < 2)
                 throw new ArgumentOutOfRangeException(nameof(MedianWidth), "Median width needs at least two frequency samples.");
             if (!double.IsFinite(MedianLength) || MedianLength * rate < 2)

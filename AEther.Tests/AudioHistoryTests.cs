@@ -7,6 +7,106 @@ namespace AEther.Tests;
 public class AudioHistoryTests
 {
     [Test]
+    public void FractalDepthFollowsMovementSpeedFromThreeToTen()
+    {
+        var history = new AudioHistory(1, 100);
+        Assert.That(history.FractalDepth, Is.EqualTo(3));
+        for (var row = 1; row <= 200; row++)
+        {
+            history.Post(new(new[] { .2, .2, .1, .5 }, 4, DateTime.Now) { AnalysisRow = row }, 1);
+            history.Advance(.01);
+            Assert.That(history.FractalDepth, Is.InRange(3f, 10f));
+            Assert.That(history.FractalDepth,
+                Is.EqualTo(3 + 7 * Math.Clamp(history.MusicalVelocity / 1.5, 0, 1)).Within(1e-6));
+        }
+        Assert.That(history.FractalDepth, Is.EqualTo(10).Within(.001));
+        history.Advance(1.6);
+        Assert.That(history.FractalDepth, Is.EqualTo(3 + 7 * history.MusicalVelocity / 1.5).Within(.001));
+        history.Advance(15);
+        Assert.That(history.FractalDepth, Is.EqualTo(3).Within(.001));
+    }
+
+    [Test]
+    public void SustainedHeavyAudioBuildsSpeedAndUnexcitedSilenceDoesNotDrift()
+    {
+        var history = new AudioHistory(1, 100);
+        history.Advance(10);
+        Assert.That(history.MusicalTime, Is.Zero);
+        Assert.That(history.MusicalVelocity, Is.Zero);
+        double earlySpeed = 0;
+        for (var row = 0; row < 400; row++)
+        {
+            history.Post(new(new[] { .2, .2, .1, .5 }, 4, DateTime.Now) { AnalysisRow = row }, 1);
+            history.Advance(.01);
+            if (row == 1) earlySpeed = history.MusicalVelocity;
+        }
+        Assert.That(history.MusicalVelocity, Is.GreaterThan(5 * earlySpeed));
+        // RMS=.5, power=.25, transient RMS=.2 => steady target 3.8.
+        Assert.That(earlySpeed, Is.EqualTo(3.8 * (1 - Math.Exp(-.02 / .16))).Within(1e-7));
+        Assert.That(history.MusicalVelocity, Is.EqualTo(3.8 * (1 - Math.Exp(-4 / .16))).Within(1e-7));
+    }
+
+    [Test]
+    public void ResumeAfterPacketGapRestoresHistoryWithoutRestartingMusicalTime()
+    {
+        var history = new AudioHistory(1, 100);
+        history.Post(new(new[] { .5, 0, 0, .5 }, 4, DateTime.Now) { AnalysisRow = 0 }, 1);
+        history.Advance(.01);
+        var musicalTime = history.MusicalTime;
+        System.Threading.Thread.Sleep(250);
+        history.Advance(.25);
+        Assert.That(history.NewestAge, Is.GreaterThan(.15));
+        // Resume with consecutive sample rows: the pause consumed no samples.
+        history.Post(new(new[] { 0, .5, 0, .5 }, 4, DateTime.Now) { AnalysisRow = 1 }, 1);
+        history.Advance(.01);
+        Assert.That(history.NewestAge, Is.LessThan(.03));
+        Assert.That(history.AvailableSpan, Is.LessThan(.03));
+        Assert.That(history.History[0].AsSpan(0, 4).ToArray(), Is.All.Zero);
+        Assert.That(history.History[0][5], Is.EqualTo(.5f));
+        Assert.That(history.MusicalTime, Is.GreaterThan(musicalTime));
+    }
+
+    [Test]
+    public void MusicalTravelDependsOnAudioRatherThanRenderTiming()
+    {
+        var batched = new AudioHistory(1, 100);
+        var individual = new AudioHistory(1, 100);
+        for (var row = 0; row < 40; row++)
+        {
+            var input = new SampleEvent<double>(new[] { .1, .2, .1, .4 }, 4, DateTime.Now)
+                { AnalysisRow = row };
+            batched.Post(input, 1);
+            individual.Post(input, 1);
+            individual.Advance(.01);
+        }
+        batched.Advance(.4);
+        Assert.That(batched.MusicalTime, Is.GreaterThan(0));
+        Assert.That(batched.MusicalTime, Is.EqualTo(individual.MusicalTime).Within(1e-10));
+        var coasting = batched.MusicalTime;
+        var velocity = batched.MusicalVelocity;
+        batched.Post(new(new double[4], 4, DateTime.Now) { AnalysisRow = 40 }, 1);
+        batched.Advance(1);
+        Assert.That(batched.MusicalTime, Is.GreaterThan(coasting));
+        Assert.That(batched.MusicalVelocity, Is.InRange(.5 * velocity, .6 * velocity));
+        batched.Advance(7);
+        Assert.That(batched.MusicalVelocity, Is.LessThan(.01 * velocity));
+        Assert.That(batched.MusicalTime - coasting, Is.LessThan(1.6 * velocity));
+    }
+
+    [Test]
+    public void PercussionAcceleratesTravelAtTheSameTotalMagnitude()
+    {
+        var tone = new AudioHistory(1, 100);
+        var hit = new AudioHistory(1, 100);
+        tone.Post(new(new[] { .5, 0, 0, .5 }, 4, DateTime.Now), 1);
+        hit.Post(new(new[] { 0, .5, 0, .5 }, 4, DateTime.Now), 1);
+        tone.Advance(.01);
+        hit.Advance(.01);
+        Assert.That(hit.MusicalTime, Is.GreaterThan(tone.MusicalTime));
+        Assert.That(hit.Energy, Is.EqualTo(tone.Energy));
+    }
+
+    [Test]
     public void DelayedHistoryReservesCapacityForTheFullVisibleWindow()
     {
         var history = new AudioHistory(1, 256, 1, .02);

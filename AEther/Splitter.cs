@@ -13,7 +13,7 @@ namespace AEther
         readonly MovingMedianHeap<double>[] Horizontal;
         readonly double[] Magnitude, Scratch;
         readonly int Width;
-        readonly double Lower, Upper, Gain;
+        readonly double Lower, Upper, SineGain, TransientGain, NoiseGain;
         bool Started;
 
         static int Odd(double count, int limit = 65535)
@@ -28,7 +28,9 @@ namespace AEther
             Width = Odd(options.MedianWidth * domain.Resolution, domain.Length);
             Lower = options.FuzzyLower;
             Upper = options.FuzzyUpper;
-            Gain = options.SplitGain;
+            SineGain = options.SineGain;
+            TransientGain = options.TransientGain;
+            NoiseGain = options.NoiseGain;
             Horizontal = new MovingMedianHeap<double>[domain.Length];
             for (var k = 0; k < domain.Length; ++k)
                 Horizontal[k] = new(0, Odd(options.MedianLength * rate), Comparer<double>.Default);
@@ -57,7 +59,8 @@ namespace AEther
 
         /// <summary>
         /// Input is log10 magnitude from DFTProcessor. Output is interleaved linear
-        /// [sines, transients, noise, total magnitude], all scaled by SplitGain; RGB sums to alpha per bin.
+        /// [sines, transients, noise, total magnitude]. Each class has its own gain;
+        /// total magnitude stays unscaled, so RGB need not sum to alpha.
         /// There is no floor subtraction, normalization, clipping or post-smoothing.
         /// Nonfinite/overflowing inputs are treated as zero.
         /// </summary>
@@ -83,12 +86,11 @@ namespace AEther
                 var s = Mask(tonalness);
                 var t = Mask(1 - tonalness);
                 var n = 1 - s - t;
-                var scaledMagnitude = Gain * magnitude;
                 var y = output.Span.Slice(4 * k, 4);
-                y[0] = s * scaledMagnitude;
-                y[1] = t * scaledMagnitude;
-                y[2] = n * scaledMagnitude;
-                y[3] = scaledMagnitude;
+                y[0] = SineGain * (s * magnitude);
+                y[1] = TransientGain * (t * magnitude);
+                y[2] = NoiseGain * (n * magnitude);
+                y[3] = magnitude;
             }
             Started = true;
         }

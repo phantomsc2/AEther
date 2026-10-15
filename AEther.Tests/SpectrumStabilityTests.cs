@@ -9,7 +9,7 @@ namespace AEther.Tests
         [Test]
         public void SteadyToneDoesNotAlternateItsDominantBandAroundTheTemporalBaseline()
         {
-            var options = new AnalyzerOptions { SplitGain = 1 };
+            var options = new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1 };
             var domain = options.Domain;
             var frequencies = domain.ToArray();
             const int bin = 30, rate = 48000, batch = 187;
@@ -38,7 +38,7 @@ namespace AEther.Tests
         [Test]
         public void InaudibleSpectralContrastsDoNotCreateBrightDiagnosticChannels()
         {
-            var options = new AnalyzerOptions { SplitGain = 1 };
+            var options = new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1 };
             var splitter = new Splitter(options.Domain, options);
             var input = Enumerable.Repeat(-10.0, options.Domain.Length).ToArray();
             var output = new double[4 * input.Length];
