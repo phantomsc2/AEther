@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Vortice.D3DCompiler;
 using Vortice.Direct3D;
@@ -29,6 +30,7 @@ public sealed class Renderer : IDisposable
     int width, height;
     double previousTime;
     bool disposed;
+    long previousFrame;
     public AudioHistory Audio { get; }
     public Scene Scene { get; set; } = Scene.Mandelbox;
     public bool CombinedLevel { get; set; }
@@ -147,6 +149,9 @@ public sealed class Renderer : IDisposable
     public unsafe void Render(bool present = true)
     {
         if (target == null) return;
+        var frameStart = Stopwatch.GetTimestamp();
+        if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
+        previousFrame = frameStart;
         var now = Audio.Now;
         Audio.Advance(Math.Max(0, now - previousTime));
         previousTime = now;
@@ -179,7 +184,12 @@ public sealed class Renderer : IDisposable
         context.PSSetConstantBuffer(1, sceneBuffer);
         context.PSSetShaderResources(0, views);
         context.Draw(3, 0);
+        Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
+        if (Audio.LatestCaptureTimestamp != 0)
+            Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
+        var presentStart = Stopwatch.GetTimestamp();
         if (present) swapChain.Present(1, PresentFlags.None).CheckError();
+        if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
     }
 
     /// <summary>RGBA rows for deterministic render checks; call after Render(false).</summary>

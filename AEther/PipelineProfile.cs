@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -16,6 +17,17 @@ public sealed class PipelineProfile
     long origin;
     int count;
     readonly ConcurrentDictionary<string, string> Metadata = new();
+    readonly ConcurrentDictionary<string, Queue<double>> live = new();
+
+    public (double Mean, double P95)? Recent(string stage)
+    {
+        if (!live.TryGetValue(stage, out var values)) return null;
+        double[] snapshot;
+        lock (values) snapshot = values.ToArray();
+        if (snapshot.Length == 0) return null;
+        Array.Sort(snapshot);
+        return (snapshot.Average(), snapshot[(int)Math.Ceiling(.95 * (snapshot.Length - 1))]);
+    }
     public bool Enabled => enabled;
 
     public void Describe(string key, string value) => Metadata[key] = value;
@@ -31,16 +43,22 @@ public sealed class PipelineProfile
 
     public void Record(string stage, double milliseconds)
     {
+        var values = live.GetOrAdd(stage, _ => new Queue<double>(256));
+        lock (values)
+        {
+            if (values.Count == 256) values.Dequeue();
+            values.Enqueue(milliseconds);
+        }
         if (enabled && Interlocked.Increment(ref count) <= 200000)
             Rows.Enqueue((Stopwatch.GetElapsedTime(origin).TotalSeconds, stage, milliseconds));
     }
 
     public void Elapsed(string stage, long start)
     {
-        if (enabled) Record(stage, Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+        Record(stage, Stopwatch.GetElapsedTime(start).TotalMilliseconds);
     }
 
-    public Scope Measure(string stage) => new(this, stage, enabled ? Stopwatch.GetTimestamp() : 0);
+    public Scope Measure(string stage) => new(this, stage, Stopwatch.GetTimestamp());
     public readonly struct Scope(PipelineProfile profile, string stage, long start) : IDisposable
     {
         public void Dispose() { if (start != 0) profile.Elapsed(stage, start); }

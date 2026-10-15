@@ -32,6 +32,7 @@ public sealed class AudioHistory
     // Limit sampling to retained row centers, including during startup or a backlog.
     public float AvailableSpan => (float)(Math.Max(0, position - Math.Max(0, newestRow - Rows + 1)) / Rows);
     public long DroppedRows => Interlocked.Read(ref dropped);
+    public long LatestCaptureTimestamp { get; private set; }
     long dropped;
 
     public AudioHistory(int bands, double analysisRate, double seconds = 1, double presentationDelay = .02)
@@ -83,6 +84,7 @@ public sealed class AudioHistory
                 anchored = true;
             }
             var row = packet.Row;
+            LatestCaptureTimestamp = packet.Capture;
             newestRow = Math.Max(newestRow, row);
             // Skipped analysis rows remain empty, including after ring wrap.
             for (var clear = Math.Max(latestRow + 1, row - Rows + 1); clear <= row; clear++)

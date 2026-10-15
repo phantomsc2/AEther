@@ -9,6 +9,7 @@ public sealed class MainForm : Form
     readonly SettingsForm settings = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
     readonly System.Windows.Forms.Timer reloadTimer = new() { Interval = 250 };
+    readonly System.Windows.Forms.Timer timingTimer = new() { Interval = 500 };
     readonly Func<SampleSource>? createSource;
     Session? session;
     FileSystemWatcher? watcher;
@@ -40,6 +41,8 @@ public sealed class MainForm : Form
             else settings.SetStatus("Shaders reloaded.");
         };
         Application.Idle += OnIdle;
+        timingTimer.Tick += (_, _) => { if (settings.Visible) settings.SetTiming(session); };
+        timingTimer.Start();
     }
 
     protected override async void OnShown(EventArgs e)
@@ -181,7 +184,7 @@ public sealed class MainForm : Form
         catch (Exception error) { System.Diagnostics.Debug.WriteLine(error); }
         finally
         {
-            sessionGate.Release(); reloadTimer.Dispose(); settings.Dispose();
+            sessionGate.Release(); reloadTimer.Dispose(); timingTimer.Dispose(); settings.Dispose();
             shutdownComplete = true; Close();
         }
     }
