@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -47,9 +47,9 @@ namespace AEther.WindowsForms
             GraphicsModule.ProcessKeyPress(e);
         }
 
-        private void Source_DataAvailable(object? sender, ReadOnlyMemory<byte> evt)
+        private void Source_DataAvailable(object? sender, ReadOnlySpan<byte> evt)
         {
-            Analyzer.PostSamples(evt);
+            Analyzer.PostSampleSpan(evt);
         }
 
         private void Analyzer_SamplesAnalyzed(object? sender, SampleEvent<double> evt)
@@ -101,3 +101,4 @@ namespace AEther.WindowsForms
 
     }
 }
+

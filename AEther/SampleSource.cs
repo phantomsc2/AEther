@@ -1,11 +1,14 @@
-﻿using System;
+using System;
 
 namespace AEther
 {
+    public delegate void SampleDataHandler(object? sender, ReadOnlySpan<byte> data);
+
     public abstract class SampleSource : IDisposable
     {
 
-        public EventHandler<ReadOnlyMemory<byte>>? DataAvailable;
+        /// <summary>Data is valid only during the callback. Copy before returning for asynchronous use.</summary>
+        public SampleDataHandler? DataAvailable;
         public EventHandler<Exception?>? Stopped;
 
         public abstract SampleFormat Format { get; }
@@ -15,3 +18,4 @@ namespace AEther
 
     }
 }
+

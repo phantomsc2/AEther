@@ -67,7 +67,7 @@ namespace AEther.Tests
             for (var offset = 0; offset < bytes.Length;)
             {
                 var count = Math.Min(37, bytes.Length - offset); // deliberately splits floats and stereo frames
-                fragmented.PostSamples(bytes.AsMemory(offset, count));
+                fragmented.PostSampleSpan(bytes.AsSpan(offset, count));
                 offset += count;
             }
             Array.Fill(bytes, (byte)255); // the capture device may reuse its buffer immediately
@@ -157,3 +157,4 @@ namespace AEther.Tests
         }
     }
 }
+

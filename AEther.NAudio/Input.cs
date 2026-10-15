@@ -1,4 +1,4 @@
-﻿using NAudio.Wave;
+using NAudio.Wave;
 using System;
 
 namespace AEther.NAudio
@@ -8,7 +8,9 @@ namespace AEther.NAudio
 
         public override SampleFormat Format { get; }
 
-        protected readonly IWaveIn Device;
+        protected readonly IWaveIn? Device;
+        protected readonly WasapiRecorder? WasapiDevice;
+        WaveFormat WaveFormat => WasapiDevice?.WaveFormat ?? Device!.WaveFormat;
 
         public Input(IWaveIn device)
         {
@@ -18,6 +20,14 @@ namespace AEther.NAudio
             Format = ToSampleFormat(device.WaveFormat);
         }
 
+        protected Input(WasapiRecorder device)
+        {
+            WasapiDevice = device;
+            Format = ToSampleFormat(device.WaveFormat);
+            device.DataAvailable += (buffer, flags, devicePosition, qpcPosition) =>
+                DataAvailable?.Invoke(this, buffer);
+            device.RecordingStopped += Device_RecordingStopped;
+        }
         private void Device_RecordingStopped(object? sender, StoppedEventArgs e)
         {
             Stopped?.Invoke(this, e.Exception);
@@ -25,22 +35,22 @@ namespace AEther.NAudio
 
         private void Device_DataAvailable(object? sender, WaveInEventArgs evt)
         {
-            var data = evt.Buffer.AsMemory(0, evt.BytesRecorded);
+            var data = evt.Buffer.AsSpan(0, evt.BytesRecorded);
             DataAvailable?.Invoke(this, data);
         }
 
         public void Playback()
         {
             var wo = new WaveOut();
-            var bwp = new BufferedWaveProvider(Device.WaveFormat)
+            var bwp = new BufferedWaveProvider(WaveFormat)
             {
                 DiscardOnBufferOverflow = true,
             };
-            Device.DataAvailable += (sender, evt) =>
+            DataAvailable += (sender, data) =>
             {
-                bwp.AddSamples(evt.Buffer, 0, evt.BytesRecorded);
+                bwp.AddSamples(data);
             };
-            Device.RecordingStopped += (sender, evt) =>
+            Stopped += (sender, error) =>
             {
                 wo.Stop();
                 wo.Dispose();
@@ -52,30 +62,36 @@ namespace AEther.NAudio
 
         public static SampleFormat ToSampleFormat(WaveFormat format)
         {
+            if (format is WaveFormatExtensible extensible)
+                format = extensible.ToStandardWaveFormat();
             SampleType type = (format.Encoding, format.BitsPerSample) switch
             {
                 (WaveFormatEncoding.Pcm, 16) => SampleType.UInt16.Instance,
                 (WaveFormatEncoding.IeeeFloat, 32) => SampleType.Float32.Instance,
-                _ => throw new Exception(),
+                _ => throw new NotSupportedException($"Unsupported capture format: {format}"),
             };
             return new SampleFormat(type, format.SampleRate, format.Channels);
         }
 
         public override void Start()
         {
-            Device.StartRecording();
+            if (WasapiDevice != null) WasapiDevice.StartRecording();
+            else Device!.StartRecording();
         }
 
         public override void Stop()
         {
-            Device.StopRecording();
+            if (WasapiDevice != null) WasapiDevice.StopRecording();
+            else Device!.StopRecording();
         }
 
         public override void Dispose()
         {
-            Device.Dispose();
+            WasapiDevice?.Dispose();
+            Device?.Dispose();
             GC.SuppressFinalize(this);
         }
 
     }
 }
+

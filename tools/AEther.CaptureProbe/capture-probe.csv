@@ -1,0 +1,5 @@
+mode,count,packet_median_ms,packet_p95_ms,interval_median_ms,interval_p95_ms,callback_mean_us
+NAudio-request-1ms,300,10.000,10.000,10.002,10.091,4.690
+NAudio-request-2ms,301,10.000,10.000,10.003,10.066,2.379
+NAudio-request-5ms,301,10.000,10.000,10.000,10.069,2.729
+NAudio-request-10ms,300,10.000,10.000,10.001,10.086,2.659

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 
@@ -31,7 +31,7 @@ namespace AEther
                 {
                     break;
                 }
-                DataAvailable?.Invoke(this, buffer.AsMemory(0, count));
+                DataAvailable?.Invoke(this, buffer.AsSpan(0, count));
             }
             //OnStopped?.Invoke(this, null);
         }
@@ -48,3 +48,4 @@ namespace AEther
 
     }
 }
+

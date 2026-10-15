@@ -67,7 +67,10 @@ namespace AEther
         public void Start() => Started.TrySetResult();
 
         /// <summary>Never blocks capture. Copies memory owned by the capture device.</summary>
-        public void PostSamples(ReadOnlyMemory<byte> data)
+        public void PostSamples(ReadOnlyMemory<byte> data) => PostSampleSpan(data.Span);
+
+        /// <summary>Copies a native capture packet into the bounded analysis queue.</summary>
+        public void PostSampleSpan(ReadOnlySpan<byte> data)
         {
             if (data.IsEmpty)
                 return;
@@ -75,7 +78,7 @@ namespace AEther
             Profile.Record("capture.packet_ms", data.Length * 1000.0 / Format.Size / Format.SampleRate);
             var captureStart = DateTime.Now - TimeSpan.FromSeconds(data.Length / (double)Format.Size / Format.SampleRate);
             var evt = RentEvent<byte>(data.Length, 1, captureStart);
-            data.CopyTo(evt.Samples);
+            data.CopyTo(evt.Samples.AsSpan());
             if (!Input.Writer.TryWrite((evt, arrival)))
             {
                 ReturnEvent(evt);
@@ -190,3 +193,4 @@ namespace AEther
         static void ReturnEvent<T>(SampleEvent<T> evt) => ArrayPool<T>.Shared.Return(evt.Samples);
     }
 }
+

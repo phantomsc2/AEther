@@ -1,32 +1,30 @@
-﻿
 using NAudio.Wave;
-using NAudio.CoreAudioApi;
 using System;
 
 namespace AEther.NAudio
 {
-
     public class Loopback : Input
     {
-
         public Loopback(int requestedBufferMilliseconds = 1)
-            : base(new LowLatencyLoopbackCapture(requestedBufferMilliseconds))
+            : base(CreateDevice(requestedBufferMilliseconds))
         { }
 
-        // NAudio 2.2.1's WasapiLoopbackCapture exposes neither the buffer
-        // duration nor event synchronization; its base defaults to 100 ms
-        // and polls after sleeping for half the actual allocated buffer.
-        sealed class LowLatencyLoopbackCapture : WasapiCapture
+        static WasapiRecorder CreateDevice(int requestedBufferMilliseconds)
         {
-            public LowLatencyLoopbackCapture(int requestedBufferMilliseconds)
-                : base(WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice(),
-                    OperatingSystem.IsWindowsVersionAtLeast(10, 0, 15063),
-                    Math.Clamp(requestedBufferMilliseconds, 1, 100))
-            { }
-
-            protected override AudioClientStreamFlags GetAudioClientStreamFlags()
-                => AudioClientStreamFlags.Loopback | base.GetAudioClientStreamFlags();
+            var builder = new WasapiRecorderBuilder()
+                .WithLoopbackCapture()
+                .WithBufferLength(Math.Clamp(requestedBufferMilliseconds, 1, 100))
+                .WithMmcssThreadPriority("Pro Audio");
+            // Event-driven loopback requires Windows 10 1703. IAudioClient3
+            // WithLowLatency is not supported for loopback; keep the mix format
+            // and request the smallest shared buffer instead. Windows rounds it
+            // to the engine's supported duration.
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 15063))
+                builder.WithEventSync();
+            else
+                builder.WithPollingSync();
+            return builder.Build();
         }
-
     }
 }
+
