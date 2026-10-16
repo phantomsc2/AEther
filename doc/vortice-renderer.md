@@ -120,8 +120,8 @@ input failures, minimize/restore, display selection and F11 transitions on each 
 ## Spatial antialiasing
 
 Distance estimation, log-distance depth interpolation, frequency/history coordinates and
-exposure follow HEAD. AA adds deterministic None (one center sample), Medium (2×2) and
-High (4×4) sampling, averaging linear output colors before gamma encoding. Every mode
+exposure follow HEAD. AA is a checkbox: disabled uses one center sample, enabled uses deterministic
+2×2 sampling, averaging linear output colors before gamma encoding. Both modes
 uses the same field and depth; there is no AA-dependent iteration suppression. Existing
 screen-derivative shading heuristics use each subpixel's footprint. They remain approximate,
 so quality changes can affect those filters as well as resolve additional spatial detail.

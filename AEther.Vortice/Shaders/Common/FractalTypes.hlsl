@@ -8,7 +8,7 @@ struct GeometryParameters
 };
 struct QualityParameters
 {
-    float Antialiasing;
+    bool Antialiasing;
     float MaximumIterations;
     float MovementSpeed;
 };

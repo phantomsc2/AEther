@@ -88,7 +88,7 @@ The HLSL source is authoritative. Current normalized controls map to these units
 | `Geometry.Anisotropy` | 0 to 0.5 |
 | `Geometry.SliceDepth` | -2 to 2 |
 | `Quality.MaximumIterations` | nearest integer from 1 to 30; default 10 |
-| `Quality.Antialiasing` | below 0.25: one sample; below 0.75: 2x2; otherwise 4x4 |
+| `Quality.Antialiasing` | boolean checkbox: false uses one sample; true uses 2x2 |
 | `Quality.MovementSpeed` | 0 to 10; default 3 |
 | `Filtering.FrequencySigma`, `TimeSigma` | 0.1 to 2 |
 | `Filtering.RangeSigma` | 0.0001 to 10 |

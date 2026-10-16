@@ -247,7 +247,7 @@ internal static partial class Program
             File.Copy(file, Path.Combine(fixture, Path.GetFileName(file)), true);
         File.AppendAllText(Path.Combine(fixture, "Common.hlsl"), "\n#define MovementTime 0.0\n#define S 0.0\n#define FractalDepth 8.5\n");
         using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { Scene = Scene.MandelFluid, MandelboxAntialiasing = AntialiasingQuality.None };
+        { Scene = Scene.MandelFluid, MandelboxAntialiasing = false };
         renderer.Render(false);
         renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 10);
         if (renderer.Fluid.ReadDye().Any(v => v != 0)) throw new Exception("Fluid generated pigment in silence.");
@@ -562,9 +562,9 @@ internal static partial class Program
             """);
         using var renderer = new Renderer(window, 320, 180, 64, 256, 1, fixture);
         FillContrastHistory(renderer);
-        var movement = new double[3];
+        var movement = new double[2];
         var hashes = new System.Collections.Generic.HashSet<string>();
-        foreach (var quality in Enum.GetValues<AntialiasingQuality>())
+        foreach (var quality in new[] { false, true })
         {
             renderer.MandelboxAntialiasing = quality;
             foreach (var slice in new[] { 0f, .15f, .7f })
@@ -581,19 +581,19 @@ internal static partial class Program
                 renderer.SliceDepth += .0001f;
                 renderer.Render(false);
                 var shifted = renderer.ReadPixels();
-                movement[(int)quality] += first.Select((v, i) => i % 4 == 3 ? 0 : Math.Abs(v - shifted[i])).Average();
+                movement[quality ? 1 : 0] += first.Select((v, i) => i % 4 == 3 ? 0 : Math.Abs(v - shifted[i])).Average();
                 if (slice == 0)
                 {
                     hashes.Add(Convert.ToHexString(SHA256.HashData(first)));
                     Save(first, 320, 180, Path.Combine(output, $"mandelbox-aa-{quality}.png"));
                 }
             }
-            Console.WriteLine($"Mandelbox {quality}, depth 20: slice sensitivity {movement[(int)quality]:F4}");
+            Console.WriteLine($"Mandelbox {quality}, depth 20: slice sensitivity {movement[quality ? 1 : 0]:F4}");
         }
-        if (hashes.Count != 3) throw new Exception("Antialiasing quality settings did not change the image.");
-        if (movement[1] >= movement[0] || movement[2] >= movement[0])
+        if (hashes.Count != 2) throw new Exception("Antialiasing toggle did not change the image.");
+        if (movement[1] >= movement[0])
             throw new Exception("Antialiasing failed to reduce subpixel slice shimmer.");
-        Console.WriteLine("Antialiasing: all quality modes, depth 20, deterministic frames and reduced slice shimmer passed.");
+        Console.WriteLine("Antialiasing: enabled and disabled, depth 20, deterministic frames and reduced slice shimmer passed.");
     }
 
     static void FillContrastHistory(Renderer renderer)
@@ -646,7 +646,7 @@ internal static partial class Program
                 .Replace("#define S .37", "#define S 0.0"));
             File.WriteAllText(Path.Combine(directory, "Mandelbox.hlsl"), shader);
             using var renderer = new Renderer(window, 320, 180, 64, 256, 1, directory)
-            { MandelboxAntialiasing = AntialiasingQuality.None,
+            { MandelboxAntialiasing = false,
                 MandelboxJuliaBlend = 0, MandelboxFoldRotation = 0, MandelboxAnisotropy = 0 };
             FillContrastHistory(renderer);
             renderer.Render(false);
@@ -682,7 +682,7 @@ internal static partial class Program
 
             """);
         using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { MandelboxAntialiasing = AntialiasingQuality.Medium, BilateralStrength = 0 };
+        { MandelboxAntialiasing = true, BilateralStrength = 0 };
         foreach (var channel in new[] { 0, 1 })
         foreach (var target in new[] { .12, .5, .88 })
         {
@@ -743,7 +743,7 @@ internal static partial class Program
 
             """;
         using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { MandelboxAntialiasing = AntialiasingQuality.Medium };
+        { MandelboxAntialiasing = true };
         FillContrastHistory(renderer);
         byte[] Capture(string name, float julia, float rotation, float anisotropy, int time)
         {
@@ -794,7 +794,7 @@ internal static partial class Program
         }
         try
         {
-            foreach (var quality in Enum.GetValues<AntialiasingQuality>())
+            foreach (var quality in new[] { false, true })
             {
                 renderer.MandelboxAntialiasing = quality;
                 var lower = AtDepth("8.0");
@@ -808,7 +808,7 @@ internal static partial class Program
                 Save(middle, 96, 54, Path.Combine(output, $"mandelbox-depth-travel-{quality}.png"));
             }
             // Supersampling must equal a larger render of the same field.
-            renderer.MandelboxAntialiasing = AntialiasingQuality.High;
+            renderer.MandelboxAntialiasing = true;
             foreach (var depth in new[] { "1.0", "128.0", "4096.0", "2147483647.0" })
             {
                 var pixels = AtDepth(depth);
@@ -842,13 +842,13 @@ internal static partial class Program
                 + "\n#define fwidth(value) 0.0\n");
             if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
             using var referenceWindow = new Form { ShowInTaskbar = false };
-            foreach (var samples in new[] { 2, 4 })
+            foreach (var samples in new[] { 2 })
             {
-                renderer.MandelboxAntialiasing = samples == 2 ? AntialiasingQuality.Medium : AntialiasingQuality.High;
+                renderer.MandelboxAntialiasing = true;
                 renderer.Render(false);
                 var actual = renderer.ReadPixels();
                 using var reference = new Renderer(referenceWindow.Handle, 96 * samples, 54 * samples, 64, 256, 1, shaders)
-                { MandelboxAntialiasing = AntialiasingQuality.None };
+                { MandelboxAntialiasing = false };
                 FillContrastHistory(reference);
                 reference.Render(false);
                 var large = reference.ReadPixels();

@@ -235,7 +235,7 @@ float3 Shade(float2 uv, float sampleWidth)
 float4 PS(const PSin IN) : SV_Target
 {
     // AA integrates HEAD's shading without changing its distance field or depth.
-    int samples = (Quality.Antialiasing * 2) > 1.5 ? 4 : ((Quality.Antialiasing * 2) > .5 ? 2 : 1);
+    int samples = Quality.Antialiasing ? 2 : 1;
     float sampleWidth = 1.0 / samples;
     float2 uvX = ddx(IN.UV), uvY = ddy(IN.UV);
     float3 color = 0;

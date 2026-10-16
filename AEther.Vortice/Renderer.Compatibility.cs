@@ -1,7 +1,6 @@
 namespace AEther.Vortice;
 
 public enum Scene { Spectrum, Histogram, Mandelbox, MandelFluid }
-public enum AntialiasingQuality { None, Medium, High }
 
 // Transitional adapters for existing rendering probes. New code uses filename identity and reflected parameters.
 public sealed partial class Renderer
@@ -38,7 +37,7 @@ public sealed partial class Renderer
     public bool CombinedLevel { get => ReadBoolean("CombinedLevel"); set => WriteBoolean("CombinedLevel", value); }
     public bool Intensity { get => ReadBoolean("Intensity"); set => WriteBoolean("Intensity", value); }
     public float SliceDepth { get => ReadValue("Geometry.SliceDepth", .5f) * 4 - 2; set => WriteValue("Geometry.SliceDepth", (value + 2) / 4); }
-    public AntialiasingQuality MandelboxAntialiasing { get => (AntialiasingQuality)(int)Math.Round(ReadValue("Quality.Antialiasing") * 2); set => WriteValue("Quality.Antialiasing", (int)value / 2f); }
+    public bool MandelboxAntialiasing { get => ReadBoolean("Quality.Antialiasing"); set => WriteBoolean("Quality.Antialiasing", value); }
     public int MandelboxIterations { get => 1 + (int)Math.Round(ReadValue("Quality.MaximumIterations") * 29); set => WriteValue("Quality.MaximumIterations", (value - 1) / 29f); }
     public float MandelboxMovementSpeed { get => ReadValue("Quality.MovementSpeed") * 10; set => WriteValue("Quality.MovementSpeed", value / 10); }
     public float MandelboxScale { get => ReadValue("Geometry.Scale") * 8 - 4; set => WriteValue("Geometry.Scale", (value + 4) / 8); }
