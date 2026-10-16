@@ -97,7 +97,7 @@ the compiled layout. No author-assigned `register` or `packoffset` is required.
 `FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
 `Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
 and the unscaled musical movement clock `MusicalMovementTime`.
-`Spectrum0/1` and `Histogram0/1` supply stereo smoothed STN in RGB and original linear magnitude in alpha; `Linear`
+`Spectrum0/1` and `Histogram0/1` supply independent robust time/frequency/2D evidence in RGB and raw linear magnitude in alpha; `Linear`
 is the shared sampler. See `Common/Inputs.hlsl` for the complete declarations.
 
 Resources are bound by reflected name independently for every entry point. Unknown
@@ -105,13 +105,11 @@ resources, resource arrays and unsupported parameter types fail reload before an
 working program is replaced. Engine inputs use reserved names and must retain their
 declared types and layouts.
 
-Bilateral smoothing is part of the core splitter. `FilteredHistogram0/1` remain
-compatibility aliases for `Histogram0/1` and do not request a GPU filter pass.
-`ResidualHistogram0/1` and `ResidualSpectrum0/1` provide signed ungained linear
-residual in red; the other channels are zero. At unity class gains, individual
-history rows satisfy sum(STN) + R = original magnitude. Spectrum peak overviews
-are not additive. Histogram's `ResidualView` shows positive R in red and negative R
-in blue. Smoothing controls live in AnalyzerOptions, independently of scene controls.
+The splitter produces independent time, frequency, and 2D median estimates. These
+fields overlap and are not normalized against one another. Alpha is raw amplitude;
+there is no subtraction residual. `FilteredHistogram0/1` remain compatibility aliases
+for `Histogram0/1` and do not request a GPU pass. Histogram's `CombinedLevel` shows
+raw amplitude. MedianLength/MedianWidth control the robust evidence neighborhoods.
 Referencing `FluidDye` requests the existing fluid simulation;
 `FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`
 structures declared in `Scenes/MandelFluid.hlsl`. These are contracts of shared shader

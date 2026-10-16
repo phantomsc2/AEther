@@ -3,7 +3,7 @@ using System.Linq;
 
 namespace AEther
 {
-    /// <summary>Visual energy proxy from linear spectral magnitudes.</summary>
+    /// <summary>Visual energy proxy from raw linear spectral magnitude (alpha), independently of overlapping RGB evidence.</summary>
     public sealed class RetainedVisualFeatures
     {
         readonly double[] Frequencies;
@@ -25,7 +25,7 @@ namespace AEther
             {
                 var channel = input.GetChannel(c).Span;
                 var stride = input.SampleCount / Frequencies.Length;
-                if (stride != 4 && stride != Splitter.OutputStride) throw new ArgumentException("Invalid spectral layout.");
+                if (stride != Splitter.OutputStride) throw new ArgumentException("Invalid spectral layout.");
                 double channelPower = 0;
                 for (var k = 0; k < Frequencies.Length; ++k)
                 {

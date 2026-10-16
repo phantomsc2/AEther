@@ -29,8 +29,8 @@ internal sealed class ShaderProgram : IDisposable
                 ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler",
                 ShaderInputType.Texture => binding.Name is "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
-                    or "FilteredHistogram0" or "FilteredHistogram1" or "ResidualSpectrum0" or "ResidualSpectrum1"
-                    or "ResidualHistogram0" or "ResidualHistogram1" or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction",
+                    or "FilteredHistogram0" or "FilteredHistogram1"
+                    or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction",
                 _ => false,
             };
             if (entry == "PS" && binding.Name is "FluidConstants" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler")

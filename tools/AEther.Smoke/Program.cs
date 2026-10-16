@@ -117,18 +117,12 @@ internal static partial class Program
     {
         var domain = new Domain(100, 8, 16);
         var splitter = new Splitter(domain, new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1 });
-        var input = Enumerable.Range(0, 16).Select(k => Math.Log10(.4 + .02 * (k % 2))).ToArray();
-        var data = new double[16 * Splitter.OutputStride];
+        var input = Enumerable.Repeat(Math.Log10(.4), domain.Length).ToArray();
+        var data = new double[domain.Length * Splitter.OutputStride];
         splitter.Process(input, data);
-        if (!Enumerable.Range(0, 16).Any(k => data[k * Splitter.OutputStride + 4] < 0))
-            throw new Exception("Bilateral decomposition did not produce signed residual.");
-        for (var k = 0; k < 16; k++)
-        {
-            var i = k * Splitter.OutputStride;
-            if (Math.Abs(data[i] + data[i + 1] + data[i + 2] + data[i + 4] - data[i + 3]) > 1e-12)
-                throw new Exception("STN+R reconstruction failed.");
-        }
-        Console.WriteLine("Bilateral: core STN+R reconstructs original linear magnitude with signed residual.");
+        if (data.Any(value => Math.Abs(value - .4) > 1e-12))
+            throw new Exception("Independent robust evidence changed a constant amplitude field.");
+        Console.WriteLine("Evidence: time, frequency and 2D estimates overlap; raw amplitude is preserved.");
     }
 
     static void CheckColorOutput(IntPtr window, string shaders, string output)

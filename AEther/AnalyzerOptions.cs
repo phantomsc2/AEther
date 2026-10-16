@@ -38,42 +38,26 @@ namespace AEther
 
         [Category("Splitter")]
         [DefaultValue(3.0)]
-        [Description("Linear amplitude gain for sines after classification. Does not scale magnitude.")]
+        [Description("Linear gain for independent time-median evidence. Does not scale magnitude.")]
         public double SineGain { get; set; } = 3.0;
 
         [Category("Splitter")]
         [DefaultValue(3.0)]
-        [Description("Linear amplitude gain for transients after classification. Does not scale magnitude.")]
+        [Description("Linear gain for independent frequency-median evidence. Does not scale magnitude.")]
         public double TransientGain { get; set; } = 3.0;
 
         [Category("Splitter")]
         [DefaultValue(3.0)]
-        [Description("Linear amplitude gain for noise after classification. Does not scale magnitude.")]
+        [Description("Linear gain for independent time-frequency median evidence. Does not scale magnitude.")]
         public double NoiseGain { get; set; } = 1.0;
 
         [Category("Splitter")]
-        [Description("Horizontal evidence: causal median history in seconds.")]
+        [Description("Causal time-median window in seconds; also the time extent of 2D evidence.")]
         public double MedianLength { get; set; } = .2;
 
         [Category("Splitter")]
-        [Description("Vertical evidence: centered median width in octaves.")]
+        [Description("Centered frequency-median width in octaves; also the frequency extent of 2D evidence.")]
         public double MedianWidth { get; set; } = 3;
-
-        [Category("Splitter")]
-        [Description("Bilateral support as a fraction of the median windows. Zero bypasses smoothing.")]
-        public double SmoothingAmount { get; set; } = .5;
-
-        [Category("Splitter")]
-        [Description("Bilateral edge tolerance in amplitude dB. Averaging and residual remain linear.")]
-        public double SmoothingEdgeDb { get; set; } = 6;
-
-        [Category("Splitter")]
-        [Description("Class membership is zero below this evidence ratio (at least 0.5).")]
-        public double FuzzyLower { get; set; } = .7;
-
-        [Category("Splitter")]
-        [Description("Class membership is one above this evidence ratio (at most 1).")]
-        public double FuzzyUpper { get; set; } = .8;
 
         public void Validate(SampleFormat format)
         {
@@ -107,14 +91,6 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(MedianWidth), "Median width needs at least two frequency samples.");
             if (!double.IsFinite(MedianLength) || MedianLength * rate < 2)
                 throw new ArgumentOutOfRangeException(nameof(MedianLength), "Median history needs at least two time samples.");
-            if (!double.IsFinite(SmoothingAmount) || SmoothingAmount < 0 || SmoothingAmount > 1)
-                throw new ArgumentOutOfRangeException(nameof(SmoothingAmount));
-            if (!double.IsFinite(SmoothingEdgeDb) || SmoothingEdgeDb <= 0 || SmoothingEdgeDb > 120)
-                throw new ArgumentOutOfRangeException(nameof(SmoothingEdgeDb));
-            if (!double.IsFinite(FuzzyLower) || FuzzyLower < .5 || FuzzyLower >= 1)
-                throw new ArgumentOutOfRangeException(nameof(FuzzyLower));
-            if (!double.IsFinite(FuzzyUpper) || FuzzyUpper <= FuzzyLower || FuzzyUpper > 1)
-                throw new ArgumentOutOfRangeException(nameof(FuzzyUpper));
         }
 
     }

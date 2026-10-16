@@ -176,10 +176,6 @@ public sealed class SettingsWindow : ToolWindow
             or nameof(AnalyzerOptions.NoiseGain) => (0, 20),
         nameof(AnalyzerOptions.MedianLength) => (2.0 / Options.TimeResolution, 2),
         nameof(AnalyzerOptions.MedianWidth) => (2.0 / Options.FrequencyResolution, 8),
-        nameof(AnalyzerOptions.SmoothingAmount) => (0, 1),
-        nameof(AnalyzerOptions.SmoothingEdgeDb) => (.1, 120),
-        nameof(AnalyzerOptions.FuzzyLower) => (.5, Options.FuzzyUpper - .001),
-        nameof(AnalyzerOptions.FuzzyUpper) => (Options.FuzzyLower + .001, 1),
         _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),
     };
 

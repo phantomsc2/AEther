@@ -82,15 +82,14 @@ public class ShaderSilenceTests
         void Tick() { clock.Advance(); renderer.Render(false); }
         void Post(bool music)
         {
-            var samples = new double[Bands * 10];
+            var samples = new double[Bands * 8];
             if (music)
-                for (int i = 0; i < samples.Length; i += 5)
+                for (int i = 0; i < samples.Length; i += 4)
                 {
                     samples[i] = .6;
                     samples[i + 1] = row % 12 < 3 ? .8 : .1;
                     samples[i + 2] = .3;
                     samples[i + 3] = .9;
-                    samples[i + 4] = -.2; // Signed detail survives the same history lifecycle.
                 }
             renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
                 { AnalysisRow = row++ }, 2);

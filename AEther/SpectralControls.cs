@@ -32,7 +32,7 @@ namespace AEther
             {
                 var channel = input.GetChannel(c).Span;
                 var stride = input.SampleCount / LowWeights.Length;
-                if (stride != 4 && stride != Splitter.OutputStride) throw new ArgumentException("Invalid spectral layout.");
+                if (stride != Splitter.OutputStride) throw new ArgumentException("Invalid spectral layout.");
                 for (var k = 0; k < LowWeights.Length; ++k)
                 {
                     var sustained = Math.Max(0, channel[stride * k]);

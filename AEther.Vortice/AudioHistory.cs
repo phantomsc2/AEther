@@ -11,7 +11,7 @@ public sealed class AudioHistory
     readonly TimeProvider timeProvider;
     readonly long started;
     readonly double rate;
-    readonly float[] peak, residualPeak;
+    readonly float[] peak;
     long latestRow = -1;
     double lastAudio = double.NegativeInfinity;
     double anchorTime, position;
@@ -26,9 +26,6 @@ public sealed class AudioHistory
     public double Seconds { get; }
     public float[][] History { get; }
     public float[][] Spectrum { get; }
-    /// <summary>Signed ungained linear residual in red; other channels are zero.</summary>
-    public float[][] ResidualHistory { get; }
-    public float[][] ResidualSpectrum { get; }
     /// <summary>Bounded tone/transient/noise envelopes, advanced in audio-row time.</summary>
     public Vector3 Components { get; private set; }
     public float FractalEnergy { get; private set; }
@@ -63,10 +60,7 @@ public sealed class AudioHistory
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
-        ResidualHistory = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
-        ResidualSpectrum = [new float[4 * bands], new float[4 * bands]];
         peak = new float[8 * bands];
-        residualPeak = new float[8 * bands];
         pending = Channel.CreateBounded<(long, long, long, double, float[])>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
@@ -76,30 +70,16 @@ public sealed class AudioHistory
 
     public void Post(SampleEvent<double> input, int channelCount)
     {
-        if ((input.SampleCount != Bands * 4 && input.SampleCount != Bands * Splitter.OutputStride) || channelCount < 1)
+        if (input.SampleCount != Bands * Splitter.OutputStride || channelCount < 1)
             throw new ArgumentException("Analysis dimensions do not match the renderer.");
-        var owned = new float[Bands * 16];
-        var stride = input.SampleCount / Bands;
+        var owned = new float[Bands * 8];
         for (var c = 0; c < 2; c++)
         {
             var src = input.GetChannel(Math.Min(c, channelCount - 1)).Span;
-            for (var k = 0; k < Bands; k++)
-            {
-                for (var j = 0; j < 4; j++)
-                {
-                    var value = src[stride * k + j];
-                    owned[c * Bands * 4 + 4 * k + j] = double.IsFinite(value)
-                        ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
-                }
-                if (stride == Splitter.OutputStride)
-                {
-                    var residual = src[stride * k + 4];
-                    owned[Bands * 8 + c * Bands * 4 + 4 * k] = double.IsFinite(residual)
-                        ? (float)Math.Clamp(residual, -float.MaxValue, float.MaxValue) : 0;
-                }
-            }
+            for (var i = 0; i < src.Length; i++)
+                owned[c * Bands * 4 + i] = double.IsFinite(src[i])
+                    ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
         }
-        // Audio rows are fixed by sample count; arrival timing is profiling data.
         pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, Now, owned));
     }
 
@@ -107,7 +87,6 @@ public sealed class AudioHistory
     {
         Flash *= (float)Math.Exp(-dt / .045);
         Array.Clear(peak);
-        Array.Clear(residualPeak);
 
         var now = Now;
         while (pending.Reader.TryRead(out var packet))
@@ -119,7 +98,6 @@ public sealed class AudioHistory
                 > packet.Row + .15 * rate)
             {
                 foreach (var history in History) Array.Clear(history);
-                foreach (var history in ResidualHistory) Array.Clear(history);
                 firstRow = packet.Row;
                 latestRow = newestRow = packet.Row - 1;
                 anchored = false;
@@ -139,7 +117,6 @@ public sealed class AudioHistory
                 for (var c = 0; c < 2; c++)
                 {
                     Array.Clear(History[c], (int)((clear % Rows + Rows) % Rows) * Bands * 4, Bands * 4);
-                    Array.Clear(ResidualHistory[c], (int)((clear % Rows + Rows) % Rows) * Bands * 4, Bands * 4);
                 }
             latestRow = Math.Max(latestRow, row);
             if (row < latestRow - Rows + 1) continue;
@@ -149,19 +126,14 @@ public sealed class AudioHistory
             for (var c = 0; c < 2; c++)
             {
                 packet.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
-                packet.Samples.AsSpan(Bands * 8 + c * Bands * 4, Bands * 4).CopyTo(ResidualHistory[c].AsSpan(offset));
             }
-            // Spectrum is an overview: retain the signed residual of largest absolute magnitude.
-            for (var i = 0; i < residualPeak.Length; i++)
-                if (Math.Abs(packet.Samples[Bands * 8 + i]) > Math.Abs(residualPeak[i]))
-                    residualPeak[i] = packet.Samples[Bands * 8 + i];
             for (var i = 0; i < peak.Length; i++) peak[i] = Math.Max(peak[i], packet.Samples[i]);
             var power = 0.0;
             var transientPower = 0.0;
             double tonePower = 0, noisePower = 0;
             for (var i = 0; i < Bands * 8; i += 4)
             {
-                // Alpha is the original linear magnitude; RGB have independent class gains.
+                // Alpha is raw linear magnitude; RGB are independent robust evidence fields.
                 var magnitude = (double)packet.Samples[i + 3];
                 power += magnitude * magnitude;
                 var transient = (double)packet.Samples[i + 1];
@@ -204,7 +176,6 @@ public sealed class AudioHistory
         for (var c = 0; c < 2; c++)
         {
             peak.AsSpan(c * Bands * 4, Bands * 4).CopyTo(Spectrum[c]);
-            residualPeak.AsSpan(c * Bands * 4, Bands * 4).CopyTo(ResidualSpectrum[c]);
         }
         if (anchored)
         {
@@ -226,7 +197,6 @@ public sealed class AudioHistory
         if (now - lastAudio > .15)
         {
             foreach (var spectrum in Spectrum) Array.Clear(spectrum);
-            foreach (var spectrum in ResidualSpectrum) Array.Clear(spectrum);
             Energy = 0;
             Components *= (float)Math.Exp(-dt / .35);
             FractalEnergy *= (float)Math.Exp(-dt / .35);
