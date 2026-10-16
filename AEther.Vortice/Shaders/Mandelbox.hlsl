@@ -123,9 +123,11 @@ float3 Shade(float2 uv, float sampleWidth)
     float age = -log(max(.001, 1 - warpedRadius / 1.02)) / TimeCompression;
     // Time and frequency occupy separate dimensions of the history texture.
     // Angle places spectral content around a front; the distance field folds it.
-    // Each stereo channel occupies its own semicircle. Both run from bass
-    // at the bottom to treble at the top, meeting along the vertical axis.
-    float right = step(0, screen.x);
+    // Blend to mono at the bass/treble poles so the channels meet smoothly
+    // along the vertical axis. Squared angular width keeps stereo separation
+    // concentrated around the mids at either side, independent of radius.
+    float stereoPosition = screen.x / max(radius, 1e-5);
+    float right = .5 + .5 * stereoPosition * abs(stereoPosition);
     // Frequency keeps a fixed angle matching the histogram's vertical order.
     // Tone frequency stays anchored; transients get a small bounded fold below.
     float tonalFrequency = atan2(abs(screen.x), -screen.y) / 3.14159265;

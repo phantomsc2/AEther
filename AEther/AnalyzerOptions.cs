@@ -37,7 +37,7 @@ namespace AEther
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
         [Category("Visualization")]
-        public double HistorySeconds { get; set; } = 1;
+        public double HistorySeconds { get; set; } = .3f;
 
         [Category("Splitter")]
         [DefaultValue(3.0)]
