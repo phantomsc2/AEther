@@ -186,7 +186,7 @@ namespace AEther.Tests
             Assert.That(rows.Count, Is.EqualTo(1));
             for (var c = 0; c < Format.ChannelCount; ++c)
             {
-                var processor = new DFTProcessor(options.Domain, Format.SampleRate, false, 0, window);
+                var processor = new DFTProcessor(options.Domain, Format.SampleRate, false, window);
                 var samples = Enumerable.Range(0, 80)
                     .Select(i => (double)BitConverter.ToSingle(bytes, (2 * i + c) * sizeof(float))).ToArray();
                 processor.Process(samples);

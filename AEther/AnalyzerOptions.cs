@@ -25,9 +25,6 @@ namespace AEther
         public int TimeResolution { get; set; } = 1 << 8;
 
         [Category("DFT")]
-        public int MaxParallelization { get; set; } = 0;
-
-        [Category("DFT")]
         public bool SIMDEnabled { get; set; } = true;
 
         [Category("DFT")]
@@ -83,8 +80,6 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(MaxFrequency), "Frequency range must be positive and below Nyquist.");
             if (FrequencyResolution <= 0 || Domain.Length <= 0)
                 throw new ArgumentOutOfRangeException(nameof(FrequencyResolution));
-            if (MaxParallelization < 0)
-                throw new ArgumentOutOfRangeException(nameof(MaxParallelization));
             if (!Enum.IsDefined(WindowFunction))
                 throw new ArgumentOutOfRangeException(nameof(WindowFunction));
             if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)

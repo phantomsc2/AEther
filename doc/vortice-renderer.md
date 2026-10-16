@@ -15,14 +15,24 @@ documents describe historical work.
 - AEther: analysis and shared signal types.
 - AEther.NAudio: Windows audio capture.
 - AEther.Vortice: native graphics resources, shader compilation, audio texture history.
-- AEther.WindowsForms: application startup, plain canvas, owned settings window,
+- AEther.WinUI: application startup, full-window SwapChainPanel, owned settings and shader windows,
   capture/session lifecycle, keyboard shortcuts and borderless fullscreen.
 
-Forms do not handle Direct3D objects. The host passes a native window handle and pixel
-dimensions to Renderer. All native graphics operations happen on the UI thread.
-Application.Idle renders while the message queue is empty; Present uses vsync. Messages
-are serviced between frames. Minimizing pauses rendering, and restore consumes recent
-audio from the bounded mailbox. Settings edits rebuild the complete session.
+The host passes its native window handle, physical pixel dimensions and a swap-chain
+attachment callback to Renderer. WinUI attaches the composition swap chain through
+`ISwapChainPanelNative`; the rendering library has no WinUI dependency. Composition
+uses FlipSequential, opaque alpha and an inverse composition-scale transform. Pixel
+dimensions and the transform follow layout and DPI changes. The HWND presentation
+path remains available for renderer probes.
+
+`CompositionTarget.Rendering` signals a dedicated render thread. An auto-reset event
+coalesces queued frame requests while vsynced Present blocks, so the worker draws at
+most one pending frame after the current present. Resize, shader reload, readback and
+frame rendering are serialized around the D3D immediate context. Minimizing pauses
+frame requests, and restore consumes recent audio from the bounded mailbox. Settings
+edits rebuild the complete session.
+Closing a tool window hides it; closing the render window awaits audio/analysis
+shutdown, detaches the swap chain, releases graphics resources and closes both tools.
 
 ## Audio handoff
 
@@ -65,7 +75,9 @@ the image. The tone mapping and palette remain as authored; this change does not
 increase highlight brightness or expand the scene gamut.
 
 On HDR displays, reference white follows `DISPLAYCONFIG_SDR_WHITE_LEVEL`, queried for
-the containing output once per second. Polling follows monitor moves, HDR mode changes
+the containing output once per second. Composition swap chains do not support
+`GetContainingOutput`, so the WinUI path matches the window's monitor to DXGI outputs
+across adapters. Polling follows monitor moves, HDR mode changes
 and the Windows SDR-brightness slider. SDR displays use a scale of one. An unavailable
 display query falls back to the nominal 80-nit scRGB reference white. See Microsoft's
 [Advanced Color guidance](https://learn.microsoft.com/en-us/windows/win32/direct3darticles/high-dynamic-range).

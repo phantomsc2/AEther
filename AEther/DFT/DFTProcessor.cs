@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
 
 namespace AEther
 {
@@ -30,22 +29,12 @@ namespace AEther
         };
 
         readonly IDFTFilter[] Filters;
-        readonly ParallelOptions? ParallelOptions;
-
-        public DFTProcessor(Domain domain, double sampleRate, bool useSIMD, int maxParallelism,
+        public DFTProcessor(Domain domain, double sampleRate, bool useSIMD,
             DFTWindow windowFunction = DFTWindow.Hann)
         {
             // Window choice is a signal-processing decision, independent of CPU vector width.
             var cosines = GetWindowCosines(windowFunction);
             var window = CreateWindow(cosines);
-
-            if (0 < maxParallelism)
-            {
-                ParallelOptions = new ParallelOptions
-                {
-                    MaxDegreeOfParallelism = maxParallelism,
-                };
-            }
 
             if (cosines.Length == 1)
             {
@@ -106,23 +95,8 @@ namespace AEther
         public void Process(ReadOnlyMemory<double> samples)
         {
 
-            void ProcessFilter(IDFTFilter filter)
-            {
+            foreach (var filter in Filters)
                 filter.Process(samples);
-            }
-
-            if (ParallelOptions == null)
-            {
-                foreach (var filter in Filters)
-                {
-                    ProcessFilter(filter);
-                }
-            }
-            else
-            {
-                Parallel.ForEach(Filters, ParallelOptions, ProcessFilter);
-            }
-
 
         }
 

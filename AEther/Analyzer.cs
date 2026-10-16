@@ -53,7 +53,7 @@ namespace AEther
             Batch = new byte[checked(BatchSize * Format.Size)];
             DFT = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled,
-                    options.MaxParallelization, options.WindowFunction)).ToArray();
+                    options.WindowFunction)).ToArray();
             Splitter = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
             Transients = Enumerable.Range(0, Format.ChannelCount)

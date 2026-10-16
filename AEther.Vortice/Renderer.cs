@@ -11,9 +11,10 @@ using static Vortice.DXGI.DXGI;
 
 namespace AEther.Vortice;
 
-/// <summary>D3D11 fullscreen passes. All methods except PostAudio run on the window thread.</summary>
+/// <summary>D3D11 fullscreen passes. Frame rendering may run on the dedicated render thread.</summary>
 public sealed partial class Renderer : IDisposable
 {
+    readonly object graphicsGate = new();
     readonly List<IDisposable> resources = [];
     ID3D11Device device = null!;
     ID3D11DeviceContext context = null!;
@@ -56,12 +57,13 @@ public sealed partial class Renderer : IDisposable
     public string ShaderDirectory => shaderDirectory;
     public bool HighPrecisionOutput => output.HighPrecision;
     public string OutputDescription => output.Description;
-    internal float[] ReadPresentedPixels() => output.ReadPresentedPixels();
+    internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
-        double historySeconds = 1, string? shaderDirectory = null, bool highPrecisionOutput = true)
+        double historySeconds = 1, string? shaderDirectory = null, bool highPrecisionOutput = true,
+        Action<IDXGISwapChain1?>? attachSwapChain = null)
     {
         Audio = new(bands, analysisRate, historySeconds);
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
@@ -71,8 +73,9 @@ public sealed partial class Renderer : IDisposable
                 [FeatureLevel.Level_11_0], out device, out context).CheckError();
             Own(device); Own(context);
             using var factory = CreateDXGIFactory1<IDXGIFactory2>();
-            output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput));
-            factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
+            output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain));
+            if (attachSwapChain == null)
+                factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
             frameBuffer = Own(device.CreateBuffer(96, BindFlags.ConstantBuffer));
 
             namedBuffers.Add("FrameConstants", frameBuffer);
@@ -130,7 +133,9 @@ public sealed partial class Renderer : IDisposable
         return Path.Combine(AppContext.BaseDirectory, "Shaders");
     }
 
-    public bool ReloadShaders()
+    public bool ReloadShaders() { lock (graphicsGate) return ReloadShadersCore(); }
+
+    bool ReloadShadersCore()
     {
         ID3D11VertexShader? nextVertex = null;
         ID3D11PixelShader? nextOutput = null;
@@ -175,6 +180,11 @@ public sealed partial class Renderer : IDisposable
     }
     public void Resize(int newWidth, int newHeight)
     {
+        lock (graphicsGate) ResizeCore(newWidth, newHeight);
+    }
+
+    void ResizeCore(int newWidth, int newHeight)
+    {
         if (newWidth < 1 || newHeight < 1 || newWidth == width && newHeight == height) return;
         output.Resize(newWidth, newHeight);
         width = newWidth; height = newHeight;
@@ -182,7 +192,12 @@ public sealed partial class Renderer : IDisposable
         fluid?.Dispose(); fluid = null;
     }
 
-    public unsafe void Render(bool present = true)
+    public void Render(bool present = true)
+    {
+        lock (graphicsGate) RenderCore(present);
+    }
+
+    unsafe void RenderCore(bool present)
     {
         if (output.SceneTarget == null) return;
         var frameStart = Stopwatch.GetTimestamp();
@@ -259,13 +274,21 @@ public sealed partial class Renderer : IDisposable
     }
 
     /// <summary>Display-encoded RGBA8 export; dithering avoids reintroducing bands in PNGs.</summary>
-    public byte[] ReadPixels(bool dither = true) => output.ReadPixels(dither);
+    public byte[] ReadPixels(bool dither = true) { lock (graphicsGate) return output.ReadPixels(dither); }
+
+    /// <summary>Match a composition swap chain's physical pixels to the host's XAML scale.</summary>
+    public void SetCompositionScale(float x, float y) { lock (graphicsGate) output.SetCompositionScale(x, y); }
 
     [StructLayout(LayoutKind.Sequential)]
     struct Frame { public Vector4 A, B, C, D, E, F; }
 
 
     public void Dispose()
+    {
+        lock (graphicsGate) DisposeCore();
+    }
+
+    void DisposeCore()
     {
         if (disposed) return;
         disposed = true;

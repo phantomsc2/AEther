@@ -17,7 +17,10 @@ internal static partial class Program
     {
         try
         {
-            ApplicationConfiguration.Initialize();
+            if (args.Contains("--windows-only")) { CheckShaderWindows(null); return 0; }
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
             var root = Path.GetFullPath(args.Length > 0 ? args[0] : ".");
             var output = Path.Combine(root, "tools", "AEther.Smoke", "artifacts");
             Directory.CreateDirectory(output);
@@ -872,22 +875,23 @@ internal static partial class Program
 
     static void Seed(Renderer renderer)
     {
+        var bands = renderer.Audio.Bands;
         var end = DateTime.Now;
         var firstRow = nextSeedRow;
         nextSeedRow += 256;
         for (var row = 0; row < 256; row++)
         {
-            var data = new double[512];
+            var data = new double[bands * 8];
             for (var c = 0; c < 2; c++)
-                for (var k = 0; k < 64; k++)
+                for (var k = 0; k < bands; k++)
                 {
-                    var i = c * 256 + k * 4;
+                    var i = c * bands * 4 + k * 4;
                     data[i] = .15 + .55 * Math.Pow(Math.Sin(k * .12 + c * 2), 8);
                     data[i + 1] = row % 32 < 3 ? .8 : 0;
                     data[i + 2] = .08;
                     data[i + 3] = .65;
                 }
-            renderer.PostAudio(new(data, 256, end - TimeSpan.FromSeconds((256 - row) / 256.0))
+            renderer.PostAudio(new(data, bands * 4, end - TimeSpan.FromSeconds((256 - row) / 256.0))
                 { AnalysisRow = firstRow + row }, 2);
         }
     }

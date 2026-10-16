@@ -1,6 +1,7 @@
 using AEther.Vortice;
+using Vortice.DXGI;
 
-namespace AEther.WindowsForms;
+namespace AEther.WinUI;
 
 public sealed class Session : IDisposable
 {
@@ -10,17 +11,18 @@ public sealed class Session : IDisposable
     Task? stopTask;
     public event EventHandler<Exception?>? CaptureStopped;
 
-    public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options, string? shaderDirectory = null)
+    public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options,
+        string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null)
     {
         this.source = source;
         Analyzer = new(source.Format, options);
         try
         {
             var rate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
-            Renderer = new(handle, width, height, options.Domain.Length, rate, options.HistorySeconds, shaderDirectory);
+            Renderer = new(handle, width, height, options.Domain.Length, rate, options.HistorySeconds, shaderDirectory, attachSwapChain: attachSwapChain);
             Renderer.Audio.Profile = Analyzer.Profile;
         }
-        catch { Analyzer.Stop(); source.Dispose(); throw; }
+        catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
         source.DataAvailable += OnAudio;
         source.Stopped += OnStopped;
         Analyzer.SamplesAnalyzed += OnAnalysis;
@@ -39,6 +41,7 @@ public sealed class Session : IDisposable
         finally { Analyzer.Stop(); await Analyzer.Completion; }
         Analyzer.SamplesAnalyzed -= OnAnalysis;
     }
-    public void Dispose() { source.Dispose(); Renderer.Dispose(); }
+    public void Dispose() { try { source.Dispose(); } finally { Renderer.Dispose(); } }
 }
+
 

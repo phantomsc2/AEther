@@ -13,7 +13,7 @@ namespace AEther.Tests
             var domain = options.Domain;
             var frequencies = domain.ToArray();
             const int bin = 30, rate = 48000, batch = 187;
-            var processor = new DFTProcessor(domain, rate, true, 0);
+            var processor = new DFTProcessor(domain, rate, true);
             var splitter = new Splitter(domain, options, rate / (double)batch);
             var input = new double[batch];
             var spectrum = new double[domain.Length];

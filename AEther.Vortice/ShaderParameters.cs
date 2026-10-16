@@ -19,6 +19,7 @@ public sealed class ShaderParameter
 public sealed class ShaderParameters
 {
     internal byte[] Data { get; }
+    internal object SyncRoot { get; } = new();
     readonly byte[] defaults;
     public IReadOnlyList<ShaderParameter> Items { get; }
     internal ShaderParameters(ID3D11ShaderReflectionConstantBuffer buffer)
@@ -65,20 +66,25 @@ public sealed class ShaderParameters
             children.OrderBy(x => x.Name, StringComparer.Ordinal).ToList(), $"{d.Class}:{d.Type}:{d.ColumnCount}");
     }
 
-    public float GetFloat(ShaderParameter parameter) => BitConverter.ToSingle(Data, parameter.Offset);
-    public bool GetBoolean(ShaderParameter parameter) => BitConverter.ToInt32(Data, parameter.Offset) != 0;
+    public float GetFloat(ShaderParameter parameter) { lock (SyncRoot) return BitConverter.ToSingle(Data, parameter.Offset); }
+    public bool GetBoolean(ShaderParameter parameter) { lock (SyncRoot) return BitConverter.ToInt32(Data, parameter.Offset) != 0; }
     public void SetFloat(ShaderParameter parameter, float value)
     {
         if (!float.IsFinite(value) || value is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(value));
-        BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value);
+        lock (SyncRoot) BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value);
     }
-    public void SetBoolean(ShaderParameter parameter, bool value) => BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value ? 1 : 0);
-    public void Reset() => defaults.CopyTo(Data, 0);
+    public void SetBoolean(ShaderParameter parameter, bool value)
+    {
+        lock (SyncRoot) BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value ? 1 : 0);
+    }
+    public void Reset() { lock (SyncRoot) defaults.CopyTo(Data, 0); }
     internal static IEnumerable<ShaderParameter> Leaves(IEnumerable<ShaderParameter> items) =>
         items.SelectMany(p => p.Children.Count == 0 ? [p] : Leaves(p.Children));
     public void Restore(ShaderParameters previous)
     {
-        Copy(Items, previous.Items);
+        byte[] source;
+        lock (previous.SyncRoot) source = (byte[])previous.Data.Clone();
+        lock (SyncRoot) Copy(Items, previous.Items);
         void Copy(IReadOnlyList<ShaderParameter> current, IReadOnlyList<ShaderParameter> old)
         {
             foreach (var item in current)
@@ -86,7 +92,7 @@ public sealed class ShaderParameters
                 var match = old.FirstOrDefault(p => p.Name == item.Name && p.Kind == item.Kind);
                 if (match == null) continue;
                 if (item.Children.Count != 0) Copy(item.Children, match.Children);
-                else previous.Data.AsSpan(match.Offset, 4).CopyTo(Data.AsSpan(item.Offset, 4));
+                else source.AsSpan(match.Offset, 4).CopyTo(Data.AsSpan(item.Offset, 4));
             }
         }
     }

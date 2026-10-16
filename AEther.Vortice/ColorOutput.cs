@@ -13,6 +13,8 @@ internal sealed class ColorOutput : IDisposable
     readonly ID3D11DeviceContext context;
     readonly IDXGISwapChain1 swapChain;
     readonly ID3D11Buffer constants;
+    readonly IntPtr window;
+    readonly Action<IDXGISwapChain1?>? attachSwapChain;
     ID3D11RenderTargetView? backTarget;
     ID3D11Texture2D? scene;
     ID3D11RenderTargetView? sceneTarget;
@@ -25,15 +27,24 @@ internal sealed class ColorOutput : IDisposable
     public string Description => HighPrecision ? "FP16 scRGB" : "8-bit SDR (dithered)";
 
     public ColorOutput(ID3D11Device device, ID3D11DeviceContext context, IDXGIFactory2 factory,
-        IntPtr window, int width, int height, bool highPrecision)
+        IntPtr window, int width, int height, bool highPrecision, Action<IDXGISwapChain1?>? attachSwapChain = null)
     {
         this.device = device; this.context = context;
-        IDXGISwapChain1 Create(Format format) => factory.CreateSwapChainForHwnd(device, window, new SwapChainDescription1
+        this.window = window; this.attachSwapChain = attachSwapChain;
+        IDXGISwapChain1 Create(Format format)
         {
-            Width = (uint)Math.Max(1, width), Height = (uint)Math.Max(1, height),
-            Format = format, BufferCount = 2, BufferUsage = Usage.RenderTargetOutput,
-            SampleDescription = new(1, 0), SwapEffect = SwapEffect.FlipDiscard,
-        });
+            var description = new SwapChainDescription1
+            {
+                Width = (uint)Math.Max(1, width), Height = (uint)Math.Max(1, height),
+                Format = format, BufferCount = 2, BufferUsage = Usage.RenderTargetOutput,
+                SampleDescription = new(1, 0),
+                SwapEffect = attachSwapChain == null ? SwapEffect.FlipDiscard : SwapEffect.FlipSequential,
+                Scaling = Scaling.Stretch, AlphaMode = AlphaMode.Ignore,
+            };
+            return attachSwapChain == null
+                ? factory.CreateSwapChainForHwnd(device, window, description)
+                : factory.CreateSwapChainForComposition(device, description);
+        }
         IDXGISwapChain1? candidate = null;
         try
         {
@@ -61,6 +72,7 @@ internal sealed class ColorOutput : IDisposable
             candidate ??= Create(Format.R8G8B8A8_UNorm);
             swapChain = candidate;
             constants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
+            attachSwapChain?.Invoke(swapChain);
         }
         catch
         {
@@ -68,6 +80,15 @@ internal sealed class ColorOutput : IDisposable
             ReleaseTargets(); constants?.Dispose();
             throw;
         }
+    }
+
+    public void SetCompositionScale(float x, float y)
+    {
+        if (attachSwapChain == null) return;
+        if (!float.IsFinite(x) || !float.IsFinite(y) || x <= 0 || y <= 0)
+            throw new ArgumentOutOfRangeException(nameof(x));
+        using var chain = swapChain.QueryInterface<IDXGISwapChain2>();
+        chain.MatrixTransform = Matrix3x2.CreateScale(1 / x, 1 / y);
     }
 
     public void Resize(int newWidth, int newHeight)
@@ -99,9 +120,9 @@ internal sealed class ColorOutput : IDisposable
             whiteScale = 1;
             // Poll infrequently to follow monitor moves, HDR toggles and the
             // Windows SDR-brightness slider without doing display queries per frame.
-            if (swapChain.GetContainingOutput(out var output).Success)
+            using var output = FindOutput();
+            if (output != null)
             {
-                using (output)
                 using (var advanced = output.QueryInterfaceOrNull<IDXGIOutput6>())
                     if (advanced?.Description1.ColorSpace == ColorSpaceType.RgbFullG2084NoneP2020)
                         whiteScale = DisplayWhiteLevel.GetScale(output.Description.DeviceName);
@@ -115,6 +136,29 @@ internal sealed class ColorOutput : IDisposable
         context.Draw(3, 0);
         context.PSSetShaderResource(9, null!);
     }
+
+    IDXGIOutput? FindOutput()
+    {
+        if (attachSwapChain == null)
+            return swapChain.GetContainingOutput(out var output).Success ? output : null;
+        // Composition swap chains have no HWND and don't support GetContainingOutput.
+        // Resolve the owning window's monitor across adapters (including hybrid GPUs).
+        var monitor = MonitorFromWindow(window, 2);
+        using var factory = global::Vortice.DXGI.DXGI.CreateDXGIFactory1<IDXGIFactory1>();
+        for (uint a = 0; factory.EnumAdapters1(a, out var adapter).Success; a++)
+        {
+            using (adapter)
+                for (uint o = 0; adapter.EnumOutputs(o, out var candidate).Success; o++)
+                {
+                    if (candidate.Description.Monitor == monitor) return candidate;
+                    candidate.Dispose();
+                }
+        }
+        return null;
+    }
+
+    [DllImport("user32.dll")]
+    static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
 
     public void Present() => swapChain.Present(1, PresentFlags.None).CheckError();
 
@@ -177,5 +221,9 @@ internal sealed class ColorOutput : IDisposable
         scene?.Dispose(); scene = null;
         backTarget?.Dispose(); backTarget = null;
     }
-    public void Dispose() { ReleaseTargets(); constants.Dispose(); swapChain.Dispose(); }
+    public void Dispose()
+    {
+        try { attachSwapChain?.Invoke(null); }
+        finally { ReleaseTargets(); constants.Dispose(); swapChain.Dispose(); }
+    }
 }

@@ -71,8 +71,8 @@ namespace AEther.Tests
         public void SIMDIsAnOptimizationAndDoesNotChangeWindowOrGain([Values] DFTWindow window)
         {
             var domain = new Domain(100, 8, 40);
-            var scalar = new DFTProcessor(domain, 48000, false, 0, window);
-            var simd = new DFTProcessor(domain, 48000, true, 0, window);
+            var scalar = new DFTProcessor(domain, 48000, false, window);
+            var simd = new DFTProcessor(domain, 48000, true, window);
             var random = new Random(23);
             var input = Enumerable.Range(0, 16000).Select(_ => random.NextDouble() - .5).ToArray();
             scalar.Process(input);
@@ -88,7 +88,7 @@ namespace AEther.Tests
         [Test]
         public void EveryWindowHasUnitOnBinGain([Values] DFTWindow window)
         {
-            var processor = new DFTProcessor(new Domain(1000, 8, 1), 48000, true, 0, window);
+            var processor = new DFTProcessor(new Domain(1000, 8, 1), 48000, true, window);
             var samples = Enumerable.Range(0, 4 * 528)
                 .Select(i => .7 * Math.Sin(2 * Math.PI * 1000 * i / 48000 + .37)).ToArray();
             processor.Process(samples);
@@ -116,7 +116,7 @@ namespace AEther.Tests
         public void RejectsUnknownWindow()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() =>
-                new DFTProcessor(new Domain(1000, 8, 1), 48000, true, 0, (DFTWindow)999));
+                new DFTProcessor(new Domain(1000, 8, 1), 48000, true, (DFTWindow)999));
         }
 
         [Test]

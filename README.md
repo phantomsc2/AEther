@@ -11,24 +11,30 @@ Audio analysis and audio-reactive DirectX visualization on Windows using NAudio.
 - **AEther.NAudio**: audio input with [NAudio](https://github.com/naudio/NAudio)
 - **AEther.Tests**: using [NUnit](https://nunit.org/)
 - **AEther.Vortice**: D3D11 fullscreen shaders, audio textures and runtime shader compilation
-- **AEther.WindowsForms**: render window, separate settings window and application lifecycle
+- **AEther.WinUI**: WinUI 3 render canvas, separate settings and shader windows, application lifecycle
 
 - **tools/AEther.CaptureProbe**: measures NAudio loopback packet timing
 - **tools/AEther.Smoke**: exercises analysis and rendering with synthetic audio
 
 ## Running
 
-Install the .NET 10 SDK, then run `dotnet run --project AEther.WindowsForms`.
+Install the .NET 10 SDK and Windows SDK/build tools, then run
+`dotnet run --project AEther.WinUI` on Windows 10 (1809+) or Windows 11, x64.
+The app is unpackaged and includes its Windows App SDK runtime, so no MSIX
+installation or separate Windows App Runtime installation is needed. The .NET 10
+desktop runtime is required when running a build without the SDK.
 The app starts windowed, captures the default system audio output and displays Mandelbox.
+The main window contains only a Direct3D `SwapChainPanel`. Settings and shader
+properties use standard WinUI controls with the system's default appearance.
 
-- **Space**: show or hide settings. Closing settings keeps the render window running.
+- **Space** (render window): show or hide settings. Closing settings keeps the render window running.
 - **F6**: toggle the shader window.
 - **F11**: toggle borderless fullscreen on the selected display.
 - **F5**: rebuild the capture/analysis/render session.
 - **R**: toggle combined level view in Spectrum and Histogram.
 - **I**: toggle Spectrum intensity view.
 - **[ / ]**: move the Mandelbox slice.
-- **Escape**: close the render window (or hide settings when settings has focus).
+- **Escape**: close the render window, or hide the focused tool window.
 
 Settings select audio input, display and analyzer options. These changes restart the
 session. The Scene selector in settings switches scenes and automatically opens the
@@ -44,7 +50,9 @@ previous programs and controls, with diagnostics in the shader window. Published
 use the `Shaders` tree beside the executable.
 
 Editable values are reflected from `cbuffer Parameters`; nested structs become groups,
-bools become checkboxes, and floats/float vectors use [0, 1] controls. Names are displayed
+bools become checkboxes, and floats/float vectors use linked [0, 1] sliders and numeric
+inputs. Analyzer options are grouped by category using expanders, numeric inputs,
+switches and enum selectors. Names are displayed
 unchanged. Defaults live in HLSL. Values survive compatible reloads and session restarts
 within the process; they are not saved between app launches. See
 [shader authoring](doc/shader-authoring.md) for the input contract, examples, mappings,

@@ -51,7 +51,7 @@ Run from the repository root:
 dotnet build AEther.sln --no-restore
 dotnet test AEther.Tests/AEther.Tests.csproj --no-restore
 dotnet run --project tools/AEther.Smoke/AEther.Smoke.csproj -- .
-dotnet run --project AEther.WindowsForms/AEther.WindowsForms.csproj
+dotnet run --project AEther.WinUI/AEther.WinUI.csproj
 ```
 
 The hidden renderer smoke tool uses synthetic spectral input, renders all six states, checks

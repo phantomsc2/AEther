@@ -60,13 +60,16 @@ internal sealed class ShaderProgram : IDisposable
                 if (name == "Parameters")
                 {
                     // Each entry point owns its layout; transfer values by path, never by slot or declaration order.
-                    if (values != null && !ReferenceEquals(values, Parameters)) Parameters!.Restore(values);
-                    if (!hasUploaded || !Parameters!.Data.AsSpan().SequenceEqual(uploaded))
+                    lock (Parameters!.SyncRoot)
                     {
-                        fixed (byte* data = Parameters!.Data)
-                            context.UpdateSubresource(parameterBuffer!, 0, null, (IntPtr)data, 0, 0);
-                        Parameters.Data.CopyTo(uploaded!, 0);
-                        hasUploaded = true;
+                        if (values != null && !ReferenceEquals(values, Parameters)) Parameters.Restore(values);
+                        if (!hasUploaded || !Parameters.Data.AsSpan().SequenceEqual(uploaded))
+                        {
+                            fixed (byte* data = Parameters.Data)
+                                context.UpdateSubresource(parameterBuffer!, 0, null, (IntPtr)data, 0, 0);
+                            Parameters.Data.CopyTo(uploaded!, 0);
+                            hasUploaded = true;
+                        }
                     }
                     context.PSSetConstantBuffer(slot, parameterBuffer!);
                 }
