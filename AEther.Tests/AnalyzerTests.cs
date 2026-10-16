@@ -73,7 +73,7 @@ namespace AEther.Tests
             {
                 analyzer.Start();
                 analyzer.PostSamples(Audio(80));
-                Assert.That(await received.Task.WaitAsync(TimeSpan.FromSeconds(5)), Is.EqualTo(4 * analyzer.Domain.Length));
+                Assert.That(await received.Task.WaitAsync(TimeSpan.FromSeconds(5)), Is.EqualTo(Splitter.OutputStride * analyzer.Domain.Length));
             }
             finally
             {
@@ -193,7 +193,7 @@ namespace AEther.Tests
                 var expected = new double[options.Domain.Length];
                 processor.Output(expected);
                 for (var k = 0; k < expected.Length; ++k)
-                    Assert.That(rows[0][c * 4 * expected.Length + 4 * k + 3],
+                    Assert.That(rows[0][c * Splitter.OutputStride * expected.Length + Splitter.OutputStride * k + 3],
                         Is.EqualTo(Math.Pow(10, expected[k])).Within(1e-12));
             }
         }

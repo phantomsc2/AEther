@@ -31,12 +31,14 @@ namespace AEther
             for (var c = 0; c < Channels; ++c)
             {
                 var channel = input.GetChannel(c).Span;
+                var stride = input.SampleCount / LowWeights.Length;
+                if (stride != 4 && stride != Splitter.OutputStride) throw new ArgumentException("Invalid spectral layout.");
                 for (var k = 0; k < LowWeights.Length; ++k)
                 {
-                    var sustained = Math.Max(0, channel[4 * k]);
+                    var sustained = Math.Max(0, channel[stride * k]);
                     low += sustained * sustained * LowWeights[k];
                     weight += LowWeights[k];
-                    high = Math.Max(high, Math.Max(0, channel[4 * k + 1]) * HighWeights[k]);
+                    high = Math.Max(high, Math.Max(0, channel[stride * k + 1]) * HighWeights[k]);
                 }
             }
             return new(Math.Sqrt(low / Math.Max(1e-12, weight)), high);

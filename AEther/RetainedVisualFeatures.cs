@@ -24,16 +24,18 @@ namespace AEther
             for (var c = 0; c < Channels; ++c)
             {
                 var channel = input.GetChannel(c).Span;
+                var stride = input.SampleCount / Frequencies.Length;
+                if (stride != 4 && stride != Splitter.OutputStride) throw new ArgumentException("Invalid spectral layout.");
                 double channelPower = 0;
                 for (var k = 0; k < Frequencies.Length; ++k)
                 {
-                    var level = channel[4 * k + 3];
+                    var level = channel[stride * k + 3];
                     var squared = level * level;
                     channelPower += squared;
                     if (Frequencies[k] < 160) low += squared;
                     else if (Frequencies[k] < 1600) body += squared;
                     else air += squared;
-                    Transient = Math.Max(Transient, channel[4 * k + 1]);
+                    Transient = Math.Max(Transient, channel[stride * k + 1]);
                 }
                 power += channelPower;
                 if (c == 0) left = channelPower;

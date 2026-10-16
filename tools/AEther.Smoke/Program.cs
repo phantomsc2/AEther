@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Windows.Forms;
 using AEther;
 using AEther.Vortice;
+using Splitter = AEther.Splitter;
 
 internal static partial class Program
 {
@@ -114,60 +115,20 @@ internal static partial class Program
 
     static void CheckBilateral(IntPtr window, string shaders, string output)
     {
-        var directory = Path.Combine(output, "bilateral-check");
-        Directory.CreateDirectory(directory);
-        foreach (var file in Directory.GetFiles(shaders, "*.hlsl"))
-            File.Copy(file, Path.Combine(directory, Path.GetFileName(file)), true);
-        // Inspect the filtered texture directly, independent of fractal shading.
-        File.WriteAllText(Path.Combine(directory, "Mandelbox.hlsl"), """
-            float4 PS(PSDefaultin input) : SV_Target
-            {
-                uint w, h; Histogram0.GetDimensions(w, h);
-                return Histogram0.Load(int3(int2(input.UV * float2(w, h)), 0));
-            }
-            """);
-        // Use the same direct inspection for the analyzer toggle, avoiding
-        // wall-clock history scrolling during byte-for-byte comparisons.
-        File.Copy(Path.Combine(directory, "Mandelbox.hlsl"), Path.Combine(directory, "Histogram.hlsl"), true);
-        using var renderer = new Renderer(window, 64, 32, 16, 64, 1, directory)
-        { BilateralStrength = 0 };
-        var data = new double[16 * 4];
-        for (var band = 0; band < 16; band++)
+        var domain = new Domain(100, 8, 16);
+        var splitter = new Splitter(domain, new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1 });
+        var input = Enumerable.Range(0, 16).Select(k => Math.Log10(.4 + .02 * (k % 2))).ToArray();
+        var data = new double[16 * Splitter.OutputStride];
+        splitter.Process(input, data);
+        if (!Enumerable.Range(0, 16).Any(k => data[k * Splitter.OutputStride + 4] < 0))
+            throw new Exception("Bilateral decomposition did not produce signed residual.");
+        for (var k = 0; k < 16; k++)
         {
-            var amplitude = (band < 8 ? .2 : .8) + .02 * (band % 2);
-            data[band * 4] = data[band * 4 + 1] = data[band * 4 + 2] = amplitude;
-            data[band * 4 + 3] = 1;
+            var i = k * Splitter.OutputStride;
+            if (Math.Abs(data[i] + data[i + 1] + data[i + 2] + data[i + 4] - data[i + 3]) > 1e-12)
+                throw new Exception("STN+R reconstruction failed.");
         }
-        for (var row = 0; row < 64; row++)
-            renderer.PostAudio(new(data, 64, DateTime.Now) { AnalysisRow = row }, 1);
-        renderer.Render(false);
-        var raw = renderer.ReadPixels();
-        renderer.BilateralStrength = 1;
-        renderer.Render(false);
-        var filtered = renderer.ReadPixels();
-        int At(int band) => (16 * 64 + band * 4 + 2) * 4;
-        if (Math.Abs(filtered[At(5)] - filtered[At(6)]) >= Math.Abs(raw[At(5)] - raw[At(6)]))
-            throw new Exception("Bilateral filter did not smooth small amplitude variations.");
-        if (filtered[At(8)] - filtered[At(7)] < 140)
-            throw new Exception("Bilateral filter blurred a strong amplitude edge.");
-        if (!renderer.Audio.History[0].Contains(.2f))
-            throw new Exception("Bilateral filter modified original history.");
-        renderer.BilateralStrength = 0;
-        renderer.Render(false);
-        if (!raw.SequenceEqual(renderer.ReadPixels())) throw new Exception("Bilateral bypass changed the raw history.");
-        renderer.Scene = Scene.Histogram;
-        renderer.Render(false);
-        var histogram = renderer.ReadPixels();
-        renderer.BilateralStrength = 1;
-        renderer.Render(false);
-        if (!histogram.SequenceEqual(renderer.ReadPixels())) throw new Exception("Bilateral filtering affected the analyzer view.");
-        renderer.FilteredHistogramView = true;
-        renderer.Render(false);
-        if (histogram.SequenceEqual(renderer.ReadPixels())) throw new Exception("Filtered histogram toggle did not change the view.");
-        renderer.FilteredHistogramView = false;
-        renderer.Render(false);
-        if (!histogram.SequenceEqual(renderer.ReadPixels())) throw new Exception("Raw histogram toggle did not restore the view.");
-        Console.WriteLine("Bilateral: small variations smoothed, strong edges preserved, raw history and analyzer views unchanged, bypass exact.");
+        Console.WriteLine("Bilateral: core STN+R reconstructs original linear magnitude with signed residual.");
     }
 
     static void CheckColorOutput(IntPtr window, string shaders, string output)
@@ -682,7 +643,7 @@ internal static partial class Program
 
             """);
         using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { MandelboxAntialiasing = true, BilateralStrength = 0 };
+        { MandelboxAntialiasing = true };
         foreach (var channel in new[] { 0, 1 })
         foreach (var target in new[] { .12, .5, .88 })
         {

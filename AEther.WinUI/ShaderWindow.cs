@@ -12,7 +12,9 @@ public sealed class ShaderWindow : ToolWindow
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     readonly Dictionary<string, ShaderParameters> saved = new(StringComparer.Ordinal);
     Renderer? renderer;
-    public string SelectedScene { get; private set; } = "Mandelbox";
+    // Allows restarting a preview after renderer changes without losing its scene.
+    public string SelectedScene { get; private set; } = Environment.GetCommandLineArgs()
+        .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..] ?? "Mandelbox";
     public event EventHandler? SceneChanged;
 
     public ShaderWindow() : base("AEther shaders", 520, 800)

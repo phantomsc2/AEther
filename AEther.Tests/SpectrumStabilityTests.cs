@@ -17,7 +17,7 @@ namespace AEther.Tests
             var splitter = new Splitter(domain, options, rate / (double)batch);
             var input = new double[batch];
             var spectrum = new double[domain.Length];
-            var output = new double[4 * domain.Length];
+            var output = new double[5 * domain.Length];
             double minimum = double.PositiveInfinity, maximum = 0, maximumAttack = 0;
             for (var offset = 0; offset < 2 * rate; offset += batch)
             {
@@ -27,9 +27,9 @@ namespace AEther.Tests
                 processor.Output(spectrum);
                 splitter.Process(spectrum, output);
                 if (offset < rate) continue;
-                minimum = Math.Min(minimum, output[4 * bin + 3]);
-                maximum = Math.Max(maximum, output[4 * bin + 3]);
-                maximumAttack = Math.Max(maximumAttack, output[4 * bin + 1]);
+                minimum = Math.Min(minimum, output[5 * bin + 3]);
+                maximum = Math.Max(maximum, output[5 * bin + 3]);
+                maximumAttack = Math.Max(maximumAttack, output[5 * bin + 1]);
             }
             Assert.That(maximum - minimum, Is.LessThan(.001), "steady dominant-band amplitude ripple");
             Assert.That(maximumAttack, Is.LessThan(.003), "steady tone was classified as repeated attacks");
@@ -41,13 +41,13 @@ namespace AEther.Tests
             var options = new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1 };
             var splitter = new Splitter(options.Domain, options);
             var input = Enumerable.Repeat(-10.0, options.Domain.Length).ToArray();
-            var output = new double[4 * input.Length];
+            var output = new double[5 * input.Length];
             for (var i = 0; i < 80; ++i) splitter.Process(input, output);
             input[30] = -8.5; // a large relative change at -170 dBFS
             splitter.Process(input, output);
-            Assert.That(output[4 * 30 + 1], Is.Zero);
+            Assert.That(output[5 * 30 + 1], Is.Zero);
             for (var i = 0; i < 80; ++i) splitter.Process(input, output);
-            Assert.That(output[4 * 30], Is.EqualTo(Math.Pow(10, -8.5)).Within(1e-20));
+            Assert.That(output[5 * 30], Is.EqualTo(Math.Pow(10, -8.5)).Within(1e-20));
         }
     }
 }

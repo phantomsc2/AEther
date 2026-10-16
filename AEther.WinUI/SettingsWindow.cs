@@ -63,6 +63,8 @@ public sealed class SettingsWindow : ToolWindow
     UIElement BuildOptions()
     {
         var groups = new StackPanel { Spacing = 8 };
+        var refreshNumbers = new List<Action>();
+        bool refreshingNumbers = false;
         var properties = TypeDescriptor.GetProperties(Options).Cast<PropertyDescriptor>().Where(p => p.IsBrowsable && !p.IsReadOnly);
         foreach (var category in properties.GroupBy(p => p.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
@@ -96,28 +98,58 @@ public sealed class SettingsWindow : ToolWindow
                         Header = property.DisplayName,
                         Value = Convert.ToDouble(property.GetValue(Options)),
                         SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-                        SmallChange = integral ? 1 : .01,
+                        SmallChange = integral ? 1 : .001,
                         LargeChange = integral ? 10 : .1,
                         NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : 3 },
                         HorizontalAlignment = HorizontalAlignment.Stretch,
-                        Minimum = 0,
-                        Maximum = integral ? int.MaxValue : double.MaxValue,
+                        Minimum = NumericBounds(property.Name).Minimum,
+                        Maximum = NumericBounds(property.Name).Maximum,
                     };
+                    var slider = new Slider
+                    {
+                        Minimum = number.Minimum, Maximum = number.Maximum,
+                        StepFrequency = integral ? 1 : .001,
+                        SmallChange = number.SmallChange, LargeChange = number.LargeChange,
+                        Value = number.Value,
+                    };
+                    AutomationProperties.SetName(number, property.DisplayName);
+                    AutomationProperties.SetName(slider, property.DisplayName);
                     bool updating = false;
+                    refreshNumbers.Add(() =>
+                    {
+                        var (min, max) = NumericBounds(property.Name);
+                        number.Minimum = slider.Minimum = Math.Min(number.Minimum, min);
+                        number.Maximum = slider.Maximum = Math.Max(number.Maximum, max);
+                        number.Maximum = slider.Maximum = max;
+                        number.Minimum = slider.Minimum = min;
+                        var value = Math.Clamp(Convert.ToDouble(property.GetValue(Options)), min, max);
+                        property.SetValue(Options, Convert.ChangeType(value, property.PropertyType));
+                        number.Value = slider.Value = value;
+                    });
+                    slider.ValueChanged += (_, e) =>
+                    {
+                        if (!updating && !refreshingNumbers) number.Value = e.NewValue;
+                    };
                     number.ValueChanged += (_, e) =>
                     {
-                        if (updating || !double.IsFinite(e.NewValue)) return;
+                        if (updating || refreshingNumbers || !double.IsFinite(e.NewValue)) return;
                         var value = integral ? Math.Round(e.NewValue) : e.NewValue;
                         updating = true;
                         try
                         {
-                            number.Value = value;
+                            number.Value = slider.Value = value;
                             property.SetValue(Options, Convert.ChangeType(value, property.PropertyType));
                         }
                         finally { updating = false; }
+                        refreshingNumbers = true;
+                        try { foreach (var refresh in refreshNumbers) refresh(); }
+                        finally { refreshingNumbers = false; }
                         Changed();
                     };
-                    editor = number;
+                    var row = new StackPanel { Spacing = 4 };
+                    row.Children.Add(number);
+                    row.Children.Add(slider);
+                    editor = row;
                 }
                 AutomationProperties.SetName(editor, property.DisplayName);
                 if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
@@ -131,6 +163,25 @@ public sealed class SettingsWindow : ToolWindow
         }
         return groups;
     }
+
+    (double Minimum, double Maximum) NumericBounds(string name) => name switch
+    {
+        nameof(AnalyzerOptions.BufferCapacity) => (1, 64),
+        nameof(AnalyzerOptions.MinFrequency) => (1, Options.MaxFrequency - 1),
+        nameof(AnalyzerOptions.MaxFrequency) => (Options.MinFrequency + 1, 22050),
+        nameof(AnalyzerOptions.FrequencyResolution) => (1, 96),
+        nameof(AnalyzerOptions.TimeResolution) => (16, 1024),
+        nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
+        nameof(AnalyzerOptions.SineGain) or nameof(AnalyzerOptions.TransientGain)
+            or nameof(AnalyzerOptions.NoiseGain) => (0, 20),
+        nameof(AnalyzerOptions.MedianLength) => (2.0 / Options.TimeResolution, 2),
+        nameof(AnalyzerOptions.MedianWidth) => (2.0 / Options.FrequencyResolution, 8),
+        nameof(AnalyzerOptions.SmoothingAmount) => (0, 1),
+        nameof(AnalyzerOptions.SmoothingEdgeDb) => (.1, 120),
+        nameof(AnalyzerOptions.FuzzyLower) => (.5, Options.FuzzyUpper - .001),
+        nameof(AnalyzerOptions.FuzzyUpper) => (Options.FuzzyLower + .001, 1),
+        _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),
+    };
 
     void Changed() => SettingsChanged?.Invoke(this, EventArgs.Empty);
 

@@ -165,7 +165,7 @@ namespace AEther
             using var totalTiming = Profile.Measure("analysis.total_ms");
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
             var spectrum = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
-            var output = RentEvent<double>(4 * Domain.Length, Format.ChannelCount, time);
+            var output = RentEvent<double>(AEther.Splitter.OutputStride * Domain.Length, Format.ChannelCount, time);
             try
             {
                 using (Profile.Measure("analysis.decode_ms"))

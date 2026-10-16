@@ -60,6 +60,14 @@ namespace AEther
         public double MedianWidth { get; set; } = 3;
 
         [Category("Splitter")]
+        [Description("Bilateral support as a fraction of the median windows. Zero bypasses smoothing.")]
+        public double SmoothingAmount { get; set; } = .5;
+
+        [Category("Splitter")]
+        [Description("Bilateral edge tolerance in amplitude dB. Averaging and residual remain linear.")]
+        public double SmoothingEdgeDb { get; set; } = 6;
+
+        [Category("Splitter")]
         [Description("Class membership is zero below this evidence ratio (at least 0.5).")]
         public double FuzzyLower { get; set; } = .7;
 
@@ -99,6 +107,10 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(MedianWidth), "Median width needs at least two frequency samples.");
             if (!double.IsFinite(MedianLength) || MedianLength * rate < 2)
                 throw new ArgumentOutOfRangeException(nameof(MedianLength), "Median history needs at least two time samples.");
+            if (!double.IsFinite(SmoothingAmount) || SmoothingAmount < 0 || SmoothingAmount > 1)
+                throw new ArgumentOutOfRangeException(nameof(SmoothingAmount));
+            if (!double.IsFinite(SmoothingEdgeDb) || SmoothingEdgeDb <= 0 || SmoothingEdgeDb > 120)
+                throw new ArgumentOutOfRangeException(nameof(SmoothingEdgeDb));
             if (!double.IsFinite(FuzzyLower) || FuzzyLower < .5 || FuzzyLower >= 1)
                 throw new ArgumentOutOfRangeException(nameof(FuzzyLower));
             if (!double.IsFinite(FuzzyUpper) || FuzzyUpper <= FuzzyLower || FuzzyUpper > 1)

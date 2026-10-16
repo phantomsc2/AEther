@@ -28,8 +28,9 @@ internal sealed class ShaderProgram : IDisposable
             {
                 ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler",
-                ShaderInputType.Texture => binding.Name is "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
-                    or "FilteredHistogram0" or "FilteredHistogram1" or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction",
+                ShaderInputType.Texture => binding.Name is "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
+                    or "FilteredHistogram0" or "FilteredHistogram1" or "ResidualSpectrum0" or "ResidualSpectrum1"
+                    or "ResidualHistogram0" or "ResidualHistogram1" or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction",
                 _ => false,
             };
             if (entry == "PS" && binding.Name is "FluidConstants" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler")
@@ -50,7 +51,7 @@ internal sealed class ShaderProgram : IDisposable
     public unsafe void Bind(ID3D11DeviceContext context, ShaderParameters? values,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
         IReadOnlyDictionary<string, ID3D11ShaderResourceView> textures,
-        IReadOnlyDictionary<string, ID3D11SamplerState> samplers)
+        IReadOnlyDictionary<string, ID3D11SamplerState> samplers, bool vertexConstants = false)
     {
         foreach (var (name, binding) in bindings)
         {
@@ -72,8 +73,13 @@ internal sealed class ShaderProgram : IDisposable
                         }
                     }
                     context.PSSetConstantBuffer(slot, parameterBuffer!);
+                    if (vertexConstants) context.VSSetConstantBuffer(slot, parameterBuffer!);
                 }
-                else if (buffers.TryGetValue(name, out var buffer)) context.PSSetConstantBuffer(slot, buffer);
+                else if (buffers.TryGetValue(name, out var buffer))
+                {
+                    context.PSSetConstantBuffer(slot, buffer);
+                    if (vertexConstants) context.VSSetConstantBuffer(slot, buffer);
+                }
                 else throw new InvalidOperationException($"Unknown shader buffer: {name}");
             }
             else if (binding.Type == ShaderInputType.Sampler)
@@ -98,21 +104,42 @@ public sealed class ShaderScene : IDisposable
     public string Name { get; }
     public ShaderParameters? Parameters => Program.Parameters;
     internal ShaderProgram Program { get; }
-    internal ShaderProgram? Filter { get; }
+    internal ID3D11VertexShader? GeometryVertex { get; }
+    internal int GeometryVertexCount { get; }
+    internal int GeometryInstanceCount { get; } = 1;
+    internal bool GeometryAdditive { get; }
+    internal ShaderProgram? Composite { get; }
     internal MandelFluidSimulation.Programs? Fluid { get; }
-    internal bool UsesFilteredHistory => Program.Uses("FilteredHistogram0") || Program.Uses("FilteredHistogram1");
     internal ShaderScene(ID3D11Device device, string name, string source, string root)
     {
         Name = name;
         Program = new(device, source, "PS", name + ".hlsl");
         try
         {
-            if (UsesFilteredHistory)
-                Filter = new(device, source + ShaderSource.Read(root, "Common/Bilateral.hlsl"), "BilateralPS", name + ".hlsl");
-            if (Program.Uses("FluidDye"))
+            var geometry = System.Text.RegularExpressions.Regex.Match(source,
+                @"^\s*#define\s+GEOMETRY_VERTEX_COUNT\s+(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+            if (geometry.Success)
+            {
+                if (!int.TryParse(geometry.Groups[1].Value, out var count) || count < 3 || count > 65536 || count % 3 != 0)
+                    throw new InvalidOperationException("GEOMETRY_VERTEX_COUNT must be a multiple of three from 3 to 65535.");
+                GeometryVertexCount = count;
+                var instances = System.Text.RegularExpressions.Regex.Match(source,
+                    @"^\s*#define\s+GEOMETRY_INSTANCE_COUNT\s+(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+                if (instances.Success)
+                {
+                    if (!int.TryParse(instances.Groups[1].Value, out var instanceCount) || instanceCount < 1 || instanceCount > 1048576)
+                        throw new InvalidOperationException("GEOMETRY_INSTANCE_COUNT must be from 1 to 1048576.");
+                    GeometryInstanceCount = instanceCount;
+                }
+                GeometryAdditive = System.Text.RegularExpressions.Regex.IsMatch(source,
+                    @"^\s*#define\s+GEOMETRY_ADDITIVE\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+                GeometryVertex = device.CreateVertexShader(Compiler.Compile(source, "GeometryVS", name + ".hlsl", "vs_5_0").Span);
+                Composite = new(device, source, "AfterglowPS", name + ".hlsl");
+            }
+            if (Program.Uses("FluidDye") || Composite?.Uses("FluidDye") == true)
                 Fluid = new(device, source + ShaderSource.Read(root, "Common/FluidSimulation.hlsl"));
         }
         catch { Dispose(); throw; }
     }
-    public void Dispose() { Program.Dispose(); Filter?.Dispose(); Fluid?.Dispose(); }
+    public void Dispose() { Program.Dispose(); Fluid?.Dispose(); GeometryVertex?.Dispose(); Composite?.Dispose(); }
 }

@@ -173,9 +173,11 @@ float3 Shade(float2 uv, float sampleWidth)
     float reliefWidth = max(.04, fwidth(foldCoordinate) * sampleWidth);
     float relief = smoothstep(.35 - reliefWidth, .65 + reliefWidth, foldCoordinate);
     float tonalRelief = lerp(.5, relief, saturate(.2 / reliefWidth));
-    // Let the folds interrupt a tone's path instead of leaving a continuous
-    // bright spoke through the valleys. More of its light lives on the shells.
-    float sustain = 1.9 * max(0, ray.r) * trail * lerp(.04, 1.25, tonalRelief * tonalRelief);
+    // Keep a continuous tone visible through fold valleys. Near-zero valley
+    // gain turns the relief into apparent missing-history wedges and disks,
+    // especially when shallow iteration depths expose broad, simple folds.
+    // Retain shell contrast without using the field as an extinction mask.
+    float sustain = 1.9 * max(0, ray.r) * trail * lerp(.65, 1.25, tonalRelief * tonalRelief);
     // Where a tone's angular route meets its matching distance-field shell,
     // illuminate that shell as well. Angular support keeps mids at the sides.
     float tonalSupport = max(0, ray.r) / (.04 + max(0, ray.r));

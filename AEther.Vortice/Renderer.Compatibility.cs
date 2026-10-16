@@ -44,11 +44,6 @@ public sealed partial class Renderer
     public float MandelboxJuliaBlend { get => ReadValue("Geometry.JuliaBlend"); set => WriteValue("Geometry.JuliaBlend", value); }
     public float MandelboxFoldRotation { get => ReadValue("Geometry.FoldRotation"); set => WriteValue("Geometry.FoldRotation", value); }
     public float MandelboxAnisotropy { get => ReadValue("Geometry.Anisotropy") * .5f; set => WriteValue("Geometry.Anisotropy", value * 2); }
-    public float BilateralStrength { get => ReadValue("Filtering.Strength"); set => WriteValue("Filtering.Strength", value); }
-    public float BilateralFrequencySigma { get => .1f + ReadValue("Filtering.FrequencySigma") * 1.9f; set => WriteValue("Filtering.FrequencySigma", (value - .1f) / 1.9f); }
-    public float BilateralTimeSigma { get => .1f + ReadValue("Filtering.TimeSigma") * 1.9f; set => WriteValue("Filtering.TimeSigma", (value - .1f) / 1.9f); }
-    public float BilateralRangeSigma { get => .0001f + ReadValue("Filtering.RangeSigma") * 9.9999f; set => WriteValue("Filtering.RangeSigma", (value - .0001f) / 9.9999f); }
-    public bool FilteredHistogramView { get => ReadBoolean("FilteredHistogramView"); set => WriteBoolean("FilteredHistogramView", value); }
     public float FluidFlow { get => ReadValue("Fluid.Flow") * 3; set => WriteValue("Fluid.Flow", value / 3); }
     public float FluidHalfLife { get => .1f + ReadValue("Fluid.HalfLife") * 9.9f; set => WriteValue("Fluid.HalfLife", (value - .1f) / 9.9f); }
     public float FluidDiffusion { get => ReadValue("Fluid.Diffusion") * .01f; set => WriteValue("Fluid.Diffusion", value * 100); }

@@ -36,6 +36,41 @@ and `UV : TEXCOORDS`. The host supplies the fullscreen triangle vertex shader.
 Scene output follows the existing display-encoded RGB convention; presentation
 decodes it for scRGB output. Alpha should be one.
 
+Every scene must eventually turn black without music. Retained history, trails
+and fluid may decay naturally; procedural backgrounds and ambient illumination
+must also lose their light. `VisualBreath` is a decaying audio envelope suitable
+for background illumination that should remain visible during music.
+
+## Geometry scenes and image afterglow
+
+`FractalEdge` demonstrates the optional mesh path. A scene declares
+`#define GEOMETRY_VERTEX_COUNT 48` and supplies `GeometryVS(uint id : SV_VertexID)`.
+The count must be a positive multiple of three, at most 65535. The vertex shader
+generates world-space triangles and returns clip coordinates plus the attributes
+consumed by `PS`. Geometry is drawn into a linear FP16 scene image with a D32
+depth buffer. `Parameters` must use `register(b1)` and the shared frame constants
+use b0, so the vertex and pixel stages share the same bound constant buffers.
+
+Geometry scenes also supply `AfterglowPS(PSin input)`. This fullscreen pass reads
+the completed geometry through `SceneImage`; it owns tone mapping/output encoding.
+Referencing `FluidDye` there requests the shared fluid passes. The geometry image
+is rendered first, then becomes the fluid source, then the fullscreen composite
+runs. `Common/GeometryAfterglow.hlsl` implements this image-only afterglow for
+`FractalEdge`. Its fluid does not define geometry, normals or material lighting.
+
+`#define GEOMETRY_ADDITIVE` selects additive light compositing without depth writes,
+as used by `MandelGalaxy` for translucent gas and sphere-shaded billboards.
+Add `#define GEOMETRY_INSTANCE_COUNT 65536` to use one instanced draw. Instance
+counts range from 1 to 1048576. `GeometryVS` can consume `SV_InstanceID` to generate
+each particle procedurally. `MandelGalaxy` uses 54 vertices per instance: one
+Mandelstar billboard and eight connected histogram ribbon segments. No CPU physics
+or per-particle attribute uploads are needed. Vertex shaders share constant buffers;
+audio textures are sampled in the pixel shader.
+`Effects.Amount = 0` shows the direct geometry image without its afterglow overlay.
+
+The new mesh path requires rebuilding/restarting the application once. Subsequent
+geometry shader edits, vertex-count changes and parameter changes use normal hot reload.
+
 ## Parameter contract
 
 - Only `cbuffer Parameters` is exposed as editable state; it is optional.
@@ -62,7 +97,7 @@ the compiled layout. No author-assigned `register` or `packoffset` is required.
 `FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
 `Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
 and the unscaled musical movement clock `MusicalMovementTime`.
-`Spectrum0/1` and `Histogram0/1` supply stereo spectrum and raw history; `Linear`
+`Spectrum0/1` and `Histogram0/1` supply stereo smoothed STN in RGB and original linear magnitude in alpha; `Linear`
 is the shared sampler. See `Common/Inputs.hlsl` for the complete declarations.
 
 Resources are bound by reflected name independently for every entry point. Unknown
@@ -70,9 +105,14 @@ resources, resource arrays and unsupported parameter types fail reload before an
 working program is replaced. Engine inputs use reserved names and must retain their
 declared types and layouts.
 
-Referencing `FilteredHistogram0/1` requests the shared bilateral pass. Existing scenes
-provide `FilterParameters Filtering`, which `Common/Bilateral.hlsl` uses to compute
-filter settings. Referencing `FluidDye` requests the existing fluid simulation;
+Bilateral smoothing is part of the core splitter. `FilteredHistogram0/1` remain
+compatibility aliases for `Histogram0/1` and do not request a GPU filter pass.
+`ResidualHistogram0/1` and `ResidualSpectrum0/1` provide signed ungained linear
+residual in red; the other channels are zero. At unity class gains, individual
+history rows satisfy sum(STN) + R = original magnitude. Spectrum peak overviews
+are not additive. Histogram's `ResidualView` shows positive R in red and negative R
+in blue. Smoothing controls live in AnalyzerOptions, independently of scene controls.
+Referencing `FluidDye` requests the existing fluid simulation;
 `FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`
 structures declared in `Scenes/MandelFluid.hlsl`. These are contracts of shared shader
 code, not host interpretations of editable parameter names. Arbitrary simulation pass
@@ -90,8 +130,6 @@ The HLSL source is authoritative. Current normalized controls map to these units
 | `Quality.MaximumIterations` | nearest integer from 1 to 30; default 10 |
 | `Quality.Antialiasing` | boolean checkbox: false uses one sample; true uses 2x2 |
 | `Quality.MovementSpeed` | 0 to 10; default 3 |
-| `Filtering.FrequencySigma`, `TimeSigma` | 0.1 to 2 |
-| `Filtering.RangeSigma` | 0.0001 to 10 |
 | `Fluid.Flow`, `Noise` | 0 to 3 |
 | `Fluid.HalfLife` | 0.1 to 10 seconds |
 | `Fluid.Diffusion` | 0 to 0.01 |
@@ -121,6 +159,19 @@ Includes are expanded from quoted include directives, rather than implementing a
 full preprocessor-aware include resolver; avoid missing includes in inactive branches.
 
 ## Verification
+
+The GPU silence regression discovers every scene, verifies silent startup and
+visible musical excitation, then keeps rendering the same scene for 10,000
+frames at 60 Hz (166.7 seconds of simulated silence). It tests both stopped
+capture and continuing zero-valued audio packets. Each of the following 60
+frames must have every RGB channel exactly zero in undithered RGBA8 output.
+No scene changes, simulation clears or large time steps shortcut the decay.
+The injected `TimeProvider` advances the production audio and rendering paths
+without wall-clock sleeps. This test requires Windows and a D3D11 GPU.
+
+```powershell
+dotnet test AEther.Tests/AEther.Tests.csproj --filter FullyQualifiedName~ShaderSilenceTests
+```
 
 ```powershell
 dotnet build AEther.sln --no-restore

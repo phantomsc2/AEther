@@ -28,9 +28,11 @@ and deep estimates use the same varied orbit; history projection, angular note
 placement and transient illumination retain their existing formulas.
 
 Tone shading now favors the matching fractal shells: the straight-ray gain is
-1.9 (previously 2.8), with squared fold relief and a lower valley floor, while
-sustained shell gain is 2.2 (previously 1.5). This interrupts continuous spokes
-and gives more weight to the fractal structure without changing note placement.
+1.9 (previously 2.8), with squared fold relief, while sustained shell gain is 2.2
+(previously 1.5). The valley floor is .65 against a shell gain of 1.25; the former
+.04 floor nearly extinguished continuous tones and produced apparent missing
+wedges or disks at broad, shallow folds. The higher floor retains fold contrast
+while keeping the recorded tone visible without changing note placement.
 
 Transient fronts now carry the recorded spectrum around each stereo semicircle
 (bass below, mids at the sides, treble above), instead of selecting transient

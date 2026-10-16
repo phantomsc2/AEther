@@ -3,8 +3,7 @@
 cbuffer Parameters
 {
     bool CombinedLevel = false;
-    bool FilteredHistogramView = false;
-    FilterParameters Filtering = { 1, 0.47368421, 0.47368421, 0.0099901 };
+    bool ResidualView = false;
 };
 float4 PS(PSin input) : SV_Target
 {
@@ -17,7 +16,11 @@ float4 PS(PSin input) : SV_Target
     float frequency = (min(floor((1 - input.UV.y) * width), width - 1) + .5) / width;
     float2 uv = float2(frequency, HistogramShift - age * HistorySpan);
     float4 v = input.UV.x < .5 ? Histogram0.Sample(Linear, uv) : Histogram1.Sample(Linear, uv);
-    if (FilteredHistogramView && !CombinedLevel)
-        v = input.UV.x < .5 ? FilteredHistogram0.Sample(Linear, uv) : FilteredHistogram1.Sample(Linear, uv);
+    if (ResidualView)
+    {
+        float residual = input.UV.x < .5 ? ResidualHistogram0.Sample(Linear, uv).r : ResidualHistogram1.Sample(Linear, uv).r;
+        // Positive removed detail is red; negative introduced amplitude is blue.
+        return float4(max(residual, 0), 0, max(-residual, 0), 1);
+    }
     return float4(CombinedLevel ? v.aaa : v.rgb, 1);
 }

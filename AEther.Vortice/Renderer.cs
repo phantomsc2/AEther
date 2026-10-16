@@ -33,11 +33,9 @@ public sealed partial class Renderer : IDisposable
     string? previousScene;
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
-    readonly ID3D11ShaderResourceView[] fractalViews = new ID3D11ShaderResourceView[4];
-    readonly ID3D11RenderTargetView[] filteredTargets = new ID3D11RenderTargetView[2];
     ID3D11Buffer frameBuffer = null!;
-    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
-    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
+    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[8];
+    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[8];
     readonly string shaderDirectory;
     int width, height;
     double previousTime;
@@ -64,9 +62,9 @@ public sealed partial class Renderer : IDisposable
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
         double historySeconds = 1, string? shaderDirectory = null, bool highPrecisionOutput = true,
-        Action<IDXGISwapChain1?>? attachSwapChain = null)
+        Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null)
     {
-        Audio = new(bands, analysisRate, historySeconds);
+        Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
         try
         {
@@ -81,25 +79,16 @@ public sealed partial class Renderer : IDisposable
 
             namedBuffers.Add("FrameConstants", frameBuffer);
 
-            for (var i = 0; i < 4; i++)
+            for (var i = 0; i < 8; i++)
             {
                 textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
                 {
-                    Width = (uint)bands, Height = (uint)(i < 2 ? 1 : Audio.Rows),
+                    Width = (uint)bands, Height = (uint)(i % 4 < 2 ? 1 : Audio.Rows),
                     MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
                     SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
                     BindFlags = BindFlags.ShaderResource,
                 }));
                 views[i] = Own(device.CreateShaderResourceView(textures[i]));
-                if (i < 2) fractalViews[i] = views[i];
-                else
-                {
-                    var desc = textures[i].Description;
-                    desc.BindFlags |= BindFlags.RenderTarget;
-                    var filtered = Own(device.CreateTexture2D(desc));
-                    fractalViews[i] = Own(device.CreateShaderResourceView(filtered));
-                    filteredTargets[i - 2] = Own(device.CreateRenderTargetView(filtered));
-                }
             }
             var sampler = Own(device.CreateSamplerState(new SamplerDescription
             {
@@ -189,6 +178,7 @@ public sealed partial class Renderer : IDisposable
         if (newWidth < 1 || newHeight < 1 || newWidth == width && newHeight == height) return;
         output.Resize(newWidth, newHeight);
         width = newWidth; height = newHeight;
+        ReleaseGeometryTargets();
         // Resizing changes the physical domain. Recreate lazily on next fluid frame.
         fluid?.Dispose(); fluid = null;
     }
@@ -214,9 +204,16 @@ public sealed partial class Renderer : IDisposable
         previousTime = now;
         // Upload after draining the mailbox; capture/analysis never touches a graphics lock.
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        for (var i = 0; i < 4; i++)
+        context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
+        for (var i = 0; i < 8; i++)
         {
-            var source = i < 2 ? Audio.Spectrum[i] : Audio.History[i - 2];
+            var source = i switch
+            {
+                < 2 => Audio.Spectrum[i],
+                < 4 => Audio.History[i - 2],
+                < 6 => Audio.ResidualSpectrum[i - 4],
+                _ => Audio.ResidualHistory[i - 6],
+            };
             fixed (float* data = source)
                 context.UpdateSubresource(textures[i], 0, null, (IntPtr)data, (uint)(Audio.Bands * 16), 0);
         }
@@ -228,7 +225,7 @@ public sealed partial class Renderer : IDisposable
             D = new(Audio.Energy, Audio.Flash, Audio.Flash * .3f, Audio.Energy),
             E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge,
                 Audio.FractalDepth),
-            F = new(width, height, (float)movementTime, 0),
+            F = new(width, height, (float)movementTime, (float)Audio.Seconds),
         };
         context.UpdateSubresource(frame, frameBuffer);
         context.RSSetViewport(0, 0, width, height);
@@ -240,17 +237,11 @@ public sealed partial class Renderer : IDisposable
         var active = ActiveShader!;
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
-        namedTextures["FilteredHistogram0"] = fractalViews[2]; namedTextures["FilteredHistogram1"] = fractalViews[3];
-        if (active.Filter != null)
-        {
-            context.RSSetViewport(0, 0, Audio.Bands, Audio.Rows);
-            context.OMSetRenderTargets(filteredTargets);
-            active.Filter.Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
-            context.Draw(3, 0);
-            context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-            context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-            context.RSSetViewport(0, 0, width, height);
-        }
+        // Compatibility names now refer to the core decomposition; there is no scene filter pass.
+        namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
+        namedTextures["ResidualSpectrum0"] = views[4]; namedTextures["ResidualSpectrum1"] = views[5];
+        namedTextures["ResidualHistogram0"] = views[6]; namedTextures["ResidualHistogram1"] = views[7];
+        if (active.GeometryVertex != null) DrawGeometry(active);
         if (active.Fluid != null)
         {
             fluid ??= new(device, context, width, height);
@@ -263,7 +254,7 @@ public sealed partial class Renderer : IDisposable
         }
         previousScene = SceneName;
         context.OMSetRenderTargets(output.SceneTarget);
-        active.Program.Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
+        (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         context.Draw(3, 0);
         output.Draw(outputPixel, now);
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
@@ -297,6 +288,8 @@ public sealed partial class Renderer : IDisposable
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();
+        ReleaseGeometryTargets(); geometryDepthState?.Dispose();
+        geometryNoDepthState?.Dispose(); geometryAdditiveState?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }

@@ -7,12 +7,17 @@ cbuffer FrameConstants
     float PoseX, PoseY, PoseZ, VisualBreath;
     float VisualEnergy, VisualFlash, VisualGlow, VisualSustain;
     float S, HistoryAvailable, HistoryNewestAge, FractalDepth;
-    float2 Resolution; float MusicalMovementTime, FramePadding;
+    float2 Resolution; float MusicalMovementTime, HistorySeconds;
 };
 Texture2D<float4> Spectrum0;
 Texture2D<float4> Spectrum1;
 Texture2D<float4> Histogram0;
 Texture2D<float4> Histogram1;
+// Signed linear residual is stored in red, before class display gains.
+Texture2D<float4> ResidualSpectrum0;
+Texture2D<float4> ResidualSpectrum1;
+Texture2D<float4> ResidualHistogram0;
+Texture2D<float4> ResidualHistogram1;
 SamplerState Linear;
 #define HullHistory Linear
 struct PSin { float4 Position : SV_POSITION; float2 UV : TEXCOORDS; };

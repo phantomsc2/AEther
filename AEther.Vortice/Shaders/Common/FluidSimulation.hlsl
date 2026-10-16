@@ -29,6 +29,11 @@ float Laplacian(int2 p)
 }
 float4 Source(float2 p)
 {
+#ifdef PROJECTIVE_FLIGHT
+    // The flight scene supplies a continuous IFS-to-history map. SourceAge is
+    // only the solver's substep offset, not a discretized event index.
+    return FlightFluidSource(p, SourceAge);
+#else
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
     float age = max(SourceAge, HistoryNewestAge);
     uint bands, rows; Histogram0.GetDimensions(bands, rows);
@@ -39,6 +44,7 @@ float4 Source(float2 p)
     float2 uv = float2(frequency, HistogramShift - age);
     return max(0, lerp(Histogram0.SampleLevel(Linear, uv, 0),
         Histogram1.SampleLevel(Linear, uv, 0), step(0, p.x)));
+#endif
 }
 float CurlAt(int2 p)
 {
@@ -48,11 +54,17 @@ float CurlAt(int2 p)
 float Mobility() { return smoothstep(.02, .55, PoseZ + .2 * PoseY); }
 float2 Transport(float2 p)
 {
+#ifdef PROJECTIVE_FLIGHT
+    // Camera optical flow is compressible in image space. Keep it outside the
+    // pressure projection, which applies only to the turbulent perturbation.
+    return Velocity.SampleLevel(ClampFluid, ToUV(p), 0) + FlightCarrier(p);
+#else
     // A center source expands the carrier. Project only the turbulent velocity:
     // projecting this source as well would cancel the intended explosion.
     float r = length(p);
     return Velocity.SampleLevel(ClampFluid, ToUV(p), 0)
         + Mobility() * (Fluid.Flow * 3) * .65 * p / max(.08, r) / (1 + .65 * r);
+#endif
 }
 float2 Backtrace(float2 uv)
 {
@@ -66,6 +78,9 @@ float2 AdvectVelocity(PSin input) : SV_Target
     float2 p = World(input.UV);
     float2 v = Velocity.SampleLevel(ClampFluid, Backtrace(input.UV), 0) * exp(-.65 * StepSeconds);
     float4 source = Source(p);
+#ifdef PROJECTIVE_FLIGHT
+    float2 force = FlightTurbulence(p, source);
+#else
     // Saturating drive keeps very loud or broadband material numerically bounded.
     float tone = 1 - exp(-2 * source.r), noise = 1 - exp(-2 * source.b);
     float attack = 1 - exp(-2 * source.g);
@@ -77,6 +92,7 @@ float2 AdvectVelocity(PSin input) : SV_Target
         + .5 * sin(9 * p.x + 7 * p.y + 1.3 * (MusicalMovementTime * Quality.MovementSpeed * 10));
     float2 force = float2(-direction.y, direction.x) * eddies
         * (1.8 * tone + 3 * (Fluid.Noise * 3) * noise + .7 * attack) * envelope * Mobility();
+#endif
     // Vorticity confinement restores small curls lost to semi-Lagrangian advection.
     int2 q = int2(input.Position.xy);
     float2 gradient = float2(abs(CurlAt(q + int2(1, 0))) - abs(CurlAt(q - int2(1, 0))),
@@ -144,13 +160,25 @@ float4 AdvectDye(PSin input) : SV_Target
     float2 p = World(input.UV);
     float4 source = Source(p);
     float noise = 1 - exp(-2 * source.b);
+#ifdef GEOMETRY_AFTERGLOW
+    float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4 / (CellSize.x * CellSize.y));
+#else
     float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4 * smoothstep(.02, .35, max(noise, PoseZ))
         / (CellSize.x * CellSize.y));
+#endif
     // Conserve pigment as the carrier expands. Without dilution a fading
     // ambient plume gains total light merely by occupying more screen area.
     float r = length(p);
+#ifdef PROJECTIVE_FLIGHT
+    float expansion = FlightDilution(p);
+#else
     float expansion = Mobility() * .65 * (Fluid.Flow * 3) / (max(.08, r) * pow(1 + .65 * r, 2));
+#endif
     dye = lerp(dye, neighbors, diffusion) * exp(-((0.69314718 / (0.1 + Fluid.HalfLife * 9.9)) + expansion) * StepSeconds);
+#ifdef PROJECTIVE_FLIGHT
+    // Capture the continuously mapped IFS foreground for a fluid afterglow.
+    float4 dose = StepSeconds * 6 * FlightPigment(p, source);
+#else
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
     float3 palette = .5 + .5 * cos(6.2831853 * (frequency * .9 + .11 * (MusicalMovementTime * Quality.MovementSpeed * 10) + float3(.04, .38, .62)));
     // Tones supply narrow central plumes. Noise feeds a broader, quieter body
@@ -161,10 +189,16 @@ float4 AdvectDye(PSin input) : SV_Target
     float mist = .16 * exp(-1.3 * radius * radius) * (Fluid.Noise * 3) * noise;
     float3 pigment = palette * tone * emitter + lerp(palette, float3(.45, .62, .72), .65) * mist;
     float4 dose = StepSeconds * 6 * float4(pigment, tone * emitter + mist);
+#endif
     // Smooth finite-capacity accumulation: approximately additive for faint
     // material, asymptotic near capacity. Convex advection/diffusion and exact
     // exponential losses keep every update positive and bounded for any input.
     dye += (12 - dye) * (1 - exp(-dose / 12));
+#ifdef PROJECTIVE_FLIGHT
+    // A directional tonal blade removes existing cloud material. Its wake is
+    // retained in the advected state, so the cut travels with the cloud.
+    dye *= exp(-StepSeconds * FlightSlice(p, source));
+#endif
     // A soft sink prevents edge buildup and clamped streaks on resize/aspect extremes.
     float edge = min(min(input.UV.x, 1 - input.UV.x), min(input.UV.y, 1 - input.UV.y));
     return min(dye * exp(-StepSeconds * 12 * (1 - smoothstep(0, .04, edge))), 12);
