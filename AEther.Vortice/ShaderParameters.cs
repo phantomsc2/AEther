@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Threading;
 using Vortice.Direct3D;
 using Vortice.Direct3D11.Shader;
 
@@ -19,7 +20,7 @@ public sealed class ShaderParameter
 public sealed class ShaderParameters
 {
     internal byte[] Data { get; }
-    internal object SyncRoot { get; } = new();
+    internal Lock SyncRoot { get; } = new();
     readonly byte[] defaults;
     public IReadOnlyList<ShaderParameter> Items { get; }
     internal ShaderParameters(ID3D11ShaderReflectionConstantBuffer buffer)

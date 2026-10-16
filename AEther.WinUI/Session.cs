@@ -3,7 +3,7 @@ using Vortice.DXGI;
 
 namespace AEther.WinUI;
 
-public sealed class Session : IDisposable
+public sealed class Session : IDisposable, IAsyncDisposable
 {
     readonly SampleSource source;
     public Analyzer Analyzer { get; }
@@ -37,11 +37,21 @@ public sealed class Session : IDisposable
     {
         source.DataAvailable -= OnAudio;
         source.Stopped -= OnStopped;
-        try { source.Stop(); }
-        finally { Analyzer.Stop(); await Analyzer.Completion; }
-        Analyzer.SamplesAnalyzed -= OnAnalysis;
+        try
+        {
+            try { source.Stop(); }
+            finally { Analyzer.Stop(); await Analyzer.Completion; }
+        }
+        finally { Analyzer.SamplesAnalyzed -= OnAnalysis; }
     }
     public void Dispose() { try { source.Dispose(); } finally { Renderer.Dispose(); } }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Renderer disposal detaches the WinUI swap chain, so retain the caller's UI context.
+        try { await StopAsync(); }
+        finally { Dispose(); }
+    }
 }
 
 

@@ -8,7 +8,7 @@ using Windows.System;
 
 namespace AEther.WinUI;
 
-public abstract class ToolWindow : Window
+public abstract partial class ToolWindow : Window
 {
     bool destroying;
     protected Grid Layout { get; } = new() { Padding = new Thickness(16), RowSpacing = 12 };
@@ -54,6 +54,6 @@ public abstract class ToolWindow : Window
         root.KeyboardAccelerators.Add(accelerator);
     }
 
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-    static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
+    [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static partial IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
 }

@@ -161,7 +161,7 @@ public sealed class MainWindow : Window
             {
                 session = null;
                 shaders.Attach(null);
-                if (next != null) { try { await next.StopAsync(); } finally { next.Dispose(); } }
+                if (next != null) await next.DisposeAsync();
                 else source.Dispose();
                 throw;
             }
@@ -200,8 +200,7 @@ public sealed class MainWindow : Window
         shaders.Attach(null);
         if (previous == null) return;
         previous.CaptureStopped -= CaptureStopped;
-        try { await previous.StopAsync(); }
-        finally { previous.Dispose(); }
+        await previous.DisposeAsync();
     }
 
     void MoveToDisplay()

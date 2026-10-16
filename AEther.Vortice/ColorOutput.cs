@@ -7,7 +7,7 @@ using Vortice.DXGI;
 namespace AEther.Vortice;
 
 /// <summary>High precision composition, with quantization confined to SDR fallback/export.</summary>
-internal sealed class ColorOutput : IDisposable
+internal sealed partial class ColorOutput : IDisposable
 {
     readonly ID3D11Device device;
     readonly ID3D11DeviceContext context;
@@ -157,8 +157,8 @@ internal sealed class ColorOutput : IDisposable
         return null;
     }
 
-    [DllImport("user32.dll")]
-    static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+    [LibraryImport("user32.dll")]
+    private static partial IntPtr MonitorFromWindow(IntPtr window, uint flags);
 
     public void Present() => swapChain.Present(1, PresentFlags.None).CheckError();
 

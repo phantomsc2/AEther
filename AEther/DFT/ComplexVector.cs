@@ -4,7 +4,7 @@ using System.Numerics;
 namespace AEther
 {
     public readonly struct ComplexVector<T>
-        where T : struct
+        where T : struct, IAdditionOperators<T, T, T>
     {
 
         public static readonly ComplexVector<T> Zero = new(Vector<T>.Zero, Vector<T>.Zero);
@@ -21,7 +21,7 @@ namespace AEther
         {
             var re2 = Vector.Dot(Real, Real);
             var im2 = Vector.Dot(Imaginary, Imaginary);
-            return GenericOperator<T, T, T>.Add(re2, im2);
+            return re2 + im2;
         }
 
         public ComplexVector(Vector<T> real, Vector<T> imaginary)

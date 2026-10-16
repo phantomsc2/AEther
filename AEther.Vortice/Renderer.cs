@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -14,7 +15,7 @@ namespace AEther.Vortice;
 /// <summary>D3D11 fullscreen passes. Frame rendering may run on the dedicated render thread.</summary>
 public sealed partial class Renderer : IDisposable
 {
-    readonly object graphicsGate = new();
+    readonly Lock graphicsGate = new();
     readonly List<IDisposable> resources = [];
     ID3D11Device device = null!;
     ID3D11DeviceContext context = null!;
