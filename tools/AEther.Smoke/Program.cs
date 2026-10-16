@@ -28,6 +28,10 @@ internal static class Program
             using var form = new Form { ClientSize = new(640, 360), ShowInTaskbar = false };
             CheckColorOutput(form.Handle, shaderDirectory, output);
             if (args.Contains("--output-only")) return 0;
+            CheckTransientSpectrum(form.Handle, shaderDirectory, output);
+            if (args.Contains("--transient-only")) return 0;
+            CheckVariations(form.Handle, shaderDirectory, output);
+            if (args.Contains("--variation-only")) return 0;
             CheckFluid(form.Handle, shaderDirectory, output);
             if (args.Contains("--fluid-only")) return 0;
             CheckBilateral(form.Handle, shaderDirectory, output);
@@ -301,6 +305,12 @@ internal static class Program
                 throw new Exception($"Fluid behavior changed at {frames} display frames per second.");
         if (!at60.SequenceEqual(Scheduled(60, .01f)))
             throw new Exception("The diffusion setting blurred pure tones despite zero noise.");
+        // The scheduled runs can exceed the renderer's .5-second stall limit.
+        // Refresh presentation timing, then seed a fresh release fixture so its
+        // material is not cleared as stale when the screenshot is rendered.
+        Input(0, true);
+        renderer.Fluid.Clear();
+        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 60);
         renderer.Render(false);
         Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-tone.png"));
         Console.WriteLine($"Crystalline tone: pigment mass {mass:F1}, zero turbulent velocity.");
@@ -607,11 +617,19 @@ internal static class Program
         if (git.ExitCode != 0) throw new Exception("Could not read HEAD shader for baseline comparison.");
         byte[] RenderFixture(string name, string shader)
         {
-            // Compare geometry/history mapping independently of palette edits.
+            // Compare geometry/history mapping independently of palette, tone
+            // and transient shading edits. Noise light still exercises the field.
             shader = System.Text.RegularExpressions.Regex.Replace(shader,
                 @"(?m)^\s*float3 rayPalette = .*?;", "    float3 rayPalette = float3(.6, .8, 1);");
             shader = System.Text.RegularExpressions.Regex.Replace(shader,
                 @"(?m)^\s*float3 hullPalette = .*?;", "    float3 hullPalette = float3(1, .6, .3);");
+            shader = System.Text.RegularExpressions.Regex.Replace(shader,
+                @"(?m)^\s*float sustain = .*?;", "    float sustain = 0;");
+            shader = System.Text.RegularExpressions.Regex.Replace(shader,
+                @"(?m)^\s*float sustainedHull = .*?;", "    float sustainedHull = 0;");
+            foreach (var component in new[] { "attack", "broad", "coreFlash" })
+                shader = System.Text.RegularExpressions.Regex.Replace(shader,
+                    @"(?m)^\s*float " + component + @" = .*?;", "    float " + component + " = 0;");
             var directory = Path.Combine(output, name);
             Directory.CreateDirectory(directory);
             foreach (var file in Directory.GetFiles(Path.Combine(output, "antialiasing-shaders"), "*.hlsl"))
@@ -624,7 +642,8 @@ internal static class Program
                 .Replace("#define S .37", "#define S 0.0"));
             File.WriteAllText(Path.Combine(directory, "Mandelbox.hlsl"), shader);
             using var renderer = new Renderer(window, 320, 180, 64, 256, 1, directory)
-            { MandelboxAntialiasing = AntialiasingQuality.None };
+            { MandelboxAntialiasing = AntialiasingQuality.None,
+                MandelboxJuliaBlend = 0, MandelboxFoldRotation = 0, MandelboxAnisotropy = 0 };
             FillContrastHistory(renderer);
             renderer.Render(false);
             var pixels = renderer.ReadPixels();
@@ -639,6 +658,118 @@ internal static class Program
     }
 
     static double Linear(byte value) => Math.Pow(value / 255.0, 2.2);
+
+    static void CheckTransientSpectrum(IntPtr window, string shaders, string output)
+    {
+        var fixture = Path.Combine(output, "transient-spectrum-shaders");
+        Directory.CreateDirectory(fixture);
+        foreach (var file in Directory.GetFiles(shaders, "*.hlsl"))
+            File.Copy(file, Path.Combine(fixture, Path.GetFileName(file)), true);
+        File.AppendAllText(Path.Combine(fixture, "Common.hlsl"), """
+
+            #define S 0.0
+            #define MovementTime 0.0
+            #define FractalDepth 8.5
+            #define HistoryAvailable 1.0
+            #define HistoryNewestAge 0.0
+            #define HistorySpan 1.0
+            #define HistogramShift .5
+            #define VisualFlash 0.0
+
+            """);
+        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
+        { MandelboxAntialiasing = AntialiasingQuality.Medium, BilateralStrength = 0 };
+        foreach (var channel in new[] { 0, 1 })
+        foreach (var target in new[] { .12, .5, .88 })
+        {
+            foreach (var history in renderer.Audio.History) Array.Clear(history);
+            var historyData = renderer.Audio.History[channel];
+            for (var row = 0; row < 256; row++)
+            for (var band = 0; band < 64; band++)
+            {
+                var age = (.5 - (row + .5) / 256 + 1) % 1;
+                var frequency = (band + .5) / 64;
+                historyData[(row * 64 + band) * 4 + 1] =
+                    (float)(.6 * Math.Exp(-Math.Pow((age - .13) / .018, 2))
+                        * Math.Exp(-Math.Pow((frequency - target) / .055, 2)));
+            }
+            renderer.Render(false);
+            var pixels = renderer.ReadPixels();
+            renderer.Render(false);
+            if (!pixels.SequenceEqual(renderer.ReadPixels())) throw new Exception("Transient spectrum pose drifted.");
+            double near = 0, far = 0, leakage = 0;
+            for (var y = 0; y < 360; y++)
+            for (var x = 0; x < 640; x++)
+            {
+                var index = (y * 640 + x) * 4;
+                var light = pixels[index] + pixels[index + 1] + pixels[index + 2];
+                if ((x < 320 ? 0 : 1) != channel) { leakage += light; continue; }
+                var frequency = Math.Atan2(Math.Abs((2 * (x + .5) / 640 - 1) * (640.0 / 360)),
+                    2 * (y + .5) / 360 - 1) / Math.PI;
+                if (Math.Abs(frequency - target) < .2) near += light;
+                else if (Math.Abs(frequency - target) > .3) far += light;
+            }
+            if (near < 10000 || far > near * .05 || leakage != 0)
+                throw new Exception($"Transient frequency {target}, channel {channel}: near {near}, far {far}, leakage {leakage}.");
+            var label = target < .3 ? "bass" : target > .7 ? "treble" : "mids";
+            Save(pixels, 640, 360, Path.Combine(output, $"transient-spectrum-{channel}-{label}.png"));
+        }
+        Console.WriteLine("Transient spectrum: isolated bass/mids/treble fronts, stereo isolation and frozen poses passed.");
+    }
+
+    static void CheckVariations(IntPtr window, string shaders, string output)
+    {
+        var fixture = Path.Combine(output, "variation-shaders");
+        Directory.CreateDirectory(fixture);
+        foreach (var file in Directory.GetFiles(shaders, "*.hlsl"))
+            File.Copy(file, Path.Combine(fixture, Path.GetFileName(file)), true);
+        var commonPath = Path.Combine(fixture, "Common.hlsl");
+        var common = File.ReadAllText(commonPath) + """
+
+            #define S 0.0
+            #define FractalDepth 8.5
+            #define HistoryAvailable 1.0
+            #define HistoryNewestAge 0.0
+            #define HistorySpan 1.0
+            #define HistogramShift .5
+            #define VisualFlash 0.0
+
+            """;
+        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
+        { MandelboxAntialiasing = AntialiasingQuality.Medium };
+        FillContrastHistory(renderer);
+        byte[] Capture(string name, float julia, float rotation, float anisotropy, int time)
+        {
+            File.WriteAllText(commonPath, common + $"\n#define MovementTime {time}.0\n");
+            if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
+            renderer.MandelboxJuliaBlend = julia;
+            renderer.MandelboxFoldRotation = rotation;
+            renderer.MandelboxAnisotropy = anisotropy;
+            renderer.Render(false);
+            var image = renderer.ReadPixels();
+            renderer.Render(false);
+            if (!image.SequenceEqual(renderer.ReadPixels())) throw new Exception("Frozen variation pose drifted.");
+            if (image.Where((_, i) => i % 4 != 3).Count(v => v > 10) < 10000)
+                throw new Exception("Variation lost visible structure.");
+            Save(image, 640, 360, Path.Combine(output, $"variation-{name}.png"));
+            return image;
+        }
+        var baseline = Capture("original", 0, 0, 0, 0);
+        foreach (var setting in new[] { ("julia", .3f, 0f, 0f), ("rotation", 0f, .35f, 0f),
+            ("anisotropy", 0f, 0f, .22f), ("combined", .3f, .35f, .22f) })
+        {
+            var image = Capture(setting.Item1, setting.Item2, setting.Item3, setting.Item4, 0);
+            var difference = image.Select((v, i) => Math.Abs(v - baseline[i])).Average();
+            if (difference < 1) throw new Exception($"{setting.Item1} failed to change the field.");
+            Console.WriteLine($"Variation {setting.Item1}: mean byte change {difference:F2}");
+        }
+        var poses = new System.Collections.Generic.HashSet<string>();
+        foreach (var time in new[] { 0, 4, 12, 30, 70 })
+            poses.Add(Convert.ToHexString(SHA256.HashData(Capture($"time-{time}", .3f, .35f, .22f, time))));
+        if (poses.Count != 5) throw new Exception("Musical time failed to explore distinct variation poses.");
+        Capture("maximum", 1, 1, .5f, 30);
+        Console.WriteLine("Variations: independent controls, musical poses, maximum settings and frozen-frame determinism passed.");
+    }
 
     static void CheckDepthAndAaAlignment(IntPtr window, string output)
     {
@@ -814,6 +945,9 @@ internal static class Program
                         settings.Mandelbox.MaximumIterations = 128;
                         settings.Mandelbox.MovementSpeed = .5f;
                          settings.Mandelbox.Scale = -2.1f;
+                        settings.Mandelbox.JuliaBlend = .45f;
+                        settings.Mandelbox.FoldRotation = .2f;
+                        settings.Mandelbox.Anisotropy = .15f;
                          settings.Mandelbox.BilateralStrength = .75f;
                          settings.Mandelbox.BilateralFrequencySigma = 1.5f;
                          settings.Mandelbox.BilateralTimeSigma = .5f;
@@ -826,6 +960,8 @@ internal static class Program
                          settings.Mandelbox.FluidCurl = .7f;
                         if (active.Renderer.MandelboxIterations != 128 || active.Renderer.MandelboxMovementSpeed != .5f
                              || active.Renderer.MandelboxScale != -2.1f || started != 1
+                            || active.Renderer.MandelboxJuliaBlend != .45f || active.Renderer.MandelboxFoldRotation != .2f
+                            || active.Renderer.MandelboxAnisotropy != .15f
                              || active.Renderer.BilateralStrength != .75f || active.Renderer.BilateralFrequencySigma != 1.5f
                              || active.Renderer.BilateralTimeSigma != .5f || active.Renderer.BilateralRangeSigma != .2f
                              || !active.Renderer.FilteredHistogramView
@@ -852,6 +988,8 @@ internal static class Program
                         var current = (AEther.WindowsForms.Session)currentField.GetValue(host)!;
                         if (current.Renderer.MandelboxIterations != 128 || current.Renderer.MandelboxMovementSpeed != .5f
                              || current.Renderer.MandelboxScale != -2.1f
+                            || current.Renderer.MandelboxJuliaBlend != .45f || current.Renderer.MandelboxFoldRotation != .2f
+                            || current.Renderer.MandelboxAnisotropy != .15f
                              || current.Renderer.BilateralStrength != .75f || current.Renderer.BilateralFrequencySigma != 1.5f
                              || current.Renderer.BilateralTimeSigma != .5f || current.Renderer.BilateralRangeSigma != .2f
                              || !current.Renderer.FilteredHistogramView

@@ -1,5 +1,58 @@
 # Mandelbox distance and history coordinates
 
+## Musical structure experiment
+
+The live Mandelbox controls now include Julia blend (default .3), internal fold
+rotation (.35 radians per axis), and anisotropy (.22 logarithmic stretch).
+Setting all three to zero restores the original orbit. All three follow
+`MovementTime`, so movement speed also controls their exploration and zero freezes
+their pose. They inherit the existing fast attack / slow release musical clock;
+there is no wall-time drift or separate transient geometry envelope.
+
+Each iteration applies box fold, sphere fold, internal rotation, diagonal stretch
+and signed scale, then adds `beta*p + juliaOffset`. Slowly differing musical
+periods change the rotation axes, Julia offset and point-injection coefficient.
+Julia blend is an exploration strength: `beta=1-blend*(.55+.45*sin(.11*t+.4))`,
+rather than a fixed interpolation coefficient. The three stretch factors are
+`exp(anisotropy*cos(.14*t + phase))` with phases spaced by 120 degrees, preserving
+volume while changing proportions. These are spatially uniform parameters.
+
+The corresponding full chain rule is
+`J_next = scale*D*R*J_sphere*J_box*J + beta*I`, starting at `J=I`.
+The shader retains a scalar expansion bound:
+`L_next = abs(scale)*max(stretch)*sphereFactor*L + abs(beta)`.
+The largest stretch is required even though the stretch determinant is one.
+Distance remains the existing empirical `length(z)/L` field, with the same
+fractional-depth log blend and four-iteration coarse reference. Both reference
+and deep estimates use the same varied orbit; history projection, angular note
+placement and transient illumination retain their existing formulas.
+
+Tone shading now favors the matching fractal shells: the straight-ray gain is
+1.9 (previously 2.8), with squared fold relief and a lower valley floor, while
+sustained shell gain is 2.2 (previously 1.5). This interrupts continuous spokes
+and gives more weight to the fractal structure without changing note placement.
+
+Transient fronts now carry the recorded spectrum around each stereo semicircle
+(bass below, mids at the sides, treble above), instead of selecting transient
+frequency solely from fractal distance. A bounded fold-dependent angular warp
+retains the frequency endpoints. A five-tap spectral envelope softens the bands;
+older tails broaden further. Front age is multiplied by a smooth 1.14-to-.88
+bass-to-treble ramp, letting treble lead slightly. Color follows that same smooth
+spectral coordinate. The immediate core uses the corresponding current spectrum.
+The existing fractal history warp still shapes the fronts; no fractal derivative
+or audio-analysis changes are involved. `--transient-only` checks isolated
+bass/mid/treble impulses in each channel and saves their GPU previews. The HEAD
+mapping fixture now uses noise illumination to isolate the underlying geometry
+and history mapping from both tone and transient shading changes.
+
+`MandelboxDistanceTests` checks the expansion bound against independent finite
+differences across individual/default/maximum controls, musical poses and signed
+scales. The GPU smoke runner supports `--variation-only` for isolated control
+comparisons, five frozen musical poses and maximum settings. Captures are saved
+as `tools/AEther.Smoke/artifacts/variation-*.png`. The full smoke run also checks
+the original geometry against HEAD with all three controls disabled, AA, depth
+continuity, stereo, history expiry and live settings across session restarts.
+
 Iteration depth follows smoothed musical velocity directly: `depth=3+7*clamp(velocity/1.5,0,1)`. The same fast attack and slow decay govern movement and detail, with no separate depth envelope. The shader captures distance estimates at floor/ceil depth in one orbit and smoothstep-blends their log distances. The coarse reference remains fixed at four iterations. This is a visual field interpolation, not a guaranteed geometric distance bound.
 
 Stereo spectra occupy two semicircles: left audio on the left, right audio on the right, with bass meeting at the bottom and treble at the top. The angular coordinate is `atan2(abs(x), -y)/pi` in aspect-correct screen coordinates. Tonal UVs retain the fractal blend along the sides, fading that blend to zero at the bass/treble endpoints. All history and current-spectrum sampling selects the corresponding channel, including transient hulls and core flashes. Channel differences can produce a seam along the vertical axis. GPU smoke checks use isolated left/right bass and treble to verify placement and channel isolation.

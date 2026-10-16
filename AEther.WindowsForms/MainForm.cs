@@ -105,6 +105,9 @@ public sealed class MainForm : Form
         session.Renderer.MandelboxIterations = settings.Mandelbox.MaximumIterations;
         session.Renderer.MandelboxMovementSpeed = settings.Mandelbox.MovementSpeed;
         session.Renderer.MandelboxScale = settings.Mandelbox.Scale;
+        session.Renderer.MandelboxJuliaBlend = settings.Mandelbox.JuliaBlend;
+        session.Renderer.MandelboxFoldRotation = settings.Mandelbox.FoldRotation;
+        session.Renderer.MandelboxAnisotropy = settings.Mandelbox.Anisotropy;
         session.Renderer.BilateralStrength = settings.Mandelbox.BilateralStrength;
         session.Renderer.BilateralFrequencySigma = settings.Mandelbox.BilateralFrequencySigma;
         session.Renderer.BilateralTimeSigma = settings.Mandelbox.BilateralTimeSigma;

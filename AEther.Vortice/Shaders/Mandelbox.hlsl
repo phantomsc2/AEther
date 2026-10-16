@@ -1,7 +1,22 @@
 // A finite-iteration 3D Mandelbox distance estimate, evaluated on a plane.
-// Integrated audio moves the slice; scale is a live scene parameter.
+// Integrated audio moves the slice and slowly explores a family of orbit rules.
 float2 BoxDistance(float3 p)
 {
+    // These parameters are uniform in space: no omitted spatial derivatives.
+    // Separate musical periods let chambers open, lean and interlock without
+    // retriggering a geometry pulse on every transient. MovementTime coasts to
+    // rest with the slice and respects the movement-speed setting.
+    float t = MovementTime;
+    float beta = 1 - JuliaBlend * (.55 + .45 * sin(.11 * t + .4));
+    float3 julia = JuliaBlend * float3(.65 * sin(.13 * t + .7),
+        .5 * sin(.17 * t - 1.1), .6 * cos(.09 * t + .2));
+    float3 offset = beta * p + julia;
+    float3x3 rotation = mul(Rz(FoldRotation * sin(.19 * t + .6)),
+        mul(Ry(FoldRotation * sin(.13 * t - .4)), Rx(FoldRotation * cos(.17 * t + .2))));
+    // Log stretches sum to zero: change proportions while preserving volume.
+    // Their largest stretch, rather than determinant, bounds radial expansion.
+    float3 stretch = exp(Anisotropy * cos(.14 * t + float3(0, 2.0943951, 4.1887902)));
+    float expansion = abs(MandelboxScale) * max(stretch.x, max(stretch.y, stretch.z));
     float3 z = p;
     float derivative = 1;
     float coarse = 0;
@@ -19,8 +34,10 @@ float2 BoxDistance(float3 p)
         float fold = 1 / clamp(dot(z, z), .25, 1);
         z *= fold;
         derivative *= fold;
-        z = MandelboxScale * z + p;
-        derivative = abs(MandelboxScale) * derivative + 1;
+        z = MandelboxScale * stretch * mul(rotation, z) + offset;
+        // For J_next = scale*D*R*J_sphere*J_box*J + beta*I,
+        // rotations/reflections have norm one and the sphere-fold norm is fold.
+        derivative = expansion * derivative + abs(beta);
         float distance = max(1e-8, length(z) / derivative);
         if (i == 4) coarse = distance;
         if (i == lower) lowLog = log2(distance);
@@ -54,6 +71,14 @@ float4 History(float frequency, float age, float right)
         || age * HistorySpan < HistoryNewestAge) return 0;
     float2 uv = float2(saturate(frequency), HistogramShift - age * HistorySpan);
     return lerp(Histogram0.Sample(HullHistory, uv), Histogram1.Sample(HullHistory, uv), right);
+}
+
+float TransientHistory(float frequency, float age, float right, float width)
+{
+    // A smooth spectral envelope, rather than separate hard frequency wedges.
+    return .4 * History(frequency, age, right).g
+        + .24 * (History(frequency - width, age, right).g + History(frequency + width, age, right).g)
+        + .06 * (History(frequency - 2 * width, age, right).g + History(frequency + 2 * width, age, right).g);
 }
 
 float3 Shade(float2 uv, float sampleWidth)
@@ -97,12 +122,12 @@ float3 Shade(float2 uv, float sampleWidth)
         * lerp(.72, .46, outer) * (2 * foldCoordinate - 1));
     float age = -log(max(.001, 1 - warpedRadius / 1.02)) / TimeCompression;
     // Time and frequency occupy separate dimensions of the history texture.
-    // Angle places a note on a ray; the distance field places an attack on a hull.
+    // Angle places spectral content around a front; the distance field folds it.
     // Each stereo channel occupies its own semicircle. Both run from bass
     // at the bottom to treble at the top, meeting along the vertical axis.
     float right = step(0, screen.x);
     // Frequency keeps a fixed angle matching the histogram's vertical order.
-    // Only history age is folded: fractal distance must not relocate a note.
+    // Tone frequency stays anchored; transients get a small bounded fold below.
     float tonalFrequency = atan2(abs(screen.x), -screen.y) / 3.14159265;
     float footprint = max(fwidth(frequency) * sampleWidth, .028 * outer);
     float timeFootprint = min(.025, fwidth(age) * sampleWidth);
@@ -123,6 +148,17 @@ float3 Shade(float2 uv, float sampleWidth)
     ray = lerp(ray, currentRay, center);
     float dust = smoothstep(.28, .85, age);
     float trail = exp(-2.3 * age);
+    // Put the transient spectrum around each advancing front: bass below,
+    // treble above, with the folds bending the spectral route between them.
+    // Mild dispersion lets higher frequencies lead instead of sharing one ring.
+    float attackFrequency = saturate(tonalFrequency + .08 * sin(3.14159265 * tonalFrequency)
+        * (2 * foldCoordinate - 1) * smoothstep(.05, .3, radius));
+    float attackAge = age * lerp(1.14, .88, tonalFrequency);
+    float attackWidth = max(.022 + .025 * dust, min(.06, fwidth(attackFrequency) * sampleWidth));
+    float currentAttack = .5 * CurrentSpectrum(attackFrequency, right).g
+        + .25 * (CurrentSpectrum(attackFrequency - attackWidth, right).g
+                 + CurrentSpectrum(attackFrequency + attackWidth, right).g);
+    float attackEnvelope = lerp(TransientHistory(attackFrequency, attackAge, right, attackWidth), currentAttack, center);
 #ifdef MANDEL_FLUID
     float palettePhase = .11 * MovementTime;
 #else
@@ -130,24 +166,26 @@ float3 Shade(float2 uv, float sampleWidth)
 #endif
     float3 rayPalette = .5 + .5 * cos(6.2831853 * (tonalFrequency * .9 + palettePhase + float3(.04, .38, .62)));
     float3 hullPalette = .5 + .5 * cos(6.2831853 * (frequency * 1.3 - palettePhase + float3(.04, .38, .62)));
+    float3 attackPalette = .5 + .5 * cos(6.2831853 * (attackFrequency * .9 - palettePhase + float3(.04, .38, .62)));
     // Let real fold depth carve the beams, fading unresolved relief toward its
     // midpoint. This adds structure without periodic contour bands or changing
     // the angle that identifies a tone.
     float reliefWidth = max(.04, fwidth(foldCoordinate) * sampleWidth);
     float relief = smoothstep(.35 - reliefWidth, .65 + reliefWidth, foldCoordinate);
     float tonalRelief = lerp(.5, relief, saturate(.2 / reliefWidth));
-    float sustain = 2.8 * max(0, ray.r) * trail * lerp(.16, 1.35, tonalRelief);
+    // Let the folds interrupt a tone's path instead of leaving a continuous
+    // bright spoke through the valleys. More of its light lives on the shells.
+    float sustain = 1.9 * max(0, ray.r) * trail * lerp(.04, 1.25, tonalRelief * tonalRelief);
     // Where a tone's angular route meets its matching distance-field shell,
     // illuminate that shell as well. Angular support keeps mids at the sides.
     float tonalSupport = max(0, ray.r) / (.04 + max(0, ray.r));
-    float sustainedHull = 1.5 * max(0, hull.r) * tonalSupport * trail;
+    float sustainedHull = 2.2 * max(0, hull.r) * tonalSupport * trail;
     float3 sustainedHullPalette = .5 + .5 * cos(6.2831853 * (frequency * .9 + palettePhase + float3(.04, .38, .62)));
     // Attacks are crisp near the core, then widen and disperse into a faint
     // coarse glow near the old-history horizon.
-    float attack = 6.2 * max(0, hull.g) * trail * 1.2;
-    float4 dispersed = .5 * (History(frequency - .07 * dust, age, right)
-                            + History(frequency + .07 * dust, age, right));
-    float broad = 2.0 * max(0, dispersed.g) * dust * trail;
+    float attack = 6.2 * max(0, attackEnvelope) * trail * 1.2;
+    float dispersed = TransientHistory(attackFrequency, attackAge, right, attackWidth + .07 * dust);
+    float broad = 2.0 * max(0, dispersed) * dust * trail;
 #ifdef MANDEL_FLUID
     // Energy reveals the underlying field throughout a passage. The material
     // supplies body; notes retain a directional ray near the source, then spread.
@@ -164,18 +202,18 @@ float3 Shade(float2 uv, float sampleWidth)
     float3 light = field + (body + beams) * interaction;
     // Recorded onsets remain crisp and ordered by history age. They illuminate
     // and expose the field rather than accumulating as long-lived pigment.
-    float front = 1 - exp(-4 * max(0, hull.g) * trail);
+    float front = 1 - exp(-4 * max(0, attackEnvelope) * trail);
     light *= 1 + front * (2.5 + 2 * together) + .18 * drives.z * noiseAir;
-    light += hullPalette * attack * (1 - .7 * dust) * (.65 + .35 * together)
+    light += attackPalette * attack * (1 - .7 * dust) * (.65 + .35 * together)
         + float3(.36, .53, .67) * broad * .5;
     float impact = 1 - exp(-3 * max(0, VisualFlash));
     light *= 1 + 1.2 * impact;
-    float coreFlash = (1 - exp(-3 * max(0, currentHull.g))) * exp(-7 * radius);
+    float coreFlash = (1 - exp(-3 * max(0, currentAttack))) * exp(-7 * radius);
     light += float3(.6, .78, 1) * coreFlash * 1.5;
 #else
     float3 light = rayPalette * sustain
         + sustainedHullPalette * sustainedHull
-        + hullPalette * attack * (1 - .7 * dust)
+        + attackPalette * attack * (1 - .7 * dust)
         + float3(.36, .53, .67) * broad;
     light += hullPalette * .2 * max(0, hull.b) * trail;
 #endif
@@ -185,7 +223,7 @@ float3 Shade(float2 uv, float sampleWidth)
     light *= 1 + 1.2 * impact;
     // The undelayed onset ignites the core immediately; the recorded event
     // subsequently propagates through the history field without repeated triggers.
-    float coreFlash = (1 - exp(-3 * max(0, currentHull.g))) * exp(-7 * radius);
+    float coreFlash = (1 - exp(-3 * max(0, currentAttack))) * exp(-7 * radius);
     light += float3(.6, .78, 1) * coreFlash * 1.5;
 #endif
     float vignette = 1 - .38 * smoothstep(.25, 2.5, length(screen));

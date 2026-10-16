@@ -50,6 +50,9 @@ public sealed class Renderer : IDisposable
     public int MandelboxIterations { get; set; } = 10;
     public float MandelboxMovementSpeed { get; set; } = 1;
     public float MandelboxScale { get; set; } = -1.5f;
+    public float MandelboxJuliaBlend { get; set; } = .3f;
+    public float MandelboxFoldRotation { get; set; } = .35f;
+    public float MandelboxAnisotropy { get; set; } = .22f;
     public float BilateralStrength { get; set; } = .6f;
     public float BilateralFrequencySigma { get; set; } = 1;
     public float BilateralTimeSigma { get; set; } = 1;
@@ -228,7 +231,8 @@ public sealed class Renderer : IDisposable
         {
             A = new(SliceDepth, .95f, 4, (CombinedLevel ? 1 : 0) + (Intensity ? 2 : 0)),
             B = new((int)MandelboxAntialiasing, (float)movementTime, 0, 0),
-            C = new(MandelboxScale, 0, 0, 0),
+            C = new(MandelboxScale, Math.Clamp(MandelboxJuliaBlend, 0, 1),
+                Math.Clamp(MandelboxFoldRotation, 0, 1), Math.Clamp(MandelboxAnisotropy, 0, .5f)),
             D = new(Math.Clamp(BilateralFrequencySigma, .1f, 2), Math.Clamp(BilateralTimeSigma, .1f, 2),
                 Math.Max(.0001f, BilateralRangeSigma), Math.Clamp(BilateralStrength, 0, 1)),
         };

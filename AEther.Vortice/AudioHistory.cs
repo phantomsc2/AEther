@@ -33,7 +33,7 @@ public sealed class AudioHistory
     public double MusicalVelocity { get; private set; }
     // Depth travel follows the same smoothed drive as motion. The renderer
     // maps this 0..10 demand to depths 3..configured maximum, independently of AA.
-    public float FractalDepth => (float)(10 * Math.Clamp(MusicalVelocity / 0.3, 0, 1));
+    public float FractalDepth => (float)(10 * Math.Clamp(MusicalVelocity / 0.5, 0, 1));
     public float Flash { get; private set; }
     public float Energy { get; private set; }
     public double Now => clock.Elapsed.TotalSeconds;
