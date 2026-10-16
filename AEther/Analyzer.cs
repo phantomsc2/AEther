@@ -24,6 +24,8 @@ namespace AEther
         readonly byte[] Batch;
         readonly DFTProcessor[] DFT;
         readonly Splitter[] Splitter;
+        readonly SampleEvidenceDFT[] SampleDFT;
+        readonly SampleSignEvidence[] SampleEvidence;
         readonly TransientDetector[] Transients;
         readonly AudioFeatureExtractor Features;
         readonly Channel<(SampleEvent<byte> Event, long Arrival)> Input;
@@ -51,10 +53,18 @@ namespace AEther
             Profile.Describe("SIMD enabled", options.SIMDEnabled.ToString());
             Profile.Describe("Window function", options.WindowFunction.ToString());
             Batch = new byte[checked(BatchSize * Format.Size)];
-            DFT = Enumerable.Range(0, Format.ChannelCount)
+            Profile.Describe("Subtract noise background", options.SubtractNoiseBackground.ToString());
+            Profile.Describe("Evidence mode", options.EvidenceMode.ToString());
+            Profile.Describe("Sign slew rate", options.SignSlewRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var perSample = options.EvidenceMode == EvidenceMode.PerSampleAverageSign;
+            SampleDFT = perSample ? Enumerable.Range(0, Format.ChannelCount)
+                .Select(_ => new SampleEvidenceDFT(Domain, Format.SampleRate, options)).ToArray() : Array.Empty<SampleEvidenceDFT>();
+            SampleEvidence = perSample ? Enumerable.Range(0, Format.ChannelCount)
+                .Select(_ => new SampleSignEvidence(Domain, options, Format.SampleRate)).ToArray() : Array.Empty<SampleSignEvidence>();
+            DFT = perSample ? Array.Empty<DFTProcessor>() : Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled,
                     options.WindowFunction)).ToArray();
-            Splitter = Enumerable.Range(0, Format.ChannelCount)
+            Splitter = perSample ? Array.Empty<Splitter>() : Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
             Transients = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new TransientDetector(Format.SampleRate)).ToArray();
@@ -190,6 +200,13 @@ namespace AEther
                 }
                 for (var c = 0; c < Format.ChannelCount; ++c)
                 {
+                    if (SampleDFT.Length != 0)
+                    {
+                        using (Profile.Measure("analysis.sample_evidence_channel_ms"))
+                            SampleDFT[c].Process(samples.GetChannel(c).Span, SampleEvidence[c]);
+                        SampleEvidence[c].Output(output.GetChannel(c).Span);
+                        continue;
+                    }
                     using (Profile.Measure("analysis.dft_channel_ms"))
                     {
                     DFT[c].Process(samples.GetChannel(c));

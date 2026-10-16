@@ -19,9 +19,10 @@ namespace AEther
         public double MaxFrequency { get; set; } = 8000;
 
         [Category("Domain")]
-        public int FrequencyResolution { get; set; } = 8;
+        public int FrequencyResolution { get; set; } = 12;
 
         [Category("DFT")]
+        [Description("Spectrum publication rate. Exact mode also observes evidence at this rate; per-sample mode updates evidence at the audio sample rate.")]
         public int TimeResolution { get; set; } = 1 << 8;
 
         [Category("DFT")]
@@ -37,22 +38,37 @@ namespace AEther
         public double HistorySeconds { get; set; } = .3f;
 
         [Category("Splitter")]
-        [DefaultValue(3.0)]
-        [Description("Linear gain for independent time-median evidence. Does not scale magnitude.")]
-        public double SineGain { get; set; } = 3.0;
+        [DefaultValue(true)]
+        [Description("Subtract the raw-amplitude rectangular background before estimating S/T. Deviations remain signed through filtering; only displayed S/T are clamped. Disable for direct evidence.")]
+        public bool SubtractNoiseBackground { get; set; } = true;
 
         [Category("Splitter")]
-        [DefaultValue(3.0)]
+        [DefaultValue(EvidenceMode.ExactMedian)]
+        [Description("Exact rolling medians at the analysis rate, or average-sign tracking at every audio sample.")]
+        public EvidenceMode EvidenceMode { get; set; } = EvidenceMode.ExactMedian;
+
+        [Category("Splitter")]
+        [DefaultValue(1.0)]
+        [Description("Maximum tracker slew in linear amplitude per second in per-sample mode. MedianLength applies only to exact mode.")]
+        public double SignSlewRate { get; set; } = 1.0;
+
+        [Category("Splitter")]
+        [DefaultValue(10.0)]
+        [Description("Linear gain for independent robust time evidence. Does not scale magnitude.")]
+        public double SineGain { get; set; } = 10.0;
+
+        [Category("Splitter")]
+        [DefaultValue(10.0)]
         [Description("Linear gain for independent frequency-median evidence. Does not scale magnitude.")]
-        public double TransientGain { get; set; } = 3.0;
+        public double TransientGain { get; set; } = 10.0;
 
         [Category("Splitter")]
-        [DefaultValue(3.0)]
-        [Description("Linear gain for independent time-frequency median evidence. Does not scale magnitude.")]
-        public double NoiseGain { get; set; } = 1.0;
+        [DefaultValue(10.0)]
+        [Description("Linear gain for independent robust time-frequency evidence. Does not scale magnitude.")]
+        public double NoiseGain { get; set; } = 10.0;
 
         [Category("Splitter")]
-        [Description("Causal time-median window in seconds; also the time extent of 2D evidence.")]
+        [Description("Exact mode only: causal time-median window in seconds; also the time extent of 2D evidence.")]
         public double MedianLength { get; set; } = .2;
 
         [Category("Splitter")]
@@ -81,6 +97,10 @@ namespace AEther
 
         internal void ValidateSplitter(int resolution, double rate)
         {
+            if (!Enum.IsDefined(EvidenceMode))
+                throw new ArgumentOutOfRangeException(nameof(EvidenceMode));
+            if (!double.IsFinite(SignSlewRate) || SignSlewRate <= 0)
+                throw new ArgumentOutOfRangeException(nameof(SignSlewRate));
             if (!double.IsFinite(SineGain) || SineGain < 0)
                 throw new ArgumentOutOfRangeException(nameof(SineGain));
             if (!double.IsFinite(TransientGain) || TransientGain < 0)

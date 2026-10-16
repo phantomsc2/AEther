@@ -6,11 +6,16 @@ namespace AEther.Benchmarks
 {
     class Program
     {
-        static void Main()
+        static void Main(string[] args)
         {
             var config = ManualConfig
                 .Create(DefaultConfig.Instance)
                 .AddDiagnoser(MemoryDiagnoser.Default);
+            if (System.Array.IndexOf(args, "--splitter") >= 0)
+            {
+                BenchmarkRunner.Run<SplitterBenchmark>(config);
+                return;
+            }
 #if DEBUG
             new MatrixBenchmark().SystemNumericsBenchmark();
 #else

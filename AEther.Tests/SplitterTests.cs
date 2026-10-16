@@ -71,26 +71,36 @@ public class SplitterTests
         Assert.That(output[6], Is.EqualTo(1), "Five of nine samples are one; median-of-medians would be zero");
     }
 
-    [Test]
-    public void EvidenceMatchesSortedNeighborhoodQuantilesAcrossStartupAndRingWrap()
+    [TestCase(5, .3, .3, 10)]
+    [TestCase(8, .5, 3, 10)]
+    [TestCase(1, .5, 1, 10)]
+    [TestCase(17, 1.1, 1, 10)]
+    [TestCase(65, .2, 3, 256.684)]
+    public void EvidenceMatchesSortedNeighborhoodQuantilesAcrossStartupAndRingWrap(
+        int bands, double seconds, double octaves, double rate)
     {
-        var domain = new Domain(100, 8, 5);
-        var options = Options(); options.MedianLength = .3; options.MedianWidth = .3;
-        var splitter = new Splitter(domain, options, 10);
+        var domain = new Domain(100, 8, bands);
+        var options = Options(); options.MedianLength = seconds; options.MedianWidth = octaves;
+        var length = (int)Math.Round(seconds * rate) | 1;
+        var frequencyWidth = Math.Min((int)Math.Round(octaves * domain.Resolution) | 1, bands);
+        var splitter = new Splitter(domain, options, rate);
         var history = new System.Collections.Generic.List<double[]>();
         var output = new double[4 * domain.Length];
         var random = new Random(123);
-        for (var frame = 0; frame < 15; frame++)
+        for (var frame = 0; frame < 2 * length + 7; frame++)
         {
-            var input = Enumerable.Range(0, domain.Length).Select(_ => -3 * random.NextDouble()).ToArray();
+            // Include repeated values and exact zeros as well as continuous random magnitudes.
+            var input = Enumerable.Range(0, domain.Length).Select(_ => frame % 3 == 0
+                ? random.Next(4) == 0 ? double.NegativeInfinity : -random.Next(4)
+                : -3 * random.NextDouble()).ToArray();
             var amplitudes = input.Select(x => Math.Pow(10, x)).ToArray();
             history.Add(amplitudes);
-            if (history.Count > 3) history.RemoveAt(0);
+            if (history.Count > length) history.RemoveAt(0);
             splitter.Process(input, output);
             for (var k = 0; k < domain.Length; k++)
             {
-                var first = Math.Max(0, k - 1);
-                var width = Math.Min(domain.Length - 1, k + 1) - first + 1;
+                var first = Math.Max(0, k - frequencyWidth / 2);
+                var width = Math.Min(domain.Length - 1, k + frequencyWidth / 2) - first + 1;
                 var time = history.Select(row => row[k]).Order().ToArray();
                 var frequency = amplitudes.Skip(first).Take(width).Order().ToArray();
                 var both = history.SelectMany(row => row.Skip(first).Take(width)).Order().ToArray();

@@ -1,73 +1,94 @@
-# Independent robust spectral evidence
+# Robust spectral background and directional deviations
 
-The splitter emits evidence directly in linear amplitude. Time, frequency, and
-joint time-frequency estimates may all be strong at the same bin. There are no
-competing masks, membership ratios, probability normalization, or additive source
-constraint. The former signed residual has been replaced by raw amplitude.
+## Default decomposition
 
-## Evidence
-
-DFTProcessor supplies log10 magnitude. Convert it to linear A, treating nonfinite
-input and conversion overflow as zero. Estimate:
+The exact splitter works in linear amplitude. It estimates a rectangular background
+first, subtracts it without clipping, and then filters the signed deviations:
 
 ```text
-S = median of A across causal time history at this frequency
-T = median of A across the current centered frequency neighborhood
-N = median of A across the full time-frequency rectangle
+A = linear DFT amplitude
+N = median_rectangle(A)
+D = A - N
+S = median_time(D)
+T = median_frequency(D)
+RGB = [SineGain * max(S, 0), TransientGain * max(T, 0), NoiseGain * N]
 Raw = A
 ```
 
-These are robust location estimates. An isolated large sample cannot dominate a
-median. S/T/N retain their historic channel names for rendering, but they mean
-time, frequency, and 2D evidence rather than exclusive sine/transient/noise sources.
-In particular, N is not a noise probability, and T can respond to sustained broad
-spectral content. A broadband onset and an established chord can both retain
-evidence without either being attenuated by a ratio against the other.
+N uses every raw amplitude in the full causal time-frequency rectangle. It is not
+a median of medians. Each frequency bin maintains an exact indexed-heap median;
+each new row inserts its entire frequency neighborhood and expires the oldest one.
+The current row is included. Startup uses available rows, frequency support is
+truncated at domain boundaries, and even populations use the lower median.
 
-Each median is the lower 0.5 quantile for an even population. Time uses only
-available past and current rows. Frequency support truncates at domain boundaries;
-there is no synthetic padding. The 2D median uses every sample in its rectangle,
-not a composition of one-dimensional medians. All estimates read original amplitude,
-never filtered feedback. No Gaussian distribution assumption is needed.
+Every bin's current deviation is formed before frequency filtering starts. The
+time median stores the signed deviation computed when each row arrived; old rows
+are not reinterpreted using today's background. Negative values remain in both
+median populations and are clamped only when writing RGB. Positive S/T indicate
+directional structure above the local background; negative estimates describe
+deficits below it. The current RGBA output exposes only their positive projection.
+
+N is a typical amplitude background, not a noise probability or an isolated
+physical source. A sufficiently broad and persistent chord can contribute to it.
+The background neighborhood determines what is removed from directional evidence.
 
 ## Controls
 
-- `MedianLength`: causal time window in seconds (default 0.2), converted to an
-  odd count at the actual analysis rate, bounded to 65,535 samples.
-- `MedianWidth`: frequency window in octaves (default 3), converted to an odd
-  bin count and clipped to the domain. The 2D estimate shares both extents.
-- `SineGain`, `TransientGain`, `NoiseGain`: independent display gains applied
-  after estimation (defaults 3, 3, 1). They do not affect evidence or raw amplitude.
+- `SubtractNoiseBackground`: enabled by default. Replaces the former
+  `NormalizeEvidence` mode and its noise-coverage thresholds. Disable to estimate
+  S and T directly from raw amplitude, retaining N unchanged.
+- `EvidenceMode`: `ExactMedian` by default. The experimental
+  `PerSampleAverageSign` tracker remains selectable.
+- `MedianLength`: exact-mode causal time extent, default 0.2 seconds, rounded to
+  an odd number of actual analysis rows and capped at 65,535. Shared by N and S.
+- `MedianWidth`: centered frequency extent, default 3 octaves, rounded to an odd
+  number of bins and clipped to the domain. Shared by N and T.
+- `SineGain`, `TransientGain`, `NoiseGain`: display gains, default 10 each.
+  Applied after estimation and positive projection; never used for subtraction.
+- `TimeResolution`: observation/publication rate in exact mode. Only publication
+  rate in per-sample mode.
 
-Fuzzy thresholds and the extra bilateral smoothing controls have been removed.
-There is no post-classification bilateral stage because there is no classification
-stage. MAD, distribution uncertainty, and weighted quantiles are future extensions.
+Default frequency resolution is 12 bins per octave. There are no S/T share ratios,
+noise-coverage gates, amplitude rescaling of N, or reconstruction constraint.
+S and T can overlap; RGB need not sum to A even at unity gains.
 
-## Output and rendering
+## Experimental per-sample mode
 
-`Splitter.OutputStride` is four. Each bin is packed as:
+The experimental backend packs frequency bins into portable SIMD vectors, shares
+one audio-history ring per channel, and processes short 32-sample tiles. Spectra
+feed trackers in chronological order without per-sample events or log conversions.
+When SIMD is unavailable or disabled, a scalar DFT supplies linear amplitudes.
+All supported window functions preserve their component weights and normalization.
 
-```text
-[SineGain*S, TransientGain*T, NoiseGain*N, Raw]
-```
+N tracks the raw-amplitude background through the average of neighborhood signs
+against one common estimate. Once N is updated, S tracks signed A-N when background
+subtraction is enabled, or A otherwise. T is the instantaneous frequency median of
+the same directional input, evaluated at publication because it has no history.
 
-This maps directly to RGBA spectrum and history textures. RGB are overlapping
-amplitude evidence, and alpha is raw magnitude. Their sum need not equal alpha,
-even at unity gains. A constant field at unity gains appears equally in all four
-channels. There is no subtraction residual and no separate residual texture.
-Histogram's CombinedLevel shows raw amplitude; its RGB view shows the three estimates.
-FilteredHistogram0/1 remain compatibility aliases for Histogram0/1.
+`SignSlewRate`, default 1 linear amplitude unit per second, determines the step
+`SignSlewRate / sampleRate`. The N update averages signs over valid neighbors;
+SIMD padding contributes nothing. Steps stop at observations to reduce chatter.
+N remains nonnegative; S retains signed state. This is an approximate online
+quantile tracker with no exact finite temporal window; MedianLength does not
+control its history. It remains experimental following noisy visual results.
 
-Energy features use raw amplitude, so overlapping evidence is not counted repeatedly
-as input energy. Scene response envelopes and display saturation remain rendering
-behavior. Original finite quiet input is preserved without adaptive normalization.
-The DFT's tiny numerical floor remains tiny. Time-dependent evidence may outlast
-zero input briefly, but becomes exactly zero once silence fills its finite history.
-Every scene must eventually render black after active audio or capture stopping.
+## Output and silence
 
-## Verification
+`Splitter.OutputStride` remains four, mapped to RGBA spectrum/history textures.
+Alpha remains raw amplitude for energy features and Histogram's CombinedLevel.
+No residual texture or signed output channel is added. Directional evidence can
+outlast input briefly. Exact filters clear their finite history naturally; sign
+trackers slew toward zero. DFT numerical residue remains at its tiny original scale.
+Every shader must eventually render black after music, including after active audio.
 
-Regressions cover simultaneous chord and broadband onset evidence, isolated outlier
-rejection, independent gain scaling, startup and frequency boundaries, lower medians,
-nonseparable 2D estimation, quiet and invalid input, actual-rate finite history decay,
-raw-amplitude energy extraction, and the existing GPU silence regression across scenes.
+Processing uses preallocated storage. The new exact path adds two arrays per
+channel for background and signed deviations, without per-row allocations.
+The incremental rectangle retains its original exact population and complexity.
+
+## Validation status
+
+Release solution compilation succeeds with zero warnings and errors. Tests,
+including the existing GPU silence regression in
+`AEther.Tests/ShaderSilenceTests.cs`, were not run for this change. Earlier
+independent-evidence assertions and throughput measurements describe the prior
+behavior; direct-evidence comparisons must disable SubtractNoiseBackground.

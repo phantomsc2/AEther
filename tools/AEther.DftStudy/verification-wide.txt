@@ -1,0 +1,6 @@
+Benchmark thread pinned to logical CPU 0; hybrid core type=40
+CPU=Intel(R) Core(TM) Ultra 9 185H; runtime=10.0.13; OS=Microsoft Windows 10.0.26200; Vector<double>=4; AVX2=True; FMA=True; logicalCPUs=22
+Verified Hann: irregular chunks, padded lanes, shared-ring wrap, per-sample observations, silence
+Verified FlatTop: irregular chunks, padded lanes, shared-ring wrap, per-sample observations, silence
+VERIFY PASS checkpoints=689; max complex parity=5.310027E-015; max direct reference=1.067159E-015; max amplitude error=1.082467E-014; max individual estimator difference=0.000000E+000; max evidence checksum difference=0.000000E+000
+LONG PASS: 1M samples per backend/window; max parity=1.260180E-016; max retained magnitude after 4096 zeros=4.626008E-016
