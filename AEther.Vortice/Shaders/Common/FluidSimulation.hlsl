@@ -1,18 +1,15 @@
+#undef Histogram0
+#undef Histogram1
 // Vortice migration of the SharpDX fluid/multigrid passes. Coordinates and
 // velocities are in viewport-height units, independent of the grid resolution.
-cbuffer FluidConstants : register(b2)
-{
-    float2 GridSize, CellSize;
-    float StepSeconds, SourceAge, DyeDecay, Diffusion;
-    float FlowStrength, NoiseStrength, CurlStrength, FluidPadding;
-};
-Texture2D<float2> Velocity : register(t4);
-Texture2D<float4> Dye : register(t5);
-Texture2D<float> Pressure : register(t6);
-Texture2D<float> Rhs : register(t7);
-Texture2D<float> Correction : register(t8);
-SamplerState ClampFluid : register(s1);
-SamplerState PressureSampler : register(s2);
+cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, UnusedDecay, UnusedDiffusion; float4 UnusedForcing; };
+Texture2D<float2> Velocity;
+Texture2D<float4> Dye;
+Texture2D<float> Pressure;
+Texture2D<float> Rhs;
+Texture2D<float> Correction;
+SamplerState ClampFluid;
+SamplerState PressureSampler;
 
 float2 World(float2 uv) { return (2 * uv - 1) * float2(AspectRatio, 1); }
 float2 ToUV(float2 p) { return .5 + .5 * p / float2(AspectRatio, 1); }
@@ -55,7 +52,7 @@ float2 Transport(float2 p)
     // projecting this source as well would cancel the intended explosion.
     float r = length(p);
     return Velocity.SampleLevel(ClampFluid, ToUV(p), 0)
-        + Mobility() * FlowStrength * .65 * p / max(.08, r) / (1 + .65 * r);
+        + Mobility() * (Fluid.Flow * 3) * .65 * p / max(.08, r) / (1 + .65 * r);
 }
 float2 Backtrace(float2 uv)
 {
@@ -64,7 +61,7 @@ float2 Backtrace(float2 uv)
     return ToUV(p - StepSeconds * Transport(midpoint));
 }
 
-float2 AdvectVelocity(PSDefaultin input) : SV_Target
+float2 AdvectVelocity(PSin input) : SV_Target
 {
     float2 p = World(input.UV);
     float2 v = Velocity.SampleLevel(ClampFluid, Backtrace(input.UV), 0) * exp(-.65 * StepSeconds);
@@ -76,16 +73,16 @@ float2 AdvectVelocity(PSDefaultin input) : SV_Target
     float envelope = exp(-2.2 * radius * radius);
     float2 direction = p / max(.08, radius);
     float angle = atan2(p.y, p.x);
-    float eddies = sin(5 * angle + 7 * radius - .9 * MovementTime)
-        + .5 * sin(9 * p.x + 7 * p.y + 1.3 * MovementTime);
+    float eddies = sin(5 * angle + 7 * radius - .9 * (MusicalMovementTime * Quality.MovementSpeed * 10))
+        + .5 * sin(9 * p.x + 7 * p.y + 1.3 * (MusicalMovementTime * Quality.MovementSpeed * 10));
     float2 force = float2(-direction.y, direction.x) * eddies
-        * (1.8 * tone + 3 * NoiseStrength * noise + .7 * attack) * envelope * Mobility();
+        * (1.8 * tone + 3 * (Fluid.Noise * 3) * noise + .7 * attack) * envelope * Mobility();
     // Vorticity confinement restores small curls lost to semi-Lagrangian advection.
     int2 q = int2(input.Position.xy);
     float2 gradient = float2(abs(CurlAt(q + int2(1, 0))) - abs(CurlAt(q - int2(1, 0))),
         abs(CurlAt(q + int2(0, 1))) - abs(CurlAt(q - int2(0, 1)))) / (2 * CellSize);
     gradient /= max(1e-4, length(gradient));
-    force += CurlStrength * min(CellSize.x, CellSize.y) * CurlAt(q) * float2(gradient.y, -gradient.x);
+    force += (Fluid.Curl * 2) * min(CellSize.x, CellSize.y) * CurlAt(q) * float2(gradient.y, -gradient.x);
     v += StepSeconds * force;
     v *= min(1, 2.0 / max(1e-5, length(v)));
     if (q.x == GridSize.x - 1) v.x = 0;
@@ -93,7 +90,7 @@ float2 AdvectVelocity(PSDefaultin input) : SV_Target
     return v;
 }
 
-float Divergence(PSDefaultin input) : SV_Target
+float Divergence(PSin input) : SV_Target
 {
     int2 p = int2(input.Position.xy);
     // Backward divergence + forward pressure gradient compose the same
@@ -103,7 +100,7 @@ float Divergence(PSDefaultin input) : SV_Target
     float2 up = p.y > 0 ? ReadVelocity(p - int2(0, 1)) : 0;
     return (v.x - left.x) / CellSize.x + (v.y - up.y) / CellSize.y;
 }
-float Relax(PSDefaultin input) : SV_Target
+float Relax(PSin input) : SV_Target
 {
     int2 p = int2(input.Position.xy);
     float center = ReadPressure(p);
@@ -111,32 +108,32 @@ float Relax(PSDefaultin input) : SV_Target
     float residual = Rhs.Load(int3(p, 0)) - Laplacian(p);
     return center - .8 * residual / (2 * (coefficient.x + coefficient.y));
 }
-float Residual(PSDefaultin input) : SV_Target
+float Residual(PSin input) : SV_Target
 {
     int2 p = int2(input.Position.xy);
     return Rhs.Load(int3(p, 0)) - Laplacian(p);
 }
-float Restrict(PSDefaultin input) : SV_Target
+float Restrict(PSin input) : SV_Target
 {
     // Explicit 2x2 volume average avoids sampler-dependent restriction.
     int2 p = 2 * int2(input.Position.xy);
     return .25 * (Rhs.Load(int3(p, 0)) + Rhs.Load(int3(p + int2(1, 0), 0))
         + Rhs.Load(int3(p + int2(0, 1), 0)) + Rhs.Load(int3(p + 1, 0)));
 }
-float Prolong(PSDefaultin input) : SV_Target
+float Prolong(PSin input) : SV_Target
 {
     // Clamp interpolation matches the homogeneous Neumann pressure boundary.
     return Pressure.Load(int3(int2(input.Position.xy), 0))
         + Correction.SampleLevel(PressureSampler, input.UV, 0);
 }
-float2 Project(PSDefaultin input) : SV_Target
+float2 Project(PSin input) : SV_Target
 {
     int2 p = int2(input.Position.xy);
     float center = ReadPressure(p);
     return ReadVelocity(p) - float2(ReadPressure(p + int2(1, 0)) - center,
         ReadPressure(p + int2(0, 1)) - center) / CellSize;
 }
-float4 AdvectDye(PSDefaultin input) : SV_Target
+float4 AdvectDye(PSin input) : SV_Target
 {
     float2 uv = Backtrace(input.UV);
     float4 dye = Dye.SampleLevel(ClampFluid, uv, 0);
@@ -147,21 +144,21 @@ float4 AdvectDye(PSDefaultin input) : SV_Target
     float2 p = World(input.UV);
     float4 source = Source(p);
     float noise = 1 - exp(-2 * source.b);
-    float diffusion = saturate(StepSeconds * Diffusion * 4 * smoothstep(.02, .35, max(noise, PoseZ))
+    float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4 * smoothstep(.02, .35, max(noise, PoseZ))
         / (CellSize.x * CellSize.y));
     // Conserve pigment as the carrier expands. Without dilution a fading
     // ambient plume gains total light merely by occupying more screen area.
     float r = length(p);
-    float expansion = Mobility() * .65 * FlowStrength / (max(.08, r) * pow(1 + .65 * r, 2));
-    dye = lerp(dye, neighbors, diffusion) * exp(-(DyeDecay + expansion) * StepSeconds);
+    float expansion = Mobility() * .65 * (Fluid.Flow * 3) / (max(.08, r) * pow(1 + .65 * r, 2));
+    dye = lerp(dye, neighbors, diffusion) * exp(-((0.69314718 / (0.1 + Fluid.HalfLife * 9.9)) + expansion) * StepSeconds);
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
-    float3 palette = .5 + .5 * cos(6.2831853 * (frequency * .9 + .11 * MovementTime + float3(.04, .38, .62)));
+    float3 palette = .5 + .5 * cos(6.2831853 * (frequency * .9 + .11 * (MusicalMovementTime * Quality.MovementSpeed * 10) + float3(.04, .38, .62)));
     // Tones supply narrow central plumes. Noise feeds a broader, quieter body
     // across the interior, rather than turning every sound into the same jet.
     float radius = length(p);
     float emitter = exp(-pow(radius / .32, 4)) * smoothstep(.015, .09, radius);
     float tone = 1 - exp(-2 * source.r);
-    float mist = .16 * exp(-1.3 * radius * radius) * NoiseStrength * noise;
+    float mist = .16 * exp(-1.3 * radius * radius) * (Fluid.Noise * 3) * noise;
     float3 pigment = palette * tone * emitter + lerp(palette, float3(.45, .62, .72), .65) * mist;
     float4 dose = StepSeconds * 6 * float4(pigment, tone * emitter + mist);
     // Smooth finite-capacity accumulation: approximately additive for faint

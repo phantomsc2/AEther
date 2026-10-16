@@ -16,19 +16,18 @@ internal sealed class MandelFluidSimulation : IDisposable
     internal enum Pass { AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, AdvectDye }
     internal sealed class Programs : IDisposable
     {
-        readonly Dictionary<Pass, ID3D11PixelShader> shaders = [];
-        public ID3D11PixelShader this[Pass pass] => shaders[pass];
+        internal readonly Dictionary<Pass, ShaderProgram> Shaders = [];
+        public ID3D11PixelShader this[Pass pass] => Shaders[pass].Pixel;
         public Programs(ID3D11Device device, string source)
         {
             try
             {
                 foreach (var pass in Enum.GetValues<Pass>())
-                    shaders.Add(pass, device.CreatePixelShader(Compiler.Compile(source, pass.ToString(),
-                        "FluidSimulation.hlsl", "ps_5_0").Span));
+                    Shaders.Add(pass, new ShaderProgram(device, source, pass.ToString(), "FluidSimulation.hlsl"));
             }
             catch { Dispose(); throw; }
         }
-        public void Dispose() { foreach (var shader in shaders.Values) shader.Dispose(); }
+        public void Dispose() { foreach (var shader in Shaders.Values) shader.Dispose(); }
     }
 
     internal sealed class Surface : IDisposable
@@ -68,8 +67,6 @@ internal sealed class MandelFluidSimulation : IDisposable
     readonly List<Level> levels = [];
     readonly ID3D11Buffer constants;
     readonly ID3D11SamplerState borderSampler, pressureSampler;
-    readonly ID3D11ShaderResourceView[] inputs = new ID3D11ShaderResourceView[5];
-    readonly ID3D11ShaderResourceView[] empty = new ID3D11ShaderResourceView[5];
     Surface velocity, nextVelocity, dye, nextDye;
     Programs programs = null!; // Borrowed from Renderer, swapped atomically on reload.
     Parameters parameters;
@@ -79,6 +76,11 @@ internal sealed class MandelFluidSimulation : IDisposable
     public int Height => velocity.Height;
     public float Aspect { get; }
     public ID3D11ShaderResourceView Dye => dye.View;
+    public ID3D11SamplerState Sampler => borderSampler;
+    ShaderParameters? sceneParameters;
+    readonly Dictionary<string, ID3D11Buffer> namedBuffers = new(StringComparer.Ordinal);
+    readonly Dictionary<string, ID3D11ShaderResourceView> namedTextures = new(StringComparer.Ordinal);
+    readonly Dictionary<string, ID3D11SamplerState> namedSamplers = new(StringComparer.Ordinal);
 
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
     Surface Create(int w, int h, Format format) => Own(new Surface(device, w, h, format));
@@ -125,20 +127,26 @@ internal sealed class MandelFluidSimulation : IDisposable
 
     public void Clear()
     {
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         foreach (var surface in resources.OfType<Surface>()) context.ClearRenderTargetView(surface.Target, new(0, 0, 0, 0));
         accumulator = 0;
     }
 
-    public void Advance(double dt, AudioHistory audio, Programs shaders, float flow, float halfLife,
-        float diffusion, float noise, float curl)
+    public void Advance(double dt, AudioHistory audio, Programs shaders, ShaderParameters? sceneParameters = null,
+        IReadOnlyDictionary<string, ID3D11Buffer>? buffers = null,
+        IReadOnlyDictionary<string, ID3D11ShaderResourceView>? textures = null,
+        IReadOnlyDictionary<string, ID3D11SamplerState>? samplers = null)
     {
         programs = shaders;
+        this.sceneParameters = sceneParameters;
+        if (buffers != null) foreach (var pair in buffers) namedBuffers[pair.Key] = pair.Value;
+        if (textures != null) foreach (var pair in textures) namedTextures[pair.Key] = pair.Value;
+        if (samplers != null) foreach (var pair in samplers) namedSamplers[pair.Key] = pair.Value;
         parameters = new Parameters
         {
-            B = new((float)TimeStep, 0, MathF.Log(2) / Math.Clamp(halfLife, .1f, 10), Math.Clamp(diffusion, 0, .01f)),
-            C = new(Math.Clamp(flow, 0, 3), Math.Clamp(noise, 0, 3), Math.Clamp(curl, 0, 2), 0),
+            B = new((float)TimeStep, 0, 0, 0),
+            C = default,
         };
         // Fixed steps avoid frame-rate-dependent decay and forcing. Drop excess time
         // after stalls/minimize rather than replaying seconds of stale injection.
@@ -149,31 +157,32 @@ internal sealed class MandelFluidSimulation : IDisposable
             parameters.B.Y = (float)(accumulator / audio.Seconds) * audio.TimeScale;
             Step();
         }
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-        context.PSSetSampler(1, borderSampler);
     }
 
     void Grid(Surface surface)
     {
         parameters.A = new(surface.Width, surface.Height, 2 * Aspect / surface.Width, 2f / surface.Height);
         context.UpdateSubresource(parameters, constants);
-        context.PSSetConstantBuffer(2, constants);
-        context.PSSetSampler(1, borderSampler);
-        context.PSSetSampler(2, pressureSampler);
     }
 
     void Draw(Pass pass, Surface target, Surface? v = null, Surface? pigment = null,
         Surface? pressure = null, Surface? rhs = null, Surface? correction = null)
     {
         // Unbind reads before changing the target; no pass reads its own render target.
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(target.Target);
-        inputs[0] = v?.View!; inputs[1] = pigment?.View!; inputs[2] = pressure?.View!;
-        inputs[3] = rhs?.View!; inputs[4] = correction?.View!;
-        context.PSSetShaderResources(4, inputs);
         context.RSSetViewport(0, 0, target.Width, target.Height);
-        context.PSSetShader(programs[pass]);
+        namedBuffers["FluidConstants"] = constants;
+        namedSamplers["ClampFluid"] = borderSampler;
+        namedSamplers["PressureSampler"] = pressureSampler;
+        if (v != null) namedTextures["Velocity"] = v.View;
+        if (pigment != null) namedTextures["Dye"] = pigment.View;
+        if (pressure != null) namedTextures["Pressure"] = pressure.View;
+        if (rhs != null) namedTextures["Rhs"] = rhs.View;
+        if (correction != null) namedTextures["Correction"] = correction.View;
+        programs.Shaders[pass].Bind(context, sceneParameters, namedBuffers, namedTextures, namedSamplers);
         context.Draw(3, 0);
     }
 
@@ -198,7 +207,7 @@ internal sealed class MandelFluidSimulation : IDisposable
         Draw(Pass.Residual, level.Residual, pressure: level.Pressure, rhs: level.Rhs);
         var coarse = levels[index + 1];
         Draw(Pass.Restrict, coarse.Rhs, rhs: level.Residual);
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.ClearRenderTargetView(coarse.Pressure.Target, new(0, 0, 0, 0));
         VCycle(index + 1);
         Grid(level.Pressure);
@@ -211,7 +220,7 @@ internal sealed class MandelFluidSimulation : IDisposable
     {
         Grid(velocity);
         Draw(Pass.Divergence, levels[0].Rhs, v: velocity);
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.ClearRenderTargetView(levels[0].Pressure.Target, new(0, 0, 0, 0));
         VCycle(0);
         VCycle(0);
@@ -237,7 +246,7 @@ internal sealed class MandelFluidSimulation : IDisposable
         parameters.B = new((float)TimeStep, 0, MathF.Log(2) / halfLife, .001f);
         parameters.C = new(1, 1, .45f, 0);
         for (int i = 0; i < steps; i++) Step();
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
     }
 
@@ -254,7 +263,7 @@ internal sealed class MandelFluidSimulation : IDisposable
                 data[i + 1] = y == Height - 1 ? 0 : (float)(.2 * Math.Sin(2 * Math.PI * (y + 1) / Height)
                     * Math.Cos(6 * Math.PI * (x + .5) / Width));
             }
-        context.PSSetShaderResources(4, empty);
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         fixed (float* p = data) context.UpdateSubresource(velocity.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
         Grid(velocity);

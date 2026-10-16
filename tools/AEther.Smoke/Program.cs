@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using AEther;
 using AEther.Vortice;
 
-internal static class Program
+internal static partial class Program
 {
     static long nextSeedRow;
     [STAThread]
@@ -23,9 +23,10 @@ internal static class Program
             Directory.CreateDirectory(output);
             var shaderDirectory = Path.Combine(output, "shader-reload");
             Directory.CreateDirectory(shaderDirectory);
-            foreach (var file in Directory.GetFiles(Path.Combine(root, "AEther.Vortice", "Shaders"), "*.hlsl"))
-                File.Copy(file, Path.Combine(shaderDirectory, Path.GetFileName(file)), true);
+            CopyShaderTree(Path.Combine(root, "AEther.Vortice", "Shaders"), shaderDirectory);
             using var form = new Form { ClientSize = new(640, 360), ShowInTaskbar = false };
+            if (args.Contains("--shader-authoring-only") || !args.Any(arg => arg.StartsWith("--", StringComparison.Ordinal)))
+            { CheckShaderAuthoring(form.Handle, shaderDirectory, output); CheckShaderWindows(shaderDirectory); return 0; }
             CheckColorOutput(form.Handle, shaderDirectory, output);
             if (args.Contains("--output-only")) return 0;
             CheckTransientSpectrum(form.Handle, shaderDirectory, output);
@@ -296,7 +297,7 @@ internal static class Program
         {
             renderer.Fluid.Clear();
             for (int i = 0; i < frames; i++)
-                renderer.Fluid.Advance(1.0 / frames, renderer.Audio, renderer.FluidPrograms, 1, 1.4f, diffusion, 1, .45f);
+                renderer.Fluid.Advance(1.0 / frames, renderer.Audio, renderer.FluidPrograms, renderer.ActiveShader!.Parameters);
             return renderer.Fluid.ReadDye();
         }
         var at60 = Scheduled(60);
@@ -901,119 +902,7 @@ internal static class Program
         bitmap.Save(path, ImageFormat.Png);
     }
 
-    static void CheckWindows()
-    {
-        var started = 0;
-        using var host = new AEther.WindowsForms.MainForm(() => new SyntheticSource(() => started++))
-        { Opacity = 0, ShowInTaskbar = false };
-        var settings = host.OwnedForms.OfType<AEther.WindowsForms.SettingsForm>().Single();
-        settings.Opacity = 0;
-        using var timer = new System.Windows.Forms.Timer { Interval = 200 };
-        var stage = 0;
-        Exception? failure = null;
-        var bounds = Rectangle.Empty;
-        var startedBeforeRestart = 0;
-        var deadline = DateTime.UtcNow.AddSeconds(20);
-        void Key(Form form, Keys key)
-        {
-            var method = form.GetType().GetMethod("ProcessCmdKey", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-            method.Invoke(form, new object[] { default(Message), key });
-        }
-        timer.Tick += (_, _) =>
-        {
-            try
-            {
-                if (DateTime.UtcNow > deadline) throw new Exception("Window lifecycle check timed out.");
-                switch (stage)
-                {
-                    case 0:
-                        if (started == 0) return;
-                        Key(host, Keys.Space);
-                        if (!settings.Visible || settings.Owner != host) throw new Exception("Settings ownership/show failed.");
-                        settings.Close();
-                        if (settings.IsDisposed || settings.Visible || host.IsDisposed) throw new Exception("Closing settings exited the app.");
-                        Key(host, Keys.Space);
-                        var controls = settings.Controls.OfType<TableLayoutPanel>().Single().Controls;
-                        var grid = controls.OfType<PropertyGrid>().Single(c => c.Name == "MandelboxProperties");
-                         if (!ReferenceEquals(grid.SelectedObject, settings.Mandelbox) || settings.Mandelbox.MovementSpeed != 3) throw new Exception("Mandelbox grid/default speed is incorrect.");
-                        var sessionField = typeof(AEther.WindowsForms.MainForm).GetField("session",
-                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-                        var active = (AEther.WindowsForms.Session)sessionField.GetValue(host)!;
-                        foreach (var mode in Enum.GetValues<AntialiasingQuality>())
-                        {
-                            settings.Mandelbox.Antialiasing = mode;
-                            if (active.Renderer.MandelboxAntialiasing != mode)
-                                throw new Exception("Quality selection did not reach the renderer.");
-                        }
-                        settings.Mandelbox.MaximumIterations = 128;
-                        settings.Mandelbox.MovementSpeed = .5f;
-                         settings.Mandelbox.Scale = -2.1f;
-                        settings.Mandelbox.JuliaBlend = .45f;
-                        settings.Mandelbox.FoldRotation = .2f;
-                        settings.Mandelbox.Anisotropy = .15f;
-                         settings.Mandelbox.BilateralStrength = .75f;
-                         settings.Mandelbox.BilateralFrequencySigma = 1.5f;
-                         settings.Mandelbox.BilateralTimeSigma = .5f;
-                         settings.Mandelbox.BilateralRangeSigma = .2f;
-                         settings.Mandelbox.FilteredHistogramView = true;
-                         settings.Mandelbox.FluidFlow = 1.3f;
-                         settings.Mandelbox.FluidHalfLife = 2.1f;
-                         settings.Mandelbox.FluidDiffusion = .002f;
-                         settings.Mandelbox.FluidNoise = .8f;
-                         settings.Mandelbox.FluidCurl = .7f;
-                        if (active.Renderer.MandelboxIterations != 128 || active.Renderer.MandelboxMovementSpeed != .5f
-                             || active.Renderer.MandelboxScale != -2.1f || started != 1
-                            || active.Renderer.MandelboxJuliaBlend != .45f || active.Renderer.MandelboxFoldRotation != .2f
-                            || active.Renderer.MandelboxAnisotropy != .15f
-                             || active.Renderer.BilateralStrength != .75f || active.Renderer.BilateralFrequencySigma != 1.5f
-                             || active.Renderer.BilateralTimeSigma != .5f || active.Renderer.BilateralRangeSigma != .2f
-                             || !active.Renderer.FilteredHistogramView
-                             || active.Renderer.FluidFlow != 1.3f || active.Renderer.FluidHalfLife != 2.1f
-                             || active.Renderer.FluidDiffusion != .002f || active.Renderer.FluidNoise != .8f || active.Renderer.FluidCurl != .7f
-                            || !ReferenceEquals(active, sessionField.GetValue(host)))
-                            throw new Exception("Rendering settings restarted capture or did not apply live.");
-                        bounds = host.Bounds;
-                        Key(settings, Keys.F11);
-                        if (host.FormBorderStyle != FormBorderStyle.None) throw new Exception("Fullscreen entry failed.");
-                        Key(settings, Keys.F11);
-                        if (host.FormBorderStyle != FormBorderStyle.Sizable || host.Bounds != bounds) throw new Exception("Fullscreen restore failed.");
-                        startedBeforeRestart = started;
-                        var scenes = settings.Controls.OfType<TableLayoutPanel>().Single().Controls.OfType<ComboBox>()
-                            .Single(c => c.Name == "Scene");
-                        scenes.SelectedItem = Scene.MandelFluid;
-                        stage++;
-                        break;
-                    case 1:
-                        if (started <= startedBeforeRestart) return;
-                        if (!host.Text.Contains("MandelFluid")) throw new Exception("Scene restart failed.");
-                        var currentField = typeof(AEther.WindowsForms.MainForm).GetField("session",
-                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-                        var current = (AEther.WindowsForms.Session)currentField.GetValue(host)!;
-                        if (current.Renderer.MandelboxIterations != 128 || current.Renderer.MandelboxMovementSpeed != .5f
-                             || current.Renderer.MandelboxScale != -2.1f
-                            || current.Renderer.MandelboxJuliaBlend != .45f || current.Renderer.MandelboxFoldRotation != .2f
-                            || current.Renderer.MandelboxAnisotropy != .15f
-                             || current.Renderer.BilateralStrength != .75f || current.Renderer.BilateralFrequencySigma != 1.5f
-                             || current.Renderer.BilateralTimeSigma != .5f || current.Renderer.BilateralRangeSigma != .2f
-                             || !current.Renderer.FilteredHistogramView
-                             || current.Renderer.FluidFlow != 1.3f || current.Renderer.FluidHalfLife != 2.1f
-                             || current.Renderer.FluidDiffusion != .002f || current.Renderer.FluidNoise != .8f || current.Renderer.FluidCurl != .7f
-                            || current.Renderer.MandelboxAntialiasing != AntialiasingQuality.High)
-                            throw new Exception("Rendering settings were lost on session restart.");
-                        Key(settings, Keys.Space);
-                        if (settings.Visible) throw new Exception("Space did not hide settings.");
-                        host.Close(); stage++;
-                        break;
-                }
-            }
-            catch (Exception error) { failure = error; timer.Stop(); host.Close(); }
-        };
-        timer.Start();
-        Application.Run(host);
-        if (failure != null) throw failure;
-        if (stage != 2) throw new Exception("Window closed before lifecycle check finished.");
-        Console.WriteLine("Window lifecycle: settings ownership, close/reopen, Space, F11, full session restart and shutdown passed.");
-    }
+    static void CheckWindows() => CheckShaderWindows(null);
 
     sealed class SyntheticSource(Action started) : SampleSource
     {

@@ -3,24 +3,22 @@
 float2 BoxDistance(float3 p)
 {
     // These parameters are uniform in space: no omitted spatial derivatives.
-    // Separate musical periods let chambers open, lean and interlock without
-    // retriggering a geometry pulse on every transient. MovementTime coasts to
-    // rest with the slice and respects the movement-speed setting.
-    float t = MovementTime;
-    float beta = 1 - JuliaBlend * (.55 + .45 * sin(.11 * t + .4));
-    float3 julia = JuliaBlend * float3(.65 * sin(.13 * t + .7),
+    // Musical time drives the normalized movement-speed multiplier.
+    float t = (MusicalMovementTime * Quality.MovementSpeed * 10);
+    float beta = 1 - Geometry.JuliaBlend * (.55 + .45 * sin(.11 * t + .4));
+    float3 julia = Geometry.JuliaBlend * float3(.65 * sin(.13 * t + .7),
         .5 * sin(.17 * t - 1.1), .6 * cos(.09 * t + .2));
     float3 offset = beta * p + julia;
-    float3x3 rotation = mul(Rz(FoldRotation * sin(.19 * t + .6)),
-        mul(Ry(FoldRotation * sin(.13 * t - .4)), Rx(FoldRotation * cos(.17 * t + .2))));
+    float3x3 rotation = mul(Rz(Geometry.FoldRotation * sin(.19 * t + .6)),
+        mul(Ry(Geometry.FoldRotation * sin(.13 * t - .4)), Rx(Geometry.FoldRotation * cos(.17 * t + .2))));
     // Log stretches sum to zero: change proportions while preserving volume.
     // Their largest stretch, rather than determinant, bounds radial expansion.
-    float3 stretch = exp(Anisotropy * cos(.14 * t + float3(0, 2.0943951, 4.1887902)));
-    float expansion = abs(MandelboxScale) * max(stretch.x, max(stretch.y, stretch.z));
+    float3 stretch = exp((Geometry.Anisotropy * 0.5) * cos(.14 * t + float3(0, 2.0943951, 4.1887902)));
+    float expansion = abs((Geometry.Scale * 8 - 4)) * max(stretch.x, max(stretch.y, stretch.z));
     float3 z = p;
     float derivative = 1;
     float coarse = 0;
-    float depth = max(1, FractalDepth);
+    float depth = max(1, FractalDepth * (1 + round(Quality.MaximumIterations * 29)) / 10);
     float lower = floor(depth);
     float upper = ceil(depth);
     float lowLog = 0, highLog = 0;
@@ -34,7 +32,7 @@ float2 BoxDistance(float3 p)
         float fold = 1 / clamp(dot(z, z), .25, 1);
         z *= fold;
         derivative *= fold;
-        z = MandelboxScale * stretch * mul(rotation, z) + offset;
+        z = (Geometry.Scale * 8 - 4) * stretch * mul(rotation, z) + offset;
         // For J_next = scale*D*R*J_sphere*J_box*J + beta*I,
         // rotations/reflections have norm one and the sphere-fold norm is fold.
         derivative = expansion * derivative + abs(beta);
@@ -70,7 +68,7 @@ float4 History(float frequency, float age, float right)
     if (age < 0 || age >= 1 || age * HistorySpan > HistoryAvailable
         || age * HistorySpan < HistoryNewestAge) return 0;
     float2 uv = float2(saturate(frequency), HistogramShift - age * HistorySpan);
-    return lerp(Histogram0.Sample(HullHistory, uv), Histogram1.Sample(HullHistory, uv), right);
+    return lerp(FilteredHistogram0.Sample(HullHistory, uv), FilteredHistogram1.Sample(HullHistory, uv), right);
 }
 
 float TransientHistory(float frequency, float age, float right, float width)
@@ -89,7 +87,7 @@ float3 Shade(float2 uv, float sampleWidth)
     // Musical time traverses another dimension of the fixed 3D field.
     // All transforms follow the same inertial clock: audio builds momentum,
     // then the slice coasts smoothly to rest as that momentum relaxes.
-    float movementTime = MovementTime;
+    float movementTime = (MusicalMovementTime * Quality.MovementSpeed * 10);
     float zoom = 1.9 + .22 * sin(.73 * movementTime);
     // Cover the viewport with the interior of the box, including wide windows.
     // Cropping the slice avoids sampling empty space outside its outer bounds.
@@ -100,7 +98,7 @@ float3 Shade(float2 uv, float sampleWidth)
     p = mul(Rz(.32 * movementTime + .18 * sin(1.3 * movementTime)), p);
     p = mul(Rx(.48 * sin(.83 * movementTime)), p);
     p = mul(Ry(.55 * sin(1.13 * movementTime)), p);
-    p.z += SliceDepth + .85 * sin(.17 * movementTime) + .3 * sin(.31 * movementTime);
+    p.z += (Geometry.SliceDepth * 4 - 2) + .85 * sin(.17 * movementTime) + .3 * sin(.31 * movementTime);
     float radius = length(screen);
     float outer = smoothstep(.5, 2.4, radius);
     float2 distances = max(1e-8, BoxDistance(p));
@@ -118,9 +116,9 @@ float3 Shade(float2 uv, float sampleWidth)
     // Put the horizon at the corners so the field still fills the whole canvas.
     float viewRadius = radius / length(float2(AspectRatio, 1));
     // Fold the circles into the fractal, fading the warp at the horizon.
-    float warpedRadius = viewRadius * (1 + (1 - viewRadius) * saturate(HistoryWarp)
+    float warpedRadius = viewRadius * (1 + (1 - viewRadius) * 0.95
         * lerp(.72, .46, outer) * (2 * foldCoordinate - 1));
-    float age = -log(max(.001, 1 - warpedRadius / 1.02)) / TimeCompression;
+    float age = -log(max(.001, 1 - warpedRadius / 1.02)) / 4.0;
     // Time and frequency occupy separate dimensions of the history texture.
     // Angle places spectral content around a front; the distance field folds it.
     // Blend to mono at the bass/treble poles so the channels meet smoothly
@@ -162,7 +160,7 @@ float3 Shade(float2 uv, float sampleWidth)
                  + CurrentSpectrum(attackFrequency + attackWidth, right).g);
     float attackEnvelope = lerp(TransientHistory(attackFrequency, attackAge, right, attackWidth), currentAttack, center);
 #ifdef MANDEL_FLUID
-    float palettePhase = .11 * MovementTime;
+    float palettePhase = .11 * (MusicalMovementTime * Quality.MovementSpeed * 10);
 #else
     float palettePhase = .11 * S;
 #endif
@@ -234,10 +232,10 @@ float3 Shade(float2 uv, float sampleWidth)
 }
 
 
-float4 PS(const PSDefaultin IN) : SV_Target
+float4 PS(const PSin IN) : SV_Target
 {
     // AA integrates HEAD's shading without changing its distance field or depth.
-    int samples = Antialiasing > 1.5 ? 4 : (Antialiasing > .5 ? 2 : 1);
+    int samples = (Quality.Antialiasing * 2) > 1.5 ? 4 : ((Quality.Antialiasing * 2) > .5 ? 2 : 1);
     float sampleWidth = 1.0 / samples;
     float2 uvX = ddx(IN.UV), uvY = ddy(IN.UV);
     float3 color = 0;

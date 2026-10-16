@@ -1,7 +1,7 @@
 // Compiled before Mandelbox.hlsl, sharing its field, onset fronts and spatial AA.
 #define MANDEL_FLUID
-Texture2D<float4> FluidDye : register(t4);
-SamplerState FluidSampler : register(s1);
+Texture2D<float4> FluidDye;
+SamplerState FluidSampler;
 
 float3 FluidLight(float2 uv, float relief)
 {

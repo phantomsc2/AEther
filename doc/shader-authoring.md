@@ -1,0 +1,135 @@
+# Shader authoring
+
+Each top-level `AEther.Vortice/Shaders/Scenes/*.hlsl` file is one scene. Its filename
+without the extension is its identity and display name. Shared HLSL lives in
+`Shaders/Common`; it is not discovered as scenes. Source includes use quoted paths
+relative to the including file. `Common/Inputs.hlsl` is supplied automatically and
+can also be explicitly included (it has an include guard).
+
+The IDE source tree is preferred when launching in the repository. Deployed builds
+copy the same directory structure beside the executable. The recursive watcher
+debounces saves, creation, renames and deletion by 250 ms. No .NET build is needed
+for shader edits, parameter changes or scene discovery.
+
+## Minimal scene
+
+```hlsl
+struct AppearanceSettings
+{
+    float Brightness;
+    float3 Tint;
+    bool Enabled;
+};
+cbuffer Parameters
+{
+    AppearanceSettings Appearance = { 0.5, float3(0.2, 0.5, 1.0), true };
+};
+
+float4 PS(PSin input) : SV_TARGET
+{
+    return float4(Appearance.Enabled ? Appearance.Tint * Appearance.Brightness : 0, 1);
+}
+```
+
+`PS` is the required pixel entry point. `PSin` contains `Position : SV_POSITION`
+and `UV : TEXCOORDS`. The host supplies the fullscreen triangle vertex shader.
+Scene output follows the existing display-encoded RGB convention; presentation
+decodes it for scRGB output. Alpha should be one.
+
+## Parameter contract
+
+- Only `cbuffer Parameters` is exposed as editable state; it is optional.
+- Scalars `float` and `bool`, vectors `float2/3/4`, and nested structs are supported.
+- Every float, including defaults and vector components, has domain [0, 1]. Map it
+  to physical units inside HLSL. Bools use checkboxes. Vector components have numeric
+  controls; vectors imply no color or other special meaning.
+- Integers, matrices and arrays in `Parameters` are rejected with diagnostics.
+- Struct members become nested groups. Names are shown unchanged. Struct members
+  are sorted alphabetically for display; declaration order carries no identity.
+- HLSL initializers supply defaults. Missing defaults are zero. Reset restores the
+  current source defaults; changing a default alone does not overwrite an edited value.
+- Filename plus member path identifies a value. Compatible values survive reordered
+  declarations and changed register assignments. Type/shape changes reset the affected
+  subtree; new members receive their defaults. Renames create new identities.
+- UI state survives capture-session restarts within the app, but is not persisted to disk.
+
+No comments or annotations are parsed for metadata. Reflection supplies names, types,
+defaults, offsets and bindings. Byte offsets are used only to serialize values into
+the compiled layout. No author-assigned `register` or `packoffset` is required.
+
+## Shared inputs and capabilities
+
+`FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
+`Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
+and the unscaled musical movement clock `MusicalMovementTime`.
+`Spectrum0/1` and `Histogram0/1` supply stereo spectrum and raw history; `Linear`
+is the shared sampler. See `Common/Inputs.hlsl` for the complete declarations.
+
+Resources are bound by reflected name independently for every entry point. Unknown
+resources, resource arrays and unsupported parameter types fail reload before any
+working program is replaced. Engine inputs use reserved names and must retain their
+declared types and layouts.
+
+Referencing `FilteredHistogram0/1` requests the shared bilateral pass. Existing scenes
+provide `FilterParameters Filtering`, which `Common/Bilateral.hlsl` uses to compute
+filter settings. Referencing `FluidDye` requests the existing fluid simulation;
+`FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`
+structures declared in `Scenes/MandelFluid.hlsl`. These are contracts of shared shader
+code, not host interpretations of editable parameter names. Arbitrary simulation pass
+schedules are not configurable in this version.
+
+## Existing scene mappings
+
+The HLSL source is authoritative. Current normalized controls map to these units:
+
+| Parameter | Mapping |
+|---|---|
+| `Geometry.Scale` | -4 to 4; default -1.5 |
+| `Geometry.Anisotropy` | 0 to 0.5 |
+| `Geometry.SliceDepth` | -2 to 2 |
+| `Quality.MaximumIterations` | nearest integer from 1 to 30; default 10 |
+| `Quality.Antialiasing` | below 0.25: one sample; below 0.75: 2x2; otherwise 4x4 |
+| `Quality.MovementSpeed` | 0 to 10; default 3 |
+| `Filtering.FrequencySigma`, `TimeSigma` | 0.1 to 2 |
+| `Filtering.RangeSigma` | 0.0001 to 10 |
+| `Fluid.Flow`, `Noise` | 0 to 3 |
+| `Fluid.HalfLife` | 0.1 to 10 seconds |
+| `Fluid.Diffusion` | 0 to 0.01 |
+| `Fluid.Curl` | 0 to 2 |
+
+Other float controls use their normalized value directly. Movement speed currently
+scales the shared musical phase in HLSL: changing it can shift the pose, and zero
+selects a stationary phase. This differs from the previous CPU integration that
+preserved pose when changing speed.
+
+## Reload and UI behavior
+
+The Scene selector in settings automatically opens the owned shader window when a scene
+is selected. The shader window contains the current parameter tree, Reload, Reset defaults
+and diagnostics. Closing hides it; F6 toggles it from settings or the render window
+and hides it when the shader window has focus.
+Scene selection and controls operate on the existing renderer without restarting audio.
+
+A reload builds a complete candidate set before swapping programs, parameter layouts,
+bindings and UI. Failure preserves the previous set. Removing the active scene selects
+the alphabetically first remaining scene; removing every scene rejects the reload.
+Compatible fluid state survives reloads; scene changes and resize reset it.
+
+Compilation currently runs on the window thread and rebuilds all discovered scenes,
+so saving can briefly pause drawing. Capture and analysis continue independently.
+Includes are expanded from quoted include directives, rather than implementing a
+full preprocessor-aware include resolver; avoid missing includes in inactive branches.
+
+## Verification
+
+```powershell
+dotnet build AEther.sln --no-restore
+dotnet run --project tools/AEther.Smoke -- . --shader-authoring-only
+```
+
+The focused smoke check renders all four scenes with synthetic audio, checks reflected
+struct/vector/bool defaults and uploads, changes slots and declaration order, exercises
+add/remove/reset and failed-reload rollback, and verifies watcher discovery and shader
+window controls without restarting capture. PNGs go to the ignored smoke artifacts folder.
+Historical specialized smoke modes still contain fixtures for the previous shader
+layout and require migration before use with this authoring system.

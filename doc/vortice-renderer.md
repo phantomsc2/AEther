@@ -1,3 +1,8 @@
+# Current shader authoring
+
+Scene discovery, reflected controls and the shader window are described in [shader authoring](shader-authoring.md).
+The milestone notes below describe the earlier fixed-scene renderer; its fixed enum, positional scene constants, property grid and scene-restart behavior have been superseded.
+
 # Vortice renderer milestone
 
 The current application has four D3D11 scenes: Spectrum, Histogram, Mandelbox and

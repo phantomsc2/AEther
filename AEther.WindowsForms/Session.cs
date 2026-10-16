@@ -10,14 +10,14 @@ public sealed class Session : IDisposable
     Task? stopTask;
     public event EventHandler<Exception?>? CaptureStopped;
 
-    public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options)
+    public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options, string? shaderDirectory = null)
     {
         this.source = source;
         Analyzer = new(source.Format, options);
         try
         {
             var rate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
-            Renderer = new(handle, width, height, options.Domain.Length, rate, options.HistorySeconds);
+            Renderer = new(handle, width, height, options.Domain.Length, rate, options.HistorySeconds, shaderDirectory);
             Renderer.Audio.Profile = Analyzer.Profile;
         }
         catch { Analyzer.Stop(); source.Dispose(); throw; }

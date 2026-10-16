@@ -22,6 +22,7 @@ Install the .NET 10 SDK, then run `dotnet run --project AEther.WindowsForms`.
 The app starts windowed, captures the default system audio output and displays Mandelbox.
 
 - **Space**: show or hide settings. Closing settings keeps the render window running.
+- **F6**: toggle the shader window.
 - **F11**: toggle borderless fullscreen on the selected display.
 - **F5**: rebuild the capture/analysis/render session.
 - **R**: toggle combined level view in Spectrum and Histogram.
@@ -29,34 +30,30 @@ The app starts windowed, captures the default system audio output and displays M
 - **[ / ]**: move the Mandelbox slice.
 - **Escape**: close the render window (or hide settings when settings has focus).
 
-Settings select audio input, scene, display and analyzer options. These changes restart
-the session. A separate Mandelbox property grid stays visible for every scene. Its
-antialiasing, maximum iterations and movement speed apply live without restarting
-audio: None uses one sample, Medium (default) uses 2×2, and High uses 4×4. AA averages
-linear colors and does not change the distance field or depth. The maximum depth defaults
-to HEAD's 10 iterations; any positive integer is accepted. Musical drive controls depth using the
-original response, with the original log-distance interpolation and history mapping.
-Defaults live in code; settings are not persisted.
-Select **MandelFluid** in the scene menu for a fluid variation of Mandelbox.
-Aggregate energy keeps the fractal present throughout a passage. Tones form rays
-from the center and supply body material; pure tones settle into static crystalline
-structure. Noise and distortion drive movement, diffusion and broader mist. Rhythmic
-attacks produce crisp, outward histogram shockwaves and highlight the field without
-depositing material. The three components strengthen each other's response while
-remaining visible individually. Live controls cover flow, pigment half-life (default
-1.4 seconds), maximum noise-driven diffusion, noise and curl. Material accumulates
-smoothly toward finite capacity and dissipates when the sound ends.
-Movement speed defaults to 1 (the original speed); 3 triples it and 0 freezes the pose.
-Scale is adjustable in the same grid and defaults to -1.5. It changes the signed
-scale inside every iteration; the distance bound uses its absolute value.
-Speed changes preserve the current position and affect slice, rotation and zoom only.
-Depth travel, palette timing and audio-history propagation keep their existing rates.
-Histogram shows one second of history per stereo side by default, with now in the center.
-Mono is mirrored; for multichannel inputs the first two channels are displayed.
+Settings select audio input, display and analyzer options. These changes restart the
+session. The Scene selector in settings switches scenes and automatically opens the
+separate shader window with dynamic parameter trees, Reload and Reset defaults.
+**F6** toggles that window. Scene selection
+and parameter edits keep capture, analysis and history running. Closing either tool
+window keeps the render window running.
 
-Edit `AEther.Vortice/Shaders/*.hlsl` while running from the repository to reload shaders.
-Compilation errors appear in settings and the last working shaders remain active.
-Published builds load shaders from the `Shaders` folder beside the executable.
+Scenes are the top-level files in `AEther.Vortice/Shaders/Scenes/*.hlsl`. Shared code
+lives in `Shaders/Common`. Save source files in the IDE to reload without a .NET build;
+adding or deleting a scene updates the shader selector. Failed reloads retain the
+previous programs and controls, with diagnostics in the shader window. Published apps
+use the `Shaders` tree beside the executable.
+
+Editable values are reflected from `cbuffer Parameters`; nested structs become groups,
+bools become checkboxes, and floats/float vectors use [0, 1] controls. Names are displayed
+unchanged. Defaults live in HLSL. Values survive compatible reloads and session restarts
+within the process; they are not saved between app launches. See
+[shader authoring](doc/shader-authoring.md) for the input contract, examples, mappings,
+and current limitations.
+
+Mandelbox and MandelFluid share fractal geometry. MandelFluid adds persistent pigment:
+tones supply body material, noise drives turbulence and rhythmic attacks highlight the
+field. Histogram displays one second of history per stereo side, with now in the center.
+Mono is mirrored; multichannel inputs use the first two channels.
 Presentation uses a 16-bit floating-point scRGB swap chain when supported, preserving
 smooth dark gradients on HDR displays. Windows' SDR reference-white setting controls
 the brightness on HDR monitors. An 8-bit fallback and PNG exports use stable spatial

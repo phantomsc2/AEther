@@ -20,7 +20,7 @@ float3 DecodeSrgb(float3 value)
         value.g <= .04045 ? value.g / 12.92 : pow((value.g + .055) / 1.055, 2.4),
         value.b <= .04045 ? value.b / 12.92 : pow((value.b + .055) / 1.055, 2.4));
 }
-float4 PS(PSDefaultin input) : SV_Target
+float4 PS(PSin input) : SV_Target
 {
     int2 p = int2(input.Position.xy);
     float3 encoded = saturate(SceneImage.Load(int3(p, 0)).rgb);

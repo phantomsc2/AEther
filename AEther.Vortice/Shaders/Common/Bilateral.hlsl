@@ -1,3 +1,5 @@
+#undef Histogram0
+#undef Histogram1
 // A nonseparable bilateral average in frequency/time, independently per STN channel.
 // Input and output stay in linear amplitude; alpha retains the original magnitude.
 bool RetainedRow(int row, int rows)
@@ -13,7 +15,7 @@ float4 FilterHistory(Texture2D<float4> source, int2 p, int2 size)
     if (!RetainedRow(p.y, size.y) || center.a <= 0) return center;
     float3 sum = center.rgb;
     float3 weights = 1;
-    int2 radius = (int2)ceil(2 * float2(BilateralFrequencySigma, BilateralTimeSigma));
+    int2 radius = (int2)ceil(2 * float2((0.1 + Filtering.FrequencySigma * 1.9), (0.1 + Filtering.TimeSigma * 1.9)));
     [loop] for (int y = -radius.y; y <= radius.y; ++y)
         [loop] for (int x = -radius.x; x <= radius.x; ++x)
         {
@@ -22,17 +24,17 @@ float4 FilterHistory(Texture2D<float4> source, int2 p, int2 size)
             if (q.x < 0 || q.x >= size.x || !RetainedRow(q.y, size.y)) continue;
             float4 neighbor = source.Load(int3(q, 0));
             if (neighbor.a <= 0) continue;
-            float2 offset = float2(x, y) / float2(BilateralFrequencySigma, BilateralTimeSigma);
-            float3 delta = (neighbor.rgb - center.rgb) / BilateralRangeSigma;
+            float2 offset = float2(x, y) / float2((0.1 + Filtering.FrequencySigma * 1.9), (0.1 + Filtering.TimeSigma * 1.9));
+            float3 delta = (neighbor.rgb - center.rgb) / (0.0001 + Filtering.RangeSigma * 9.9999);
             float3 weight = exp(-.5 * (dot(offset, offset) + delta * delta));
             sum += neighbor.rgb * weight;
             weights += weight;
         }
-    return float4(lerp(center.rgb, sum / weights, BilateralStrength), center.a);
+    return float4(lerp(center.rgb, sum / weights, Filtering.Strength), center.a);
 }
 
 struct FilterOutput { float4 Left : SV_Target0; float4 Right : SV_Target1; };
-FilterOutput PS(PSDefaultin input)
+FilterOutput BilateralPS(PSin input)
 {
     uint width, height;
     Histogram0.GetDimensions(width, height);

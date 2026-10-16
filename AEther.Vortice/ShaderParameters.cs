@@ -1,0 +1,93 @@
+using System.Runtime.InteropServices;
+using Vortice.Direct3D;
+using Vortice.Direct3D11.Shader;
+
+namespace AEther.Vortice;
+
+public sealed class ShaderParameter
+{
+    public string Name { get; }
+    public string Path { get; }
+    public bool IsBoolean { get; }
+    public IReadOnlyList<ShaderParameter> Children { get; }
+    internal int Offset { get; }
+    internal string Kind { get; }
+    internal ShaderParameter(string name, string path, int offset, bool boolean, List<ShaderParameter> children, string kind = "float")
+    { Name = name; Path = path; Offset = offset; IsBoolean = boolean; Children = children; Kind = kind; }
+}
+
+public sealed class ShaderParameters
+{
+    internal byte[] Data { get; }
+    readonly byte[] defaults;
+    public IReadOnlyList<ShaderParameter> Items { get; }
+    internal ShaderParameters(ID3D11ShaderReflectionConstantBuffer buffer)
+    {
+        Data = new byte[buffer.Description.Size];
+        var items = new List<ShaderParameter>();
+        for (uint i = 0; i < buffer.Description.VariableCount; i++)
+        {
+            var variable = buffer.GetVariableByIndex(i);
+            var desc = variable.Description;
+            if (desc.DefaultValue != IntPtr.Zero)
+                Marshal.Copy(desc.DefaultValue, Data, (int)desc.StartOffset, (int)desc.Size);
+            items.Add(Read(variable.VariableType, desc.Name, desc.Name, (int)desc.StartOffset));
+        }
+        Items = items.OrderBy(x => x.Name, StringComparer.Ordinal).ToArray();
+        defaults = (byte[])Data.Clone();
+        foreach (var item in Leaves(Items))
+            if (!item.IsBoolean && (!float.IsFinite(GetFloat(item)) || GetFloat(item) is < 0 or > 1))
+                throw new InvalidOperationException($"Parameters.{item.Path}: float defaults must be in [0, 1].");
+    }
+
+    static ShaderParameter Read(ID3D11ShaderReflectionType type, string name, string path, int offset)
+    {
+        var d = type.Description;
+        if (d.ElementCount != 0) throw new InvalidOperationException($"Parameters.{path}: arrays are not supported.");
+        var children = new List<ShaderParameter>();
+        if (d.Class == ShaderVariableClass.Struct)
+        {
+            for (uint i = 0; i < d.MemberCount; i++)
+            {
+                var member = type.GetMemberTypeByIndex(i);
+                var memberName = type.GetMemberTypeName(i);
+                children.Add(Read(member, memberName, path + "." + memberName, offset + (int)member.Description.Offset));
+            }
+        }
+        else if (d.Class == ShaderVariableClass.Vector && d.Type == ShaderVariableType.Float)
+        {
+            for (int i = 0; i < d.ColumnCount; i++)
+                children.Add(new("xyzw"[i].ToString(), path + "." + "xyzw"[i], offset + 4 * i, false, []));
+        }
+        else if (d.Class != ShaderVariableClass.Scalar || d.Type is not (ShaderVariableType.Float or ShaderVariableType.Bool))
+            throw new InvalidOperationException($"Parameters.{path}: only float, float vectors, bool and structs are supported.");
+        return new(name, path, offset, d.Type == ShaderVariableType.Bool,
+            children.OrderBy(x => x.Name, StringComparer.Ordinal).ToList(), $"{d.Class}:{d.Type}:{d.ColumnCount}");
+    }
+
+    public float GetFloat(ShaderParameter parameter) => BitConverter.ToSingle(Data, parameter.Offset);
+    public bool GetBoolean(ShaderParameter parameter) => BitConverter.ToInt32(Data, parameter.Offset) != 0;
+    public void SetFloat(ShaderParameter parameter, float value)
+    {
+        if (!float.IsFinite(value) || value is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(value));
+        BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value);
+    }
+    public void SetBoolean(ShaderParameter parameter, bool value) => BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value ? 1 : 0);
+    public void Reset() => defaults.CopyTo(Data, 0);
+    internal static IEnumerable<ShaderParameter> Leaves(IEnumerable<ShaderParameter> items) =>
+        items.SelectMany(p => p.Children.Count == 0 ? [p] : Leaves(p.Children));
+    public void Restore(ShaderParameters previous)
+    {
+        Copy(Items, previous.Items);
+        void Copy(IReadOnlyList<ShaderParameter> current, IReadOnlyList<ShaderParameter> old)
+        {
+            foreach (var item in current)
+            {
+                var match = old.FirstOrDefault(p => p.Name == item.Name && p.Kind == item.Kind);
+                if (match == null) continue;
+                if (item.Children.Count != 0) Copy(item.Children, match.Children);
+                else previous.Data.AsSpan(match.Offset, 4).CopyTo(Data.AsSpan(item.Offset, 4));
+            }
+        }
+    }
+}

@@ -10,6 +10,6 @@
     <ProjectReference Include="../AEther/AEther.csproj" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
-    <Content Include="Shaders/*.hlsl" CopyToOutputDirectory="PreserveNewest" Link="Shaders/%(Filename)%(Extension)" />
+    <Content Include="Shaders/**/*.hlsl" CopyToOutputDirectory="PreserveNewest" Link="Shaders/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

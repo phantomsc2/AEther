@@ -7,23 +7,40 @@ public sealed class MainForm : Form
 {
     readonly Panel canvas = new() { Dock = DockStyle.Fill, BackColor = Color.Black };
     readonly SettingsForm settings = new();
+    readonly ShaderForm shaders = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
     readonly System.Windows.Forms.Timer reloadTimer = new() { Interval = 250 };
     readonly System.Windows.Forms.Timer timingTimer = new() { Interval = 500 };
     readonly Func<SampleSource>? createSource;
+    readonly string? shaderDirectory;
     Session? session;
     FileSystemWatcher? watcher;
     bool closing, shutdownComplete, fullscreen;
     Rectangle windowBounds;
 
-    public MainForm(Func<SampleSource>? createSource = null)
+    public MainForm(Func<SampleSource>? createSource = null, string? shaderDirectory = null)
     {
-        this.createSource = createSource;
+        this.createSource = createSource; this.shaderDirectory = shaderDirectory;
         Text = "AEther"; ClientSize = new(1264, 681); KeyPreview = true;
         Controls.Add(canvas);
-        AddOwnedForm(settings);
+        AddOwnedForm(settings); AddOwnedForm(shaders);
+        shaders.SceneChanged += (_, _) =>
+        {
+            Text = $"AEther - {shaders.SelectedScene}";
+            settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [], shaders.SelectedScene);
+        };
+        shaders.ShortcutRequested += key =>
+        {
+            if (key == Keys.F11) ToggleFullscreen();
+            if (key == Keys.F5) _ = RestartAsync();
+        };
         settings.SettingsChanged += async (_, _) => await RestartAsync();
-        settings.RenderingChanged += (_, _) => ApplyRenderingSettings();
+        settings.ShaderWindowRequested += (_, _) => ToggleShaderWindow();
+        settings.SceneSelected += name =>
+        {
+            if (session?.Renderer.SceneName != name) shaders.SelectScene(name);
+            ShowShaderWindow();
+        };
         settings.ShortcutRequested += key =>
         {
             if (key == Keys.F11) ToggleFullscreen();
@@ -38,8 +55,8 @@ public sealed class MainForm : Form
         {
             reloadTimer.Stop();
             if (session is { } active && !active.Renderer.ReloadShaders())
-            { settings.SetStatus(active.Renderer.ShaderError!); settings.Show(this); }
-            else settings.SetStatus("Shaders reloaded.");
+            { shaders.SetStatus(active.Renderer.ShaderError!); ShowShaderWindow(); }
+            else shaders.SetStatus("Shaders reloaded.");
         };
         Application.Idle += OnIdle;
         timingTimer.Tick += (_, _) => { if (settings.Visible) settings.SetTiming(session); };
@@ -67,17 +84,17 @@ public sealed class MainForm : Form
             Session? next = null;
             try
             {
-                next = new(canvas.Handle, canvas.ClientSize.Width, canvas.ClientSize.Height, source, settings.Options);
-                next.Renderer.Scene = settings.Scene;
+                next = new(canvas.Handle, canvas.ClientSize.Width, canvas.ClientSize.Height, source, settings.Options, shaderDirectory);
+
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
-                ApplyRenderingSettings();
-                Text = $"AEther — {settings.Scene}";
-                watcher = new(next.Renderer.ShaderDirectory, "*.hlsl") { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName };
-                watcher.Changed += ShaderChanged; watcher.Created += ShaderChanged; watcher.Renamed += ShaderChanged;
+                shaders.Attach(next.Renderer);
+                Text = $"AEther - {shaders.SelectedScene}";
+                watcher = new(next.Renderer.ShaderDirectory, "*.hlsl") { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName };
+                watcher.Changed += ShaderChanged; watcher.Created += ShaderChanged; watcher.Renamed += ShaderChanged; watcher.Deleted += ShaderChanged;
                 watcher.EnableRaisingEvents = true;
-                settings.SetStatus("Running. Space: settings · F11: fullscreen\nF5: restart · R: level · I: intensity · [ / ]: slice");
+                settings.SetStatus("Running. F6: shaders | Space: settings · F11: fullscreen\nF5: restart · R: level · I: intensity · [ / ]: slice");
             }
             catch
             {
@@ -98,28 +115,6 @@ public sealed class MainForm : Form
         catch (InvalidOperationException) when (closing || IsDisposed) { }
     }
 
-    void ApplyRenderingSettings()
-    {
-        if (session == null) return;
-        session.Renderer.MandelboxAntialiasing = settings.Mandelbox.Antialiasing;
-        session.Renderer.MandelboxIterations = settings.Mandelbox.MaximumIterations;
-        session.Renderer.MandelboxMovementSpeed = settings.Mandelbox.MovementSpeed;
-        session.Renderer.MandelboxScale = settings.Mandelbox.Scale;
-        session.Renderer.MandelboxJuliaBlend = settings.Mandelbox.JuliaBlend;
-        session.Renderer.MandelboxFoldRotation = settings.Mandelbox.FoldRotation;
-        session.Renderer.MandelboxAnisotropy = settings.Mandelbox.Anisotropy;
-        session.Renderer.BilateralStrength = settings.Mandelbox.BilateralStrength;
-        session.Renderer.BilateralFrequencySigma = settings.Mandelbox.BilateralFrequencySigma;
-        session.Renderer.BilateralTimeSigma = settings.Mandelbox.BilateralTimeSigma;
-        session.Renderer.BilateralRangeSigma = settings.Mandelbox.BilateralRangeSigma;
-        session.Renderer.FilteredHistogramView = settings.Mandelbox.FilteredHistogramView;
-        session.Renderer.FluidFlow = settings.Mandelbox.FluidFlow;
-        session.Renderer.FluidHalfLife = settings.Mandelbox.FluidHalfLife;
-        session.Renderer.FluidDiffusion = settings.Mandelbox.FluidDiffusion;
-        session.Renderer.FluidNoise = settings.Mandelbox.FluidNoise;
-        session.Renderer.FluidCurl = settings.Mandelbox.FluidCurl;
-    }
-
     void ShaderChanged(object sender, FileSystemEventArgs e)
     {
         if (closing) return;
@@ -130,7 +125,7 @@ public sealed class MainForm : Form
     async Task StopSessionAsync()
     {
         reloadTimer.Stop(); watcher?.Dispose(); watcher = null;
-        var previous = session; session = null;
+        var previous = session; session = null; shaders.Attach(null);
         if (previous == null) return;
         previous.CaptureStopped -= CaptureStopped;
         try { await previous.StopAsync(); } finally { previous.Dispose(); }
@@ -157,6 +152,16 @@ public sealed class MainForm : Form
         }
     }
 
+    void ToggleShaderWindow()
+    {
+        if (shaders.Visible) shaders.Hide(); else ShowShaderWindow();
+    }
+
+    void ShowShaderWindow()
+    {
+        if (shaders.Visible) shaders.Activate(); else shaders.Show(this);
+    }
+
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         switch (keyData)
@@ -164,6 +169,7 @@ public sealed class MainForm : Form
             case Keys.Space:
                 if (settings.Visible) settings.Hide(); else settings.Show(this);
                 return true;
+            case Keys.F6: ToggleShaderWindow(); return true;
             case Keys.F11: ToggleFullscreen(); return true;
             case Keys.F5: _ = RestartAsync(); return true;
             case Keys.Escape: Close(); return true;
@@ -208,7 +214,7 @@ public sealed class MainForm : Form
         catch (Exception error) { System.Diagnostics.Debug.WriteLine(error); }
         finally
         {
-            sessionGate.Release(); reloadTimer.Dispose(); timingTimer.Dispose(); settings.Dispose();
+            sessionGate.Release(); reloadTimer.Dispose(); timingTimer.Dispose(); settings.Dispose(); shaders.Dispose();
             shutdownComplete = true; Close();
         }
     }
