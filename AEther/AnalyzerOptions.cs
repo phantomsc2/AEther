@@ -13,7 +13,7 @@ namespace AEther
         public int BufferCapacity { get; set; } = 4;
 
         [Category("Domain")]
-        public double MinFrequency { get; set; } = 27.5;
+        public double MinFrequency { get; set; } = 30;
 
         [Category("Domain")]
         public double MaxFrequency { get; set; } = 8000;
@@ -23,7 +23,7 @@ namespace AEther
 
         [Category("DFT")]
         [Description("Spectrum publication and STBR Gaussian fit update rate.")]
-        public int TimeResolution { get; set; } = 1 << 8;
+        public int TimeResolution { get; set; } = 1000;
 
         [Category("DFT")]
         public bool SIMDEnabled { get; set; } = true;
@@ -51,21 +51,21 @@ namespace AEther
 
         [Category("Input")]
         [DisplayName("Input gain (dB)")]
-        [DefaultValue(0.0)]
+        [DefaultValue(15.0)]
         [Description("Gain before all analysis, from -60 to +60 dB. 0 dB preserves full-scale input units. For consistent loopback visuals, keep player volume at 100% and adjust listening volume downstream of capture.")]
-        public double InputGainDb { get; set; } = 0.0;
+        public double InputGainDb { get; set; } = 15.0;
 
         [Category("STBR fit")]
         [DisplayName("Time window (seconds)")]
-        [DefaultValue(.1)]
+        [DefaultValue(.2)]
         [Description("Causal time extent of the Gaussian STBR fit in seconds.")]
-        public double TimeWindowSeconds { get; set; } = .1;
+        public double TimeWindowSeconds { get; set; } = .2;
 
         [Category("STBR fit")]
         [DisplayName("Frequency window (octaves)")]
-        [DefaultValue(3.0)]
+        [DefaultValue(2.0)]
         [Description("Centered log-frequency extent of the Gaussian STBR fit in octaves.")]
-        public double FrequencyWindowOctaves { get; set; } = 3;
+        public double FrequencyWindowOctaves { get; set; } = 2;
 
         public void Validate(SampleFormat format)
         {

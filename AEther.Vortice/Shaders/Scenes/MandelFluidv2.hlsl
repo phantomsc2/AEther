@@ -83,15 +83,14 @@ float3 CometShade(float2 uv, float sampleWidth)
     // each onset traces the actual fractal boundary, then expands and disperses.
     // History age, rather than a beat oscillator, keeps separate hits separate.
     float travel = max(0, surface);
-    // The fine background folds refract the outgoing front even after it has
-    // left the small object's immediate boundary, retaining fractal flashes.
-    travel *= exp2(.38 * (2 * sliceRelief - 1) * smoothstep(.05, .5, radius));
+    // Keep history age independent of fine background relief: warping it
+    // through the folds adds ridges absent from the recorded onset.
     // Place the retained-history horizon beyond the corners, including portrait
     // and ultrawide views, so fronts leave the screen while still expanding.
     float extent = length(float2(AspectRatio, 1));
     float age = log(1 + 35 * travel / max(1, extent * .65)) / 6;
-    float attackFrequency = saturate(angleFrequency + .09 * sin(3.14159265 * angleFrequency)
-        * (2 * relief - 1));
+    // Stay on the same spectral band as the front crosses fractal folds.
+    float attackFrequency = angleFrequency;
     float attackAge = age * lerp(1.12, .88, angleFrequency);
     float width = max(.022, min(.065, fwidth(attackFrequency) * sampleWidth));
     float timeWidth = min(.018, fwidth(attackAge) * sampleWidth);
@@ -135,7 +134,9 @@ float3 CometShade(float2 uv, float sampleWidth)
     float3 branchPalette = lerp(CometPalette(branchFrequency, .03 * t), float3(.8, .93, 1), .4);
     light += branchPalette * branch * (2 + 4 * Comet.Background);
     light += float3(.8, .93, 1) * filament * attachment * attachment * 1.1;
-    light += (1 + 8 * Comet.Shockwaves) * flashPalette * front * (.55 + .7 * relief);
+    // Surface detail fades away from emission so it cannot corrugate the ring.
+    float frontRelief = lerp(.9, .55 + .7 * relief, exp(-12 * travel));
+    light += (1 + 8 * Comet.Shockwaves) * flashPalette * front * frontRelief;
     light += CometPalette(frequency, .03 * t) * rim
         * (.08 * tone + .035 * noise
             + (2 + 7 * Comet.Shockwaves) * pow(1 - exp(-4 * max(0, currentAttack)), 2));
