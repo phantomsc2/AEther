@@ -150,7 +150,7 @@ float2 CometTurbulence(float2 p, float4 source)
     float eddies = sin(13 * across + 3 * sin(4 * along - 1.7 * t))
         + .5 * sin(23 * along + 9 * across + 2.3 * t);
     float strength = .2 * (1 - exp(-2 * source.r))
-        + 7 * Fluid.Noise * CometNoiseResponse(source.b) * (.35 + 1.1 * DistortionMomentum)
+        + 7 * Fluid.Background * CometNoiseResponse(source.b) * (.35 + 1.1 * DistortionMomentum)
         + 4 * (1 - exp(-2 * source.g));
     return (side * eddies + .3 * direction * sin(17 * across - t))
         * strength * exp(-1.2 * across * across - .35 * along * along) * CometActivity();

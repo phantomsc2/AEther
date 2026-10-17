@@ -82,9 +82,6 @@ public sealed class SettingsWindow : ToolWindow
                 {
                     var combo = new ComboBox { Header = property.DisplayName, HorizontalAlignment = HorizontalAlignment.Stretch };
                     var values = Enum.GetValues(property.PropertyType).Cast<object>();
-                    if (property.PropertyType == typeof(EvidenceMode))
-                        values = values.OrderBy(value => (EvidenceMode)value == EvidenceMode.LocalJointFit ? 0
-                            : (EvidenceMode)value == EvidenceMode.ExactMedian ? 1 : 2);
                     foreach (var value in values)
                     {
                         var label = property.PropertyType.GetField(value.ToString()!)?
@@ -169,7 +166,7 @@ public sealed class SettingsWindow : ToolWindow
             }
             groups.Children.Add(new Expander
             {
-                Header = category.Key, Content = rows, IsExpanded = category.Key != "Alternative evidence modes",
+                Header = category.Key, Content = rows, IsExpanded = true,
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             });
         }
@@ -185,10 +182,9 @@ public sealed class SettingsWindow : ToolWindow
         nameof(AnalyzerOptions.TimeResolution) => (16, 1024),
         nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
         nameof(AnalyzerOptions.SineGain) or nameof(AnalyzerOptions.TransientGain)
-            or nameof(AnalyzerOptions.NoiseGain) => (0, 20),
-        nameof(AnalyzerOptions.SignSlewRate) => (.01, 20),
-        nameof(AnalyzerOptions.MedianLength) => (2.0 / Options.TimeResolution, 2),
-        nameof(AnalyzerOptions.MedianWidth) => (2.0 / Options.FrequencyResolution, 8),
+            or nameof(AnalyzerOptions.BackgroundGain) => (0, 20),
+        nameof(AnalyzerOptions.TimeWindowSeconds) => (2.0 / Options.TimeResolution, 2),
+        nameof(AnalyzerOptions.FrequencyWindowOctaves) => (2.0 / Options.FrequencyResolution, 8),
         _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),
     };
 

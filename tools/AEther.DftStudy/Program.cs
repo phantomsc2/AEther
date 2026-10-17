@@ -91,7 +91,7 @@ static void Bench(bool extended,bool large)
     var options=new AnalyzerOptions();var domain=options.Domain;
     var rows=new List<string>{"window,bands,block,workload,backend,median_us_stereo,min_us_stereo,max_us_stereo,allocated_bytes_per_call"};
     foreach(var window in new[]{DFTWindow.Hann,DFTWindow.Blackman,DFTWindow.Nuttall,DFTWindow.FlatTop})
-    foreach(var workload in large ? new[]{"dft","time","joint"} : new[]{"dft","exact","time","joint"})
+    foreach(var workload in large ? new[]{"dft","time","joint"} : new[]{"dft","gaussian","time","joint"})
     {
         int block=large?1024:187;
         var random=new Random(123);var input=Enumerable.Range(0,32).Select(_=>Enumerable.Range(0,block).Select(_=>.3*(random.NextDouble()-.5)).ToArray()).ToArray();
@@ -102,7 +102,7 @@ static void Bench(bool extended,bool large)
         {
             var banks=new[]{factory(),factory()};
             var ev=workload is "time" or "joint" ? new[]{new Evidence(domain.Length,domain.Resolution,workload=="joint"),new Evidence(domain.Length,domain.Resolution,workload=="joint")}:null;
-            var split=workload=="exact" ? new[]{new Splitter(domain,options,48000.0/block),new Splitter(domain,options,48000.0/block)}:null;
+            var split=workload=="gaussian" ? new[]{new Splitter(domain,options,48000.0/block),new Splitter(domain,options,48000.0/block)}:null;
             var complex=new Complex[domain.Length];var spectrum=new double[domain.Length];var output=new double[domain.Length*4];
             int frame=0;
             void Step()

@@ -5,7 +5,7 @@ struct FluidParameters
     float Flow;
     float HalfLife;
     float Diffusion;
-    float Noise;
+    float Background;
     float Curl;
 };
 struct CometParameters

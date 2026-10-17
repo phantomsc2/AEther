@@ -47,5 +47,5 @@ public sealed partial class Renderer
     public float FluidFlow { get => ReadValue("Fluid.Flow") * 3; set => WriteValue("Fluid.Flow", value / 3); }
     public float FluidHalfLife { get => .1f + ReadValue("Fluid.HalfLife") * 9.9f; set => WriteValue("Fluid.HalfLife", (value - .1f) / 9.9f); }
     public float FluidDiffusion { get => ReadValue("Fluid.Diffusion") * .01f; set => WriteValue("Fluid.Diffusion", value * 100); }
-    public float FluidNoise { get => ReadValue("Fluid.Noise") * 3; set => WriteValue("Fluid.Noise", value / 3); }
+    public float FluidNoise { get => ReadValue("Fluid.Background") * 3; set => WriteValue("Fluid.Background", value / 3); }
     public float FluidCurl { get => ReadValue("Fluid.Curl") * 2; set => WriteValue("Fluid.Curl", value / 2); }}

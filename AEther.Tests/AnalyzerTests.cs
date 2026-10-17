@@ -210,7 +210,7 @@ namespace AEther.Tests
         public void RejectsInvalidFilterWindowsAndFrequencies()
         {
             var options = Options();
-            options.MedianLength = 0;
+            options.TimeWindowSeconds = 0;
             Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, options));
             options = Options();
             options.MaxFrequency = 5000;

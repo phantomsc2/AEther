@@ -26,7 +26,7 @@ struct EdgeMaterial
 };
 struct EdgeLighting { float Ambient; float Sun; float Headlight; };
 struct EdgeEffects { float Amount; float Turbulence; float Exposure; };
-struct FluidParameters { float Flow; float HalfLife; float Diffusion; float Noise; float Curl; };
+struct FluidParameters { float Flow; float HalfLife; float Diffusion; float Background; float Curl; };
 cbuffer Parameters : register(b1)
 {
     EdgeCamera Camera = { .45, .4, .35, .5, .5, float2(.5, .5) };

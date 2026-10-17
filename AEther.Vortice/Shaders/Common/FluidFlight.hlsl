@@ -8,7 +8,7 @@ struct FluidParameters
     float Flow;
     float HalfLife;
     float Diffusion;
-    float Noise;
+    float Background;
     float Curl;
 };
 struct FlightParameters
@@ -214,7 +214,7 @@ float2 FlightTurbulence(float2 p, float4 source)
     float eddy = sin(8 * angle + 18 * radius - .6 * T)
         + .5 * sin(14 * q.x - 11 * q.y + .4 * T);
     float2 stirring = float2(-q.y, q.x) / max(.06, radius) * eddy
-        * (Fluid.Noise * 3) * (2 * noise) * exp(-1.5 * radius * radius);
+        * (Fluid.Background * 3) * (2 * noise) * exp(-1.5 * radius * radius);
     // Tonal wing cuts also displace the cloud into a small rotational wake.
     float2 wake = FlightRotate(float2(0, .025 * sign(q.x) * FlightSlice(p, source)),
         - (Flight.WingAngle - .5) * 3.14159265);

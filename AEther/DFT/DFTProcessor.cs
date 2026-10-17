@@ -82,15 +82,6 @@ namespace AEther
             return window;
         }
 
-        internal void ProcessSampleLinear(double sample, Span<double> destination)
-        {
-            for (var k = 0; k < Filters.Length; ++k)
-            {
-                Filters[k].Process(sample);
-                destination[k] = 2 * Filters[k].GetOutput().Magnitude;
-            }
-        }
-
         public void Output(Memory<double> dst)
         {
             for (int k = 0; k < Filters.Length; ++k)

@@ -3,14 +3,14 @@ using BenchmarkDotNet.Attributes;
 
 namespace AEther.Benchmarks;
 
-/// <summary>Steady-state stereo analysis cost, including the full rectangular median.</summary>
+/// <summary>Steady-state stereo analysis cost, including the Gaussian STBR fit.</summary>
 public class SplitterBenchmark
 {
     [Params(8, 16)]
     public int FrequencyResolution { get; set; }
 
     [Params(.2, .5)]
-    public double MedianLength { get; set; }
+    public double TimeWindowSeconds { get; set; }
 
     Splitter[] splitters = null!;
     double[][] input = null!;
@@ -20,7 +20,7 @@ public class SplitterBenchmark
     [GlobalSetup]
     public void Setup()
     {
-        var options = new AnalyzerOptions { EvidenceMode = EvidenceMode.ExactMedian, FrequencyResolution = FrequencyResolution, MedianLength = MedianLength };
+        var options = new AnalyzerOptions { FrequencyResolution = FrequencyResolution, TimeWindowSeconds = TimeWindowSeconds };
         var domain = options.Domain;
         var rate = 48000.0 / (48000 / options.TimeResolution);
         splitters = [new(domain, options, rate), new(domain, options, rate)];

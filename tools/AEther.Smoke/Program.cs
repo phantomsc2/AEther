@@ -116,13 +116,15 @@ internal static partial class Program
     static void CheckBilateral(IntPtr window, string shaders, string output)
     {
         var domain = new Domain(100, 8, 16);
-        var splitter = new Splitter(domain, new AnalyzerOptions { SineGain = 1, TransientGain = 1, NoiseGain = 1 });
+        var splitter = new Splitter(domain, new AnalyzerOptions { SineGain = 1, TransientGain = 1, BackgroundGain = 1 });
         var input = Enumerable.Repeat(Math.Log10(.4), domain.Length).ToArray();
         var data = new double[domain.Length * Splitter.OutputStride];
         splitter.Process(input, data);
-        if (data.Any(value => Math.Abs(value - .4) > 1e-12))
-            throw new Exception("Independent robust evidence changed a constant amplitude field.");
-        Console.WriteLine("Evidence: time, frequency and 2D estimates overlap; raw amplitude is preserved.");
+        if (Enumerable.Range(0, domain.Length).Any(k =>
+            Math.Abs(data[4 * k]) > 1e-12 || Math.Abs(data[4 * k + 1]) > 1e-12 ||
+            Math.Abs(data[4 * k + 2] - .4) > 1e-12 || Math.Abs(data[4 * k + 3] - .4) > 1e-12))
+            throw new Exception("Gaussian STBR fit did not assign a constant field to background B.");
+        Console.WriteLine("STBR: constant field belongs to background B; raw amplitude is preserved.");
     }
 
     static void CheckColorOutput(IntPtr window, string shaders, string output)

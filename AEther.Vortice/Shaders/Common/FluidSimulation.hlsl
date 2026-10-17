@@ -97,7 +97,7 @@ float2 AdvectVelocity(PSin input) : SV_Target
     float eddies = sin(5 * angle + 7 * radius - .9 * (MusicalMovementTime * Quality.MovementSpeed * 10))
         + .5 * sin(9 * p.x + 7 * p.y + 1.3 * (MusicalMovementTime * Quality.MovementSpeed * 10));
     float2 force = float2(-direction.y, direction.x) * eddies
-        * (1.8 * tone + 3 * (Fluid.Noise * 3) * noise + .7 * attack) * envelope * Mobility();
+        * (1.8 * tone + 3 * (Fluid.Background * 3) * noise + .7 * attack) * envelope * Mobility();
 #endif
     // Vorticity confinement restores small curls lost to semi-Lagrangian advection.
     int2 q = int2(input.Position.xy);
@@ -196,7 +196,7 @@ float4 AdvectDye(PSin input) : SV_Target
     float radius = length(p);
     float emitter = exp(-pow(radius / .32, 4)) * smoothstep(.015, .09, radius);
     float tone = 1 - exp(-2 * source.r);
-    float mist = .16 * exp(-1.3 * radius * radius) * (Fluid.Noise * 3) * noise;
+    float mist = .16 * exp(-1.3 * radius * radius) * (Fluid.Background * 3) * noise;
     float3 pigment = palette * tone * emitter + lerp(palette, float3(.45, .62, .72), .65) * mist;
     float4 dose = StepSeconds * 6 * float4(pigment, tone * emitter + mist);
 #endif

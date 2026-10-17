@@ -1,3 +1,9 @@
+# Historical evidence profiles
+
+These measurements predate the Gaussian-only STBR settlement. Mode names and
+settings below describe the versions measured, not current selectable options.
+The profiling tool now measures the production Gaussian path only.
+
 # Evidence-mode quick profile
 
 Date: 2026-10-17. Release .NET 10.0.13, four-double hardware SIMD,

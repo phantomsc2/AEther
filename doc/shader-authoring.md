@@ -97,7 +97,7 @@ the compiled layout. No author-assigned `register` or `packoffset` is required.
 `FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
 `Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
 and the unscaled musical movement clock `MusicalMovementTime`.
-`Spectrum0/1` and `Histogram0/1` supply independent robust time/frequency/2D evidence in RGB and raw linear magnitude in alpha; `Linear`
+`Spectrum0/1` and `Histogram0/1` supply positive sustained (S), transient (T), and background (B) evidence in RGB and raw linear magnitude in alpha; `Linear`
 is the shared sampler. See `Common/Inputs.hlsl` for the complete declarations.
 
 Resources are bound by reflected name independently for every entry point. Unknown
@@ -105,11 +105,14 @@ resources, resource arrays and unsupported parameter types fail reload before an
 working program is replaced. Engine inputs use reserved names and must retain their
 declared types and layouts.
 
-The splitter produces independent time, frequency, and 2D median estimates. These
-fields overlap and are not normalized against one another. Alpha is raw amplitude;
-there is no subtraction residual. `FilteredHistogram0/1` remain compatibility aliases
-for `Histogram0/1` and do not request a GPU pass. Histogram's `CombinedLevel` shows
-raw amplitude. MedianLength/MedianWidth control the robust evidence neighborhoods.
+The Gaussian STBR fit estimates sustained spectral structure, broadband temporal
+structure, local background, and an unexplained residual. RGB contains gained,
+positive S/T and background B; alpha remains raw amplitude A, not residual R.
+Signed effects and residual RMS are exposed separately on the CPU. Components
+are not normalized against one another. `FilteredHistogram0/1` remain aliases
+for `Histogram0/1`; Histogram's `CombinedLevel` shows raw amplitude.
+`TimeWindowSeconds` and `FrequencyWindowOctaves` control the fit neighborhood.
+
 Referencing `FluidDye` requests the existing fluid simulation;
 `FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`
 structures declared in `Scenes/MandelFluid.hlsl`. These are contracts of shared shader

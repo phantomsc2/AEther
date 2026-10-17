@@ -22,7 +22,7 @@ namespace AEther
         public int FrequencyResolution { get; set; } = 12;
 
         [Category("DFT")]
-        [Description("Spectrum publication and Gaussian local-fit update rate. Legacy exact filters observe at this rate; experimental per-sample tracking updates at the audio sample rate.")]
+        [Description("Spectrum publication and STBR Gaussian fit update rate.")]
         public int TimeResolution { get; set; } = 1 << 8;
 
         [Category("DFT")]
@@ -30,64 +30,54 @@ namespace AEther
 
         [Category("DFT")]
         [DisplayName("Window function")]
-        [DefaultValue(DFTWindow.Blackman)]
+        [DefaultValue(DFTWindow.Hann)]
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
         [Category("Visualization")]
         public double HistorySeconds { get; set; } = .5f;
 
-        [Category("Alternative evidence modes")]
-        [DefaultValue(true)]
-        [Description("Subtract the raw-amplitude rectangular background before estimating S/T. Deviations remain signed through filtering; only displayed S/T are clamped. Disable for direct evidence. LocalJointFit always fits the background jointly.")]
-        public bool SubtractNoiseBackground { get; set; } = true;
+        [Category("STBR fit")]
+        [DefaultValue(false)]
+        [DisplayName("S time slope")]
+        [Description("Allow each frequency's S evidence to rise or fall linearly through the time window.")]
+        public bool JointTimeSlopeEnabled { get; set; } = false;
 
-        [Category("Splitter")]
-        [DefaultValue(EvidenceMode.LocalJointFit)]
-        [Description("Default: rolling Gaussian local fit with time and log-frequency slopes. Exact medians are a legacy alternative; per-sample rolling sign tracking is experimental.")]
-        public EvidenceMode EvidenceMode { get; set; } = EvidenceMode.LocalJointFit;
-
-        [Category("Joint fit")]
+        [Category("STBR fit")]
         [DefaultValue(true)]
-        [Description("LocalJointFit: allow each frequency's S evidence to rise or fall linearly through the time window.")]
-        public bool JointTimeSlopeEnabled { get; set; } = true;
-
-        [Category("Joint fit")]
-        [DefaultValue(true)]
-        [Description("LocalJointFit: allow each frame's T evidence to tilt linearly across log frequency.")]
+        [DisplayName("T frequency slope")]
+        [Description("Allow each frame's T evidence to tilt linearly across log frequency.")]
         public bool JointFrequencySlopeEnabled { get; set; } = true;
 
-        [Category("Alternative evidence modes")]
-        [DefaultValue(1.0)]
-        [Description("Experimental per-sample mode only: maximum tracker slew in linear amplitude per second. Does not affect the Gaussian fit.")]
-        public double SignSlewRate { get; set; } = 1.0;
-
-        [Category("Splitter")]
+        [Category("STBR display")]
+        [DisplayName("S gain (sustained)")]
         [DefaultValue(10.0)]
         [Description("Display gain for time-directional S evidence. Does not scale magnitude.")]
         public double SineGain { get; set; } = 10.0;
 
-        [Category("Splitter")]
+        [Category("STBR display")]
         [DefaultValue(10.0)]
+        [DisplayName("T gain (transient)")]
         [Description("Display gain for frequency-directional T evidence. Does not scale magnitude.")]
         public double TransientGain { get; set; } = 10.0;
 
-        [Category("Splitter")]
+        [Category("STBR display")]
         [DefaultValue(10.0)]
-        [Description("Display gain for background N evidence. Does not scale magnitude.")]
-        public double NoiseGain { get; set; } = 10.0;
+        [DisplayName("B gain (background)")]
+        [Description("Display gain for background B evidence. Does not scale magnitude.")]
+        public double BackgroundGain { get; set; } = 10.0;
 
-        [Category("Splitter")]
+        [Category("STBR fit")]
         [DisplayName("Time window (seconds)")]
         [DefaultValue(.1)]
-        [Description("Gaussian local-fit time extent in seconds; also used by legacy exact filters. Unused by experimental per-sample tracking.")]
-        public double MedianLength { get; set; } = .1;
+        [Description("Causal time extent of the Gaussian STBR fit in seconds.")]
+        public double TimeWindowSeconds { get; set; } = .1;
 
-        [Category("Splitter")]
+        [Category("STBR fit")]
         [DisplayName("Frequency window (octaves)")]
         [DefaultValue(3.0)]
-        [Description("Centered log-frequency extent of the Gaussian local fit. Also defines neighborhoods for the alternative modes.")]
-        public double MedianWidth { get; set; } = 3;
+        [Description("Centered log-frequency extent of the Gaussian STBR fit in octaves.")]
+        public double FrequencyWindowOctaves { get; set; } = 3;
 
         public void Validate(SampleFormat format)
         {
@@ -111,20 +101,16 @@ namespace AEther
 
         internal void ValidateSplitter(int resolution, double rate)
         {
-            if (!Enum.IsDefined(EvidenceMode))
-                throw new ArgumentOutOfRangeException(nameof(EvidenceMode));
-            if (!double.IsFinite(SignSlewRate) || SignSlewRate <= 0)
-                throw new ArgumentOutOfRangeException(nameof(SignSlewRate));
             if (!double.IsFinite(SineGain) || SineGain < 0)
                 throw new ArgumentOutOfRangeException(nameof(SineGain));
             if (!double.IsFinite(TransientGain) || TransientGain < 0)
                 throw new ArgumentOutOfRangeException(nameof(TransientGain));
-            if (!double.IsFinite(NoiseGain) || NoiseGain < 0)
-                throw new ArgumentOutOfRangeException(nameof(NoiseGain));
-            if (!double.IsFinite(MedianWidth) || MedianWidth * resolution < 2)
-                throw new ArgumentOutOfRangeException(nameof(MedianWidth), "Median width needs at least two frequency samples.");
-            if (!double.IsFinite(MedianLength) || MedianLength * rate < 2)
-                throw new ArgumentOutOfRangeException(nameof(MedianLength), "Median history needs at least two time samples.");
+            if (!double.IsFinite(BackgroundGain) || BackgroundGain < 0)
+                throw new ArgumentOutOfRangeException(nameof(BackgroundGain));
+            if (!double.IsFinite(FrequencyWindowOctaves) || FrequencyWindowOctaves * resolution < 2)
+                throw new ArgumentOutOfRangeException(nameof(FrequencyWindowOctaves), "Frequency window needs at least two frequency samples.");
+            if (!double.IsFinite(TimeWindowSeconds) || TimeWindowSeconds * rate < 2)
+                throw new ArgumentOutOfRangeException(nameof(TimeWindowSeconds), "Time window needs at least two time samples.");
         }
 
     }
