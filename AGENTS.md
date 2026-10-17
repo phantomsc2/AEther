@@ -1,3 +1,9 @@
+# Chat formatting
+
+- LaTeX does not render in chat. Write math in Markdown fenced code blocks
+  using plain-text notation instead of LaTeX.
+- Prefer short math variable names, and define them when needed.
+
 # Shader behavior
 
 - Every shader scene must eventually render black without music, including after

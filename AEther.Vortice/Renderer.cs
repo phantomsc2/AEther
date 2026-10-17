@@ -31,6 +31,7 @@ public sealed partial class Renderer : IDisposable
 
     MandelFluidSimulation? fluid;
     MandelbenchDistanceField? distanceField;
+    ImageFeedback? feedback;
     string? previousScene;
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
@@ -185,6 +186,7 @@ public sealed partial class Renderer : IDisposable
         // Resizing changes the physical domain. Recreate lazily on next fluid frame.
         fluid?.Dispose(); fluid = null;
         distanceField?.Dispose(); distanceField = null;
+        feedback?.Dispose(); feedback = null;
     }
 
     public void Render(bool present = true)
@@ -258,6 +260,12 @@ public sealed partial class Renderer : IDisposable
             namedSamplers["FluidSampler"] = fluid.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
+        if (active.Program.Uses("PreviousImage"))
+        {
+            feedback ??= new(device, context, width, height);
+            if (previousScene != SceneName || dt > .5) feedback.Clear();
+            feedback.Advance(dt, active, namedBuffers, namedTextures, namedSamplers);
+        }
         previousScene = SceneName;
         if (active.Distance != null)
         {
@@ -303,6 +311,7 @@ public sealed partial class Renderer : IDisposable
 
         fluid?.Dispose();
         distanceField?.Dispose();
+        feedback?.Dispose();
         ReleaseGeometryTargets(); geometryDepthState?.Dispose();
         geometryNoDepthState?.Dispose(); geometryAdditiveState?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();

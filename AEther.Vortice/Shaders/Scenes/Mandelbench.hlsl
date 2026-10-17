@@ -355,8 +355,7 @@ float3 ShadeAt(float2 inputUV, float pixelSize)
         {
             float entry = jacobian[tile.y][tile.x];
             float amount = saturate(log2(1 + abs(entry)) / (1 + 15 * Jacobian.LogRange));
-            color = lerp(float3(.045, .045, .055),
-                entry >= 0 ? float3(.1, .85, 1) : float3(1, .35, .08), amount);
+            color = float3(amount, amount, amount);
         }
     }
     if ((!Jacobian.Enabled && !View.CoordinateGrid || View.DistanceContours) && !matrixView && !ratioView)

@@ -28,7 +28,7 @@ internal sealed class ShaderProgram : IDisposable
             {
                 ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler",
-                ShaderInputType.Texture => binding.Name is "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
+                ShaderInputType.Texture => binding.Name is "PreviousImage" or "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1"
                     or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField",
                 _ => false,
@@ -117,6 +117,8 @@ public sealed class ShaderScene : IDisposable
         Program = new(device, source, "PS", name + ".hlsl");
         try
         {
+            if (Program.Uses("PreviousImage"))
+                Composite = new(device, source, "FeedbackDisplayPS", name + ".hlsl");
             var geometry = System.Text.RegularExpressions.Regex.Match(source,
                 @"^\s*#define\s+GEOMETRY_VERTEX_COUNT\s+(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
             if (geometry.Success)
