@@ -23,7 +23,7 @@ namespace AEther
         public SampleType GetSampleType()
             => Format.Tag switch
             {
-                WAVFormatTag.PCM when Format.BitsPerSample == 16 => SampleType.UInt16.Instance,
+                WAVFormatTag.PCM when Format.BitsPerSample == 16 => SampleType.Int16.Instance,
                 WAVFormatTag.IEEEFloat when Format.BitsPerSample == 32 => SampleType.Float32.Instance,
                 _ => throw new FormatException(Format.Tag.ToString()),
             };

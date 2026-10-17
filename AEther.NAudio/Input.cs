@@ -101,7 +101,7 @@ namespace AEther.NAudio
                 format = extensible.ToStandardWaveFormat();
             SampleType type = (format.Encoding, format.BitsPerSample) switch
             {
-                (WaveFormatEncoding.Pcm, 16) => SampleType.UInt16.Instance,
+                (WaveFormatEncoding.Pcm, 16) => SampleType.Int16.Instance,
                 (WaveFormatEncoding.IeeeFloat, 32) => SampleType.Float32.Instance,
                 _ => throw new NotSupportedException($"Unsupported capture format: {format}"),
             };

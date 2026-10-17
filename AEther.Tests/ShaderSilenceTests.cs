@@ -13,7 +13,9 @@ namespace AEther.Tests;
 public class ShaderSilenceTests
 {
     const int Width = 96, Height = 54, Bands = 32;
-    const int DecayFrames = 10000, FinalFrames = 60;
+    // Allow at least 20 seconds of natural decay. Slow simulations retain the
+    // original generous upper bound, but dark scenes need not render it all.
+    const int MinimumDecayFrames = 1200, DecayFrames = 10000, FinalFrames = 60;
 
     static string ShaderDirectory
     {
@@ -31,16 +33,18 @@ public class ShaderSilenceTests
     public static IEnumerable<TestCaseData> Scenes() =>
         Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
             .OrderBy(path => path, StringComparer.Ordinal)
-            .Select(path => new TestCaseData(Path.GetFileNameWithoutExtension(path)));
+            .SelectMany(path => new[] { 0.0, 60.0 }.Select(gainDb =>
+                new TestCaseData(Path.GetFileNameWithoutExtension(path), gainDb)));
 
     [TestCaseSource(nameof(Scenes)), Category("GPU")]
-    public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene)
+    public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb)
     {
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
             shaderDirectory: ShaderDirectory, timeProvider: clock);
         renderer.SelectScene(scene);
+        var gain = Math.Pow(10, inputGainDb / 20);
         long row = 0;
 
         // Test both silent startup and retained light after a real musical input.
@@ -71,6 +75,9 @@ public class ShaderSilenceTests
             {
                 if (sendSilentPackets) Post(false);
                 Tick();
+                if (frame + 1 >= MinimumDecayFrames && (frame + 1) % 120 == 0
+                    && renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0))
+                    break;
                 if (frame % 1000 == 999)
                 {
                     // Readback bounds the GPU queue without changing its state.
@@ -93,10 +100,10 @@ public class ShaderSilenceTests
             if (music)
                 for (int i = 0; i < samples.Length; i += 4)
                 {
-                    samples[i] = .6;
-                    samples[i + 1] = row % 12 < 3 ? .8 : .1;
-                    samples[i + 2] = .3;
-                    samples[i + 3] = .9;
+                    samples[i] = gain * .6;
+                    samples[i + 1] = gain * (row % 12 < 3 ? .8 : .1);
+                    samples[i + 2] = gain * .3;
+                    samples[i + 3] = gain * .9;
                 }
             renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
                 { AnalysisRow = row++ }, 2);

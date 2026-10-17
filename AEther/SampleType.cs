@@ -16,10 +16,11 @@ namespace AEther
             public override double ReadFrom(ReadOnlySpan<byte> source) => BitConverter.ToSingle(source);
         }
 
-        public class UInt16 : SampleType
+        /// <summary>Signed 16-bit PCM normalized to [-1, 1), with -32768 mapping to -1.</summary>
+        public class Int16 : SampleType
         {
-            public const double Scale = 1 / (double)short.MaxValue;
-            public static readonly UInt16 Instance = new();
+            public const double Scale = 1 / 32768.0;
+            public static readonly Int16 Instance = new();
             public override int Size => 2;
             public override double ReadFrom(ReadOnlySpan<byte> source) => BitConverter.ToInt16(source) * Scale;
         }

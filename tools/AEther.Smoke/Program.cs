@@ -116,7 +116,7 @@ internal static partial class Program
     static void CheckBilateral(IntPtr window, string shaders, string output)
     {
         var domain = new Domain(100, 8, 16);
-        var splitter = new Splitter(domain, new AnalyzerOptions { SineGain = 1, TransientGain = 1, BackgroundGain = 1 });
+        var splitter = new Splitter(domain, new AnalyzerOptions());
         var input = Enumerable.Repeat(Math.Log10(.4), domain.Length).ToArray();
         var data = new double[domain.Length * Splitter.OutputStride];
         splitter.Process(input, data);

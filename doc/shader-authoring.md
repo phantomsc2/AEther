@@ -106,8 +106,8 @@ working program is replaced. Engine inputs use reserved names and must retain th
 declared types and layouts.
 
 The Gaussian STBR fit estimates sustained spectral structure, broadband temporal
-structure, local background, and an unexplained residual. RGB contains gained,
-positive S/T and background B; alpha remains raw amplitude A, not residual R.
+structure, local background, and an unexplained residual. RGB contains
+positive S/T and background B; alpha is spectral amplitude A, not residual R. All four channels use input-gained amplitude units, with no component display gains.
 Signed effects and residual RMS are exposed separately on the CPU. Components
 are not normalized against one another. `FilteredHistogram0/1` remain aliases
 for `Histogram0/1`; Histogram's `CombinedLevel` shows raw amplitude.

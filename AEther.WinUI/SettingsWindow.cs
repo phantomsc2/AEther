@@ -181,8 +181,7 @@ public sealed class SettingsWindow : ToolWindow
         nameof(AnalyzerOptions.FrequencyResolution) => (1, 96),
         nameof(AnalyzerOptions.TimeResolution) => (16, 1024),
         nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
-        nameof(AnalyzerOptions.SineGain) or nameof(AnalyzerOptions.TransientGain)
-            or nameof(AnalyzerOptions.BackgroundGain) => (0, 20),
+        nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
         nameof(AnalyzerOptions.TimeWindowSeconds) => (2.0 / Options.TimeResolution, 2),
         nameof(AnalyzerOptions.FrequencyWindowOctaves) => (2.0 / Options.FrequencyResolution, 8),
         _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),

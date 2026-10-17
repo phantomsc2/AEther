@@ -18,7 +18,6 @@ public sealed class Splitter
     readonly Moment[] Columns, Rows, Tilts;
     readonly Sum[] TimeCross;
     readonly JointEvidence[] Results;
-    readonly EvidenceOutput Presentation;
     int Next, Count, RebaseIndex;
     double Unit = 1;
 
@@ -53,7 +52,6 @@ public sealed class Splitter
         TimeCross = new Sum[Bands];
         Columns = new Moment[Bands]; Rows = new Moment[Bands]; Tilts = new Moment[Bands];
         Results = new JointEvidence[Bands];
-        Presentation = new EvidenceOutput(options);
     }
 
     public void Process(ReadOnlyMemory<double> input, Memory<double> output)
@@ -186,7 +184,7 @@ public sealed class Splitter
                 TimeBasisRank = TimeSlope && Count > 1 ? 2 : 1,
                 FrequencyBasisRank = FrequencySlope && width > 1 ? 2 : 1,
             };
-            Presentation.Write(Results[k].Sine, Results[k].Transient, Results[k].Background,
+            EvidenceOutput.Write(Results[k].Sine, Results[k].Transient, Results[k].Background,
                 Magnitude[k], output.Span.Slice(k * Splitter.OutputStride, Splitter.OutputStride));
         }
     }

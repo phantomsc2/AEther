@@ -13,7 +13,7 @@ structure, local background, and unexplained residual.
 - TimeResolution: requested publication and fit update rate, default 256 Hz.
 - FrequencyResolution: 12 bins per octave.
 - Analyzer DFT window: Hann. The existing direct DFTProcessor default is unchanged.
-- SineGain / TransientGain / BackgroundGain: display gains, default 10 each.
+- InputGainDb: gain before all analysis, default 0 dB (unity), range -60 to +60 dB.
 
 There is no mode selector, background-subtraction checkbox, or tracker slew rate.
 The fit is joint least squares, not a background-first reduction.
@@ -39,10 +39,10 @@ neighborhoods define the fit, without invented observations.
 ## Output contract
 
 Splitter.OutputStride is four. Published/rendered rows are
-[gainS * max(S,0), gainT * max(T,0), gainB * B, raw A]. Alpha is not R.
-Signed estimates and neighborhood residual RMS are available through
+[max(S,0), max(T,0), B, A]. Alpha is not R.
+All components use the same input-gained amplitude units. Signed estimates and neighborhood residual RMS are available through
 Splitter.Estimates and Analyzer.JointEvidenceAvailable. Residual RMS is not the
-signed current-cell residual. Display gains do not affect fitting; automatic
+signed current-cell residual. There are no component display gains; automatic
 bounded display normalization is not implemented in this settlement.
 
 Every scene must eventually render black after audio stops. Finite fit history
@@ -163,5 +163,5 @@ infinity. HasResidualScale makes that case explicit to classifier consumers.
 
 Statistics remain available from Splitter.Estimates and the existing
 Analyzer.JointEvidenceAvailable callback (memory valid only during the callback).
-RGB shows [max(S,0), max(T,0), B] with display gains; alpha remains A. No logistic
+RGB shows [max(S,0), max(T,0), B] without component gains; alpha remains A. No logistic
 activation or inter-component share normalization is added.

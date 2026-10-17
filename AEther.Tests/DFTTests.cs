@@ -86,9 +86,9 @@ namespace AEther.Tests
         }
 
         [Test]
-        public void EveryWindowHasUnitOnBinGain([Values] DFTWindow window)
+        public void EveryWindowHasUnitOnBinGain([Values] DFTWindow window, [Values] bool simd)
         {
-            var processor = new DFTProcessor(new Domain(1000, 8, 1), 48000, true, window);
+            var processor = new DFTProcessor(new Domain(1000, 8, 1), 48000, simd, window);
             var samples = Enumerable.Range(0, 4 * 528)
                 .Select(i => .7 * Math.Sin(2 * Math.PI * 1000 * i / 48000 + .37)).ToArray();
             processor.Process(samples);

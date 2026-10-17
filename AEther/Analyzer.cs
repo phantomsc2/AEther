@@ -23,6 +23,7 @@ namespace AEther
         public readonly AnalyzerOptions Options;
 
         readonly int BatchSize;
+        readonly double InputGain;
         readonly byte[] Batch;
         readonly DFTProcessor[] DFT;
         readonly Splitter[] Splitters;
@@ -41,11 +42,13 @@ namespace AEther
         public Analyzer(SampleFormat format, AnalyzerOptions options)
         {
             options.Validate(format);
+            InputGain = Math.Pow(10, options.InputGainDb / 20);
             Domain = options.Domain;
             Format = format;
             Options = options;
             BatchSize = Format.SampleRate / options.TimeResolution;
             Profile.Describe("Sample rate", Format.SampleRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Input gain dB", options.InputGainDb.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Channels", Format.ChannelCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Batch samples", BatchSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Batch budget ms", (BatchSize * 1000.0 / Format.SampleRate).ToString("F6", System.Globalization.CultureInfo.InvariantCulture));
@@ -182,7 +185,8 @@ namespace AEther
                     for (var i = 0; i < BatchSize; ++i)
                     {
                         var offset = (i * Format.ChannelCount + c) * Format.Type.Size;
-                        channel[i] = Format.Type.ReadFrom(Batch.AsSpan(offset));
+                        var sample = Format.Type.ReadFrom(Batch.AsSpan(offset));
+                        channel[i] = double.IsFinite(sample) ? sample * InputGain : 0;
                     }
                 }
                 using (Profile.Measure("analysis.waveform_features_ms"))

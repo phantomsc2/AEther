@@ -49,23 +49,11 @@ namespace AEther
         [Description("Allow each frame's T evidence to tilt linearly across log frequency.")]
         public bool JointFrequencySlopeEnabled { get; set; } = true;
 
-        [Category("STBR display")]
-        [DisplayName("S gain (sustained)")]
-        [DefaultValue(10.0)]
-        [Description("Display gain for time-directional S evidence. Does not scale magnitude.")]
-        public double SineGain { get; set; } = 10.0;
-
-        [Category("STBR display")]
-        [DefaultValue(10.0)]
-        [DisplayName("T gain (transient)")]
-        [Description("Display gain for frequency-directional T evidence. Does not scale magnitude.")]
-        public double TransientGain { get; set; } = 10.0;
-
-        [Category("STBR display")]
-        [DefaultValue(10.0)]
-        [DisplayName("B gain (background)")]
-        [Description("Display gain for background B evidence. Does not scale magnitude.")]
-        public double BackgroundGain { get; set; } = 10.0;
+        [Category("Input")]
+        [DisplayName("Input gain (dB)")]
+        [DefaultValue(0.0)]
+        [Description("Gain before all analysis, from -60 to +60 dB. 0 dB preserves full-scale input units. For consistent loopback visuals, keep player volume at 100% and adjust listening volume downstream of capture.")]
+        public double InputGainDb { get; set; } = 0.0;
 
         [Category("STBR fit")]
         [DisplayName("Time window (seconds)")]
@@ -85,6 +73,8 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(format));
             if (BufferCapacity <= 0)
                 throw new ArgumentOutOfRangeException(nameof(BufferCapacity), "Use a positive, bounded input capacity.");
+            if (!double.IsFinite(InputGainDb) || InputGainDb < -60 || InputGainDb > 60)
+                throw new ArgumentOutOfRangeException(nameof(InputGainDb), "Input gain must be between -60 and +60 dB.");
             if (TimeResolution <= 0 || TimeResolution > format.SampleRate)
                 throw new ArgumentOutOfRangeException(nameof(TimeResolution));
             if (!double.IsFinite(MinFrequency) || !double.IsFinite(MaxFrequency)
@@ -101,12 +91,6 @@ namespace AEther
 
         internal void ValidateSplitter(int resolution, double rate)
         {
-            if (!double.IsFinite(SineGain) || SineGain < 0)
-                throw new ArgumentOutOfRangeException(nameof(SineGain));
-            if (!double.IsFinite(TransientGain) || TransientGain < 0)
-                throw new ArgumentOutOfRangeException(nameof(TransientGain));
-            if (!double.IsFinite(BackgroundGain) || BackgroundGain < 0)
-                throw new ArgumentOutOfRangeException(nameof(BackgroundGain));
             if (!double.IsFinite(FrequencyWindowOctaves) || FrequencyWindowOctaves * resolution < 2)
                 throw new ArgumentOutOfRangeException(nameof(FrequencyWindowOctaves), "Frequency window needs at least two frequency samples.");
             if (!double.IsFinite(TimeWindowSeconds) || TimeWindowSeconds * rate < 2)
