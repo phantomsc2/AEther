@@ -13,6 +13,8 @@ namespace AEther
     {
         public PipelineProfile Profile { get; } = new();
         public event EventHandler<SampleEvent<double>>? SamplesAnalyzed;
+        /// <summary>Signed local-fit effects and standardized scores. Memory is valid only during the callback.</summary>
+        public event EventHandler<SampleEvent<JointEvidence>>? JointEvidenceAvailable;
         public event EventHandler<double>? TransientDetected;
         public event EventHandler<AudioFeatures>? FeaturesAvailable;
         public readonly SampleFormat Format;
@@ -24,6 +26,7 @@ namespace AEther
         readonly byte[] Batch;
         readonly DFTProcessor[] DFT;
         readonly Splitter[] Splitter;
+        readonly LocalJointSplitter[] Joint;
         readonly SampleEvidenceDFT[] SampleDFT;
         readonly SampleSignEvidence[] SampleEvidence;
         readonly TransientDetector[] Transients;
@@ -56,6 +59,13 @@ namespace AEther
             Profile.Describe("Subtract noise background", options.SubtractNoiseBackground.ToString());
             Profile.Describe("Evidence mode", options.EvidenceMode.ToString());
             Profile.Describe("Sign slew rate", options.SignSlewRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Joint fit", "Rolling Gaussian / directional slopes / residual RMS");
+            Profile.Describe("Joint time slope", options.JointTimeSlopeEnabled.ToString());
+            Profile.Describe("Joint frequency slope", options.JointFrequencySlopeEnabled.ToString());
+            var localJoint = options.EvidenceMode == EvidenceMode.LocalJointFit;
+            Joint = localJoint ? Enumerable.Range(0, Format.ChannelCount)
+                .Select(_ => new LocalJointSplitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray()
+                : Array.Empty<LocalJointSplitter>();
             var perSample = options.EvidenceMode == EvidenceMode.PerSampleAverageSign;
             SampleDFT = perSample ? Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new SampleEvidenceDFT(Domain, Format.SampleRate, options)).ToArray() : Array.Empty<SampleEvidenceDFT>();
@@ -64,7 +74,7 @@ namespace AEther
             DFT = perSample ? Array.Empty<DFTProcessor>() : Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled,
                     options.WindowFunction)).ToArray();
-            Splitter = perSample ? Array.Empty<Splitter>() : Enumerable.Range(0, Format.ChannelCount)
+            Splitter = perSample || localJoint ? Array.Empty<Splitter>() : Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
             Transients = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new TransientDetector(Format.SampleRate)).ToArray();
@@ -176,6 +186,8 @@ namespace AEther
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
             var spectrum = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var output = RentEvent<double>(AEther.Splitter.OutputStride * Domain.Length, Format.ChannelCount, time);
+            var jointEvidence = Joint.Length != 0 && JointEvidenceAvailable is not null
+                ? RentEvent<JointEvidence>(Domain.Length, Format.ChannelCount, time) : null;
             try
             {
                 using (Profile.Measure("analysis.decode_ms"))
@@ -213,11 +225,24 @@ namespace AEther
                     DFT[c].Output(spectrum.GetChannel(c));
                     }
                     using (Profile.Measure("analysis.split_channel_ms"))
-                    Splitter[c].Process(spectrum.GetChannel(c), output.GetChannel(c));
+                    {
+                        if (Joint.Length != 0)
+                        {
+                            Joint[c].Process(spectrum.GetChannel(c), output.GetChannel(c));
+                            if (jointEvidence is not null) Joint[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
+                        }
+                        else Splitter[c].Process(spectrum.GetChannel(c), output.GetChannel(c));
+                    }
                 }
                 // Publish immediately; render pacing belongs to the renderer.
                 output = output with { SampleIndex = row * BatchSize, AnalysisRow = row,
                     CaptureTimestamp = captureTimestamp, AnalysisTimestamp = Stopwatch.GetTimestamp() };
+                if (jointEvidence is not null)
+                {
+                    jointEvidence = jointEvidence with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
+                        CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp };
+                    JointEvidenceAvailable?.Invoke(this, jointEvidence);
+                }
                 Profile.Elapsed("analysis.capture_to_completion_ms", captureTimestamp);
                 using (Profile.Measure("analysis.subscribers_ms"))
                     SamplesAnalyzed?.Invoke(this, output);
@@ -227,6 +252,7 @@ namespace AEther
                 ReturnEvent(samples);
                 ReturnEvent(spectrum);
                 ReturnEvent(output);
+                if (jointEvidence is not null) ReturnEvent(jointEvidence);
             }
         }
 
@@ -235,4 +261,3 @@ namespace AEther
         static void ReturnEvent<T>(SampleEvent<T> evt) => ArrayPool<T>.Shared.Return(evt.Samples);
     }
 }
-

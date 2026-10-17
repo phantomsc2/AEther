@@ -81,24 +81,36 @@ public sealed class SettingsWindow : ToolWindow
                 else if (property.PropertyType.IsEnum)
                 {
                     var combo = new ComboBox { Header = property.DisplayName, HorizontalAlignment = HorizontalAlignment.Stretch };
-                    foreach (var value in Enum.GetValues(property.PropertyType)) combo.Items.Add(value);
-                    combo.SelectedItem = property.GetValue(Options);
+                    var values = Enum.GetValues(property.PropertyType).Cast<object>();
+                    if (property.PropertyType == typeof(EvidenceMode))
+                        values = values.OrderBy(value => (EvidenceMode)value == EvidenceMode.LocalJointFit ? 0
+                            : (EvidenceMode)value == EvidenceMode.ExactMedian ? 1 : 2);
+                    foreach (var value in values)
+                    {
+                        var label = property.PropertyType.GetField(value.ToString()!)?
+                            .GetCustomAttributes(typeof(DescriptionAttribute), false)
+                            .OfType<DescriptionAttribute>().FirstOrDefault()?.Description ?? value.ToString();
+                        var item = new ComboBoxItem { Content = label, Tag = value };
+                        combo.Items.Add(item);
+                        if (Equals(value, property.GetValue(Options))) combo.SelectedItem = item;
+                    }
                     combo.SelectionChanged += (_, _) =>
                     {
-                        if (combo.SelectedItem == null) return;
-                        property.SetValue(Options, combo.SelectedItem); Changed();
+                        if (combo.SelectedItem is not ComboBoxItem item) return;
+                        property.SetValue(Options, item.Tag); Changed();
                     };
                     editor = combo;
                 }
                 else
                 {
                     var integral = property.PropertyType == typeof(int);
+                    var step = integral ? 1 : .001;
                     var number = new NumberBox
                     {
                         Header = property.DisplayName,
                         Value = Convert.ToDouble(property.GetValue(Options)),
                         SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-                        SmallChange = integral ? 1 : .001,
+                        SmallChange = step,
                         LargeChange = integral ? 10 : .1,
                         NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : 3 },
                         HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -108,7 +120,7 @@ public sealed class SettingsWindow : ToolWindow
                     var slider = new Slider
                     {
                         Minimum = number.Minimum, Maximum = number.Maximum,
-                        StepFrequency = integral ? 1 : .001,
+                        StepFrequency = step,
                         SmallChange = number.SmallChange, LargeChange = number.LargeChange,
                         Value = number.Value,
                     };
@@ -157,7 +169,7 @@ public sealed class SettingsWindow : ToolWindow
             }
             groups.Children.Add(new Expander
             {
-                Header = category.Key, Content = rows, IsExpanded = true,
+                Header = category.Key, Content = rows, IsExpanded = category.Key != "Alternative evidence modes",
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             });
         }

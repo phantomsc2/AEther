@@ -7,6 +7,41 @@ namespace AEther.Tests;
 public class AudioHistoryTests
 {
     [Test]
+    public void DelayedRowsAfterCaptureDropRestorePresentationReserve()
+    {
+        var clock = new HistoryClock();
+        var history = new AudioHistory(1, 100, timeProvider: clock);
+        Post(0);
+        clock.Milliseconds = 100;
+        // One missing row plus analysis latency below the pause-reset threshold.
+        Post(2);
+        for (int row = 3; row < 300; row++)
+        {
+            clock.Milliseconds += 10;
+            Post(row);
+            Assert.That(history.NewestAge, Is.Zero, $"row {row}");
+        }
+        Assert.That(history.History[0].AsSpan(0, 4).ToArray(), Is.All.EqualTo(.5f),
+            "Clock recovery must retain the rolling history.");
+        clock.Milliseconds += 2000;
+        history.Advance(2);
+        Assert.That(history.NewestAge, Is.GreaterThan(history.TimeScale));
+
+        void Post(long row)
+        {
+            history.Post(new(new[] { .5, .5, .5, .5 }, 4, DateTime.UnixEpoch) { AnalysisRow = row }, 1);
+            history.Advance(.01);
+        }
+    }
+
+    sealed class HistoryClock : TimeProvider
+    {
+        public long Milliseconds;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Milliseconds;
+    }
+
+    [Test]
     public void ComponentEnvelopesDependOnAudioRowsRatherThanRenderBatching()
     {
         var batched = new AudioHistory(1, 100);

@@ -30,7 +30,7 @@ namespace AEther
 
         readonly IDFTFilter[] Filters;
         public DFTProcessor(Domain domain, double sampleRate, bool useSIMD,
-            DFTWindow windowFunction = DFTWindow.Hann)
+            DFTWindow windowFunction = DFTWindow.Blackman)
         {
             // Window choice is a signal-processing decision, independent of CPU vector width.
             var cosines = GetWindowCosines(windowFunction);

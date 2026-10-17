@@ -22,7 +22,7 @@ namespace AEther
         public int FrequencyResolution { get; set; } = 12;
 
         [Category("DFT")]
-        [Description("Spectrum publication rate. Exact mode also observes evidence at this rate; per-sample mode updates evidence at the audio sample rate.")]
+        [Description("Spectrum publication and Gaussian local-fit update rate. Legacy exact filters observe at this rate; experimental per-sample tracking updates at the audio sample rate.")]
         public int TimeResolution { get; set; } = 1 << 8;
 
         [Category("DFT")]
@@ -30,49 +30,63 @@ namespace AEther
 
         [Category("DFT")]
         [DisplayName("Window function")]
-        [DefaultValue(DFTWindow.Hann)]
+        [DefaultValue(DFTWindow.Blackman)]
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
-        public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
+        public DFTWindow WindowFunction { get; set; } = DFTWindow.Blackman;
 
         [Category("Visualization")]
         public double HistorySeconds { get; set; } = .3f;
 
-        [Category("Splitter")]
+        [Category("Alternative evidence modes")]
         [DefaultValue(true)]
-        [Description("Subtract the raw-amplitude rectangular background before estimating S/T. Deviations remain signed through filtering; only displayed S/T are clamped. Disable for direct evidence.")]
+        [Description("Subtract the raw-amplitude rectangular background before estimating S/T. Deviations remain signed through filtering; only displayed S/T are clamped. Disable for direct evidence. LocalJointFit always fits the background jointly.")]
         public bool SubtractNoiseBackground { get; set; } = true;
 
         [Category("Splitter")]
-        [DefaultValue(EvidenceMode.ExactMedian)]
-        [Description("Exact rolling medians at the analysis rate, or average-sign tracking at every audio sample.")]
-        public EvidenceMode EvidenceMode { get; set; } = EvidenceMode.ExactMedian;
+        [DefaultValue(EvidenceMode.LocalJointFit)]
+        [Description("Default: rolling Gaussian local fit with time and log-frequency slopes. Exact medians are a legacy alternative; per-sample rolling sign tracking is experimental.")]
+        public EvidenceMode EvidenceMode { get; set; } = EvidenceMode.LocalJointFit;
 
-        [Category("Splitter")]
+        [Category("Joint fit")]
+        [DefaultValue(true)]
+        [Description("LocalJointFit: allow each frequency's S evidence to rise or fall linearly through the time window.")]
+        public bool JointTimeSlopeEnabled { get; set; } = true;
+
+        [Category("Joint fit")]
+        [DefaultValue(true)]
+        [Description("LocalJointFit: allow each frame's T evidence to tilt linearly across log frequency.")]
+        public bool JointFrequencySlopeEnabled { get; set; } = true;
+
+        [Category("Alternative evidence modes")]
         [DefaultValue(1.0)]
-        [Description("Maximum tracker slew in linear amplitude per second in per-sample mode. MedianLength applies only to exact mode.")]
+        [Description("Experimental per-sample mode only: maximum tracker slew in linear amplitude per second. Does not affect the Gaussian fit.")]
         public double SignSlewRate { get; set; } = 1.0;
 
         [Category("Splitter")]
         [DefaultValue(10.0)]
-        [Description("Linear gain for independent robust time evidence. Does not scale magnitude.")]
+        [Description("Display gain for time-directional S evidence. Does not scale magnitude.")]
         public double SineGain { get; set; } = 10.0;
 
         [Category("Splitter")]
         [DefaultValue(10.0)]
-        [Description("Linear gain for independent frequency-median evidence. Does not scale magnitude.")]
+        [Description("Display gain for frequency-directional T evidence. Does not scale magnitude.")]
         public double TransientGain { get; set; } = 10.0;
 
         [Category("Splitter")]
         [DefaultValue(10.0)]
-        [Description("Linear gain for independent robust time-frequency evidence. Does not scale magnitude.")]
+        [Description("Display gain for background N evidence. Does not scale magnitude.")]
         public double NoiseGain { get; set; } = 10.0;
 
         [Category("Splitter")]
-        [Description("Exact mode only: causal time-median window in seconds; also the time extent of 2D evidence.")]
-        public double MedianLength { get; set; } = .2;
+        [DisplayName("Time window (seconds)")]
+        [DefaultValue(.1)]
+        [Description("Gaussian local-fit time extent in seconds; also used by legacy exact filters. Unused by experimental per-sample tracking.")]
+        public double MedianLength { get; set; } = .1;
 
         [Category("Splitter")]
-        [Description("Centered frequency-median width in octaves; also the frequency extent of 2D evidence.")]
+        [DisplayName("Frequency window (octaves)")]
+        [DefaultValue(3.0)]
+        [Description("Centered log-frequency extent of the Gaussian local fit. Also defines neighborhoods for the alternative modes.")]
         public double MedianWidth { get; set; } = 3;
 
         public void Validate(SampleFormat format)

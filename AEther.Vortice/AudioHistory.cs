@@ -109,6 +109,18 @@ public sealed class AudioHistory
                 anchorRow = packet.Row;
                 anchored = true;
             }
+            else if (packet.Row > newestRow)
+            {
+                // Analysis can acquire a lasting delay after capture drops or a
+                // queue backlog. Do not keep presenting ahead of every new row:
+                // that unwritten interval becomes a permanent hole at the core
+                // of scenes that project history outward. Restore the delay
+                // reserve at arrival; between packets wall time still advances
+                // normally so stopped capture eventually goes completely dark.
+                var arrivalRow = anchorRow + (packet.Arrival - anchorTime) * rate;
+                if (arrivalRow > packet.Row)
+                    anchorTime += (arrivalRow - packet.Row) / rate;
+            }
             var row = packet.Row;
             LatestCaptureTimestamp = packet.Capture;
             newestRow = Math.Max(newestRow, row);
@@ -203,4 +215,3 @@ public sealed class AudioHistory
         }
     }
 }
-

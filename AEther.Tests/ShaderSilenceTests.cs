@@ -51,6 +51,13 @@ public class ShaderSilenceTests
             bool lit = false;
             for (int frame = 0; frame < 120; frame++)
             {
+                if (scene == "Mandelbox" && frame == 30)
+                {
+                    // A dropped input row followed by analysis arriving late.
+                    // Keep this same history alive through recovery and silence.
+                    row++;
+                    for (int gap = 0; gap < 5; gap++) Tick();
+                }
                 Post(true);
                 Tick();
                 if (frame % 20 == 19)

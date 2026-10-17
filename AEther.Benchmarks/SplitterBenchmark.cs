@@ -20,7 +20,7 @@ public class SplitterBenchmark
     [GlobalSetup]
     public void Setup()
     {
-        var options = new AnalyzerOptions { FrequencyResolution = FrequencyResolution, MedianLength = MedianLength };
+        var options = new AnalyzerOptions { EvidenceMode = EvidenceMode.ExactMedian, FrequencyResolution = FrequencyResolution, MedianLength = MedianLength };
         var domain = options.Domain;
         var rate = 48000.0 / (48000 / options.TimeResolution);
         splitters = [new(domain, options, rate), new(domain, options, rate)];
