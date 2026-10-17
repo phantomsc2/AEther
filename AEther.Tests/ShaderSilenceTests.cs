@@ -32,6 +32,8 @@ public class ShaderSilenceTests
 
     public static IEnumerable<TestCaseData> Scenes() =>
         Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
+            // Explicitly audio-independent study scene; covered separately below.
+            .Where(path => Path.GetFileNameWithoutExtension(path) != "Mandelbench")
             .OrderBy(path => path, StringComparer.Ordinal)
             .SelectMany(path => new[] { 0.0, 60.0 }.Select(gainDb =>
                 new TestCaseData(Path.GetFileNameWithoutExtension(path), gainDb)));
@@ -116,6 +118,230 @@ public class ShaderSilenceTests
                 if (i % 4 != 3 && pixels[i] != 0) { nonblack++; maximum = Math.Max(maximum, pixels[i]); }
             Assert.That(nonblack, Is.Zero,
                 $"{scene}: {stage}: {nonblack} nonzero RGB channels, peak {maximum}/255. Expected exact black.");
+        }
+    }
+
+    [TestCase(false), TestCase(true), Category("GPU")]
+    public void MandelbenchIsVisibleAndIndependentOfAudio(bool julia)
+    {
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
+            shaderDirectory: ShaderDirectory, timeProvider: clock);
+        renderer.SelectScene("Mandelbench");
+        var parameters = renderer.ActiveShader!.Parameters!;
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "IFS")
+            .Children.Single(p => p.Name == "Juliabox"), julia);
+        clock.Advance();
+        renderer.Render(false);
+        var original = renderer.ReadPixels(false);
+        Assert.That(original.Where((_, i) => i % 4 != 3).Any(v => v > 10), Is.True);
+        foreach (bool music in new[] { true, false })
+        {
+            for (int frame = 0; frame < 12; frame++)
+            {
+                var samples = Enumerable.Repeat(music ? .8 : 0, Bands * 8).ToArray();
+                renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
+                    { AnalysisRow = (music ? 0 : 120) + frame }, 2);
+                clock.Advance();
+                renderer.Render(false);
+            }
+            Assert.That(renderer.ReadPixels(false), Is.EqualTo(original),
+                "Mandelbench must remain static through music and silence.");
+        }
+        {
+            var diagnostics = parameters.Items.Single(p => p.Name == "Jacobian");
+            var view = parameters.Items.Single(p => p.Name == "View");
+            parameters.SetBoolean(diagnostics.Children.Single(p => p.Name == "Enabled"), true);
+            for (int mode = 0; mode < 5; mode++)
+            {
+                parameters.SetBoolean(diagnostics.Children.Single(p => p.Name == "MatrixEntries"), mode == 1);
+                parameters.SetBoolean(diagnostics.Children.Single(p => p.Name == "BoundRatio"), mode == 2);
+                parameters.SetBoolean(view.Children.Single(p => p.Name == "DistanceContours"), mode >= 3);
+                parameters.SetBoolean(view.Children.Single(p => p.Name == "Antialiasing"), mode == 4);
+                clock.Advance();
+                renderer.Render(false);
+                var diagnosticImage = renderer.ReadPixels(false);
+                Assert.That(diagnosticImage, Is.Not.EqualTo(original), $"Diagnostic mode {mode} must replace the default bands.");
+                Assert.That(diagnosticImage.Where((_, i) => i % 4 != 3).Any(v => v > 10), Is.True);
+                clock.Advance();
+                renderer.Render(false);
+                Assert.That(renderer.ReadPixels(false), Is.EqualTo(diagnosticImage));
+            }
+        }
+    }
+
+    [TestCase(false, 0f), TestCase(false, .15f), TestCase(false, .5f), TestCase(false, .85f), TestCase(false, 1f)]
+    [TestCase(true, 0f), TestCase(true, .15f), TestCase(true, .5f), TestCase(true, .85f), TestCase(true, 1f)]
+    [Category("GPU")]
+    public void MandelbenchJacobianMatchesFiniteDifferences(bool julia, float step)
+    {
+        var shaders = Path.Combine(Path.GetTempPath(), "AEther-jacobian-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(shaders, "Common"));
+        Directory.CreateDirectory(Path.Combine(shaders, "Scenes"));
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Common"), "*.hlsl"))
+                File.Copy(file, Path.Combine(shaders, "Common", Path.GetFileName(file)));
+            var source = File.ReadAllText(Path.Combine(ShaderDirectory, "Scenes", "Mandelbench.hlsl"));
+            source = source.Replace("float4 PS(PSin input)", "float4 OriginalPS(PSin input)") + """
+
+                float4 PS(PSin input) : SV_Target
+                {
+                    float3 p = float3((input.UV * 2 - 1) * 1.83 + .017, .237);
+                    float bound;
+                    float3x3 j;
+                    OrbitJacobian(p, bound, j);
+                    float3x3 numerical = 0, coarse = 0;
+                    [unroll] for (int axis = 0; axis < 3; axis++)
+                    {
+                        float3 e = 0;
+                        e[axis] = .0002;
+                        float unused;
+                        float3 fineColumn = (Orbit(p + e, unused) - Orbit(p - e, unused)) / .0004;
+                        e *= 2;
+                        float3 coarseColumn = (Orbit(p + e, unused) - Orbit(p - e, unused)) / .0008;
+                        numerical[0][axis] = fineColumn.x;
+                        numerical[1][axis] = fineColumn.y;
+                        numerical[2][axis] = fineColumn.z;
+                        coarse[0][axis] = coarseColumn.x;
+                        coarse[1][axis] = coarseColumn.y;
+                        coarse[2][axis] = coarseColumn.z;
+                    }
+                    float norm = LargestStretch(j);
+                    float error = 0, convergence = 0;
+                    [unroll] for (int row = 0; row < 3; row++)
+                    {
+                        error = max(error, length(j[row] - numerical[row]));
+                        convergence = max(convergence, length(coarse[row] - numerical[row]));
+                    }
+                    float tolerance = .02 * max(1, norm);
+                    // Omit points where the finite-difference stencil crosses a crease.
+                    bool incorrectJacobian = convergence < tolerance * .25 && error > tolerance;
+                    bool incorrectBound = norm > bound * 1.001 + .00001;
+                    float3x3 rankOne = float3x3(1,2,3, 2,4,6, 0,0,0);
+                    bool incorrectNorm = abs(LargestStretch(rankOne) - sqrt(70.0)) > .0001
+                        || abs(LargestStretch(3 * Identity) - 3) > .0001
+                        || LargestStretch((float3x3)0) != 0;
+                    return float4(incorrectJacobian ? 1 : 0, incorrectBound ? 1 : 0, incorrectNorm ? 1 : 0, 1);
+                }
+                """;
+            File.WriteAllText(Path.Combine(shaders, "Scenes", "JacobianProbe.hlsl"), source);
+            using var window = new HiddenWindow();
+            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60, shaderDirectory: shaders);
+            var parameters = renderer.ActiveShader!.Parameters!;
+            var ifs = parameters.Items.Single(p => p.Name == "IFS");
+            parameters.SetBoolean(ifs.Children.Single(p => p.Name == "Juliabox"), julia);
+            parameters.SetFloat(ifs.Children.Single(p => p.Name == "Step"), step);
+            parameters.SetFloat(ifs.Children.Single(p => p.Name == "Iterations"), 2f / 12);
+            renderer.Render(false);
+            Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0), Is.True,
+                "Red: analytic derivative differs; green: scalar bound violated; blue: singular value solve failed.");
+        }
+        finally
+        {
+            var temporaryRoot = Path.GetFullPath(Path.GetTempPath());
+            if (!Path.GetFullPath(shaders).StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Jacobian probe cleanup escaped the temporary directory.");
+            Directory.Delete(shaders, true);
+        }
+    }
+
+    [Test, Category("GPU")]
+    public void MandelbenchSliceDistanceMatchesCircle()
+    {
+        var shaders = Path.Combine(Path.GetTempPath(), "AEther-distance-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(shaders, "Common"));
+        Directory.CreateDirectory(Path.Combine(shaders, "Scenes"));
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Common"), "*.hlsl"))
+                File.Copy(file, Path.Combine(shaders, "Common", Path.GetFileName(file)));
+            var source = File.ReadAllText(Path.Combine(ShaderDirectory, "Scenes", "Mandelbench.hlsl"));
+            source = source.Replace("float4 PS(PSin input)", "float4 OriginalPS(PSin input)") + """
+
+                float4 PS(PSin input) : SV_Target
+                {
+                    float2 p = (2 * input.UV - 1) * float2(AspectRatio, 1) * 2;
+                    float2 sample = DistanceField.SampleLevel(DistanceSampler, .5 + (input.UV - .5) / 1.5, 0);
+                    float exact = length(p) - (2 + 30 * Search.EscapeRadius);
+                    float tolerance = 4 / Resolution.y;
+                    return float4(sample.y < .99 ? 1 : 0, abs(sample.x - exact) > tolerance ? 1 : 0,
+                        abs(exact) > tolerance && sample.x * exact < 0 ? 1 : 0, 1);
+                }
+                """;
+            File.WriteAllText(Path.Combine(shaders, "Scenes", "DistanceProbe.hlsl"), source);
+            using var window = new HiddenWindow();
+            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60, shaderDirectory: shaders);
+            var parameters = renderer.ActiveShader!.Parameters!;
+            var ifs = parameters.Items.Single(p => p.Name == "IFS");
+            parameters.SetFloat(ifs.Children.Single(p => p.Name == "Iterations"), 0);
+            parameters.SetFloat(ifs.Children.Single(p => p.Name == "Step"), 0);
+            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Search").Children.Single(p => p.Name == "EscapeRadius"), 0);
+            renderer.Render(false);
+            Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0), Is.True,
+                "The sampled circle distance must agree with the exact signed distance within one display pixel, inside and outside.");
+        }
+        finally
+        {
+            var root = Path.GetFullPath(Path.GetTempPath());
+            if (!Path.GetFullPath(shaders).StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Distance probe cleanup escaped the temporary directory.");
+            Directory.Delete(shaders, true);
+        }
+    }
+
+    [Test, Category("GPU")]
+    public void MandelbenchDistancePreview()
+    {
+        const int width = 480, height = 300;
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle, width, height, Bands, 60, shaderDirectory: ShaderDirectory);
+        renderer.SelectScene("Mandelbench");
+        var parameters = renderer.ActiveShader!.Parameters!;
+        var search = parameters.Items.Single(p => p.Name == "Search");
+        var view = parameters.Items.Single(p => p.Name == "View");
+        var directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "artifacts", "mandelbench-distance");
+        Directory.CreateDirectory(directory);
+        var original = Capture("bands");
+        parameters.SetBoolean(search.Children.Single(p => p.Name == "ShowFailures"), true);
+        var failures = Capture("failures");
+        int failed = Enumerable.Range(0, width * height)
+            .Count(i => failures[4 * i] > 100 && failures[4 * i + 1] < 30 && failures[4 * i + 2] > 50);
+        TestContext.Progress.WriteLine($"Closest-point search failures: {failed}/{width * height} ({100.0 * failed / (width * height):F2}%).");
+        Assert.That(failed, Is.Zero, "The default slice must have a propagated boundary sample everywhere in view.");
+        parameters.SetBoolean(search.Children.Single(p => p.Name == "ShowFailures"), false);
+        parameters.SetBoolean(view.Children.Single(p => p.Name == "DistanceContours"), true);
+        foreach (float level in new[] { .25f, .5f, .7f })
+        {
+            parameters.SetFloat(view.Children.Single(p => p.Name == "DistanceLevel"), level);
+            Capture("level-" + level.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        parameters.SetBoolean(view.Children.Single(p => p.Name == "DistanceContours"), false);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "Appearance edits must preserve the cached distance geometry.");
+        var scale = parameters.Items.Single(p => p.Name == "IFS").Children.Single(p => p.Name == "Scale");
+        float originalScale = parameters.GetFloat(scale);
+        parameters.SetFloat(scale, .25f);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false), Is.Not.EqualTo(original), "Geometry edits must rebuild the field.");
+        parameters.SetFloat(scale, originalScale);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
+        Assert.That(renderer.ReloadShaders(), Is.True, renderer.ShaderError);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "Shader reload must invalidate the cached programs.");
+        renderer.Resize(320, 200);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false).Length, Is.EqualTo(320 * 200 * 4));
+
+        byte[] Capture(string name)
+        {
+            renderer.Render(false);
+            var pixels = renderer.ReadPixels(false);
+            File.WriteAllBytes(Path.Combine(directory, name + ".rgba"), pixels);
+            TestContext.AddTestAttachment(Path.Combine(directory, name + ".rgba"), "480x300 RGBA8 shader readback");
+            return pixels;
         }
     }
 

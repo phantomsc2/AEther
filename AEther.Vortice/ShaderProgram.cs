@@ -26,14 +26,14 @@ internal sealed class ShaderProgram : IDisposable
             if (binding.BindCount != 1) throw new InvalidOperationException($"{file}: resource arrays are not supported ({binding.Name}).");
             var supported = binding.Type switch
             {
-                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants",
-                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler",
+                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants",
+                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler",
                 ShaderInputType.Texture => binding.Name is "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1"
-                    or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction",
+                    or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField",
                 _ => false,
             };
-            if (entry == "PS" && binding.Name is "FluidConstants" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler")
+            if (entry == "PS" && binding.Name is "FluidConstants" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler" or "DistanceConstants" or "DistanceSeeds")
                 supported = false;
             if (!supported) throw new InvalidOperationException($"{file}: unknown {binding.Type} resource '{binding.Name}'.");
             bindings.Add(binding.Name, binding);
@@ -110,6 +110,7 @@ public sealed class ShaderScene : IDisposable
     internal bool GeometryAdditive { get; }
     internal ShaderProgram? Composite { get; }
     internal MandelFluidSimulation.Programs? Fluid { get; }
+    internal MandelbenchDistanceField.Programs? Distance { get; }
     internal ShaderScene(ID3D11Device device, string name, string source, string root)
     {
         Name = name;
@@ -138,8 +139,13 @@ public sealed class ShaderScene : IDisposable
             }
             if (Program.Uses("FluidDye") || Composite?.Uses("FluidDye") == true)
                 Fluid = new(device, source + ShaderSource.Read(root, "Common/FluidSimulation.hlsl"));
+            if (Program.Uses("DistanceField"))
+            {
+                if (Parameters == null) throw new InvalidOperationException("DistanceField requires scene Parameters for its geometry passes.");
+                Distance = new(device, source);
+            }
         }
         catch { Dispose(); throw; }
     }
-    public void Dispose() { Program.Dispose(); Fluid?.Dispose(); GeometryVertex?.Dispose(); Composite?.Dispose(); }
+    public void Dispose() { Program.Dispose(); Fluid?.Dispose(); Distance?.Dispose(); GeometryVertex?.Dispose(); Composite?.Dispose(); }
 }

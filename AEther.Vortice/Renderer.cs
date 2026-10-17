@@ -30,6 +30,7 @@ public sealed partial class Renderer : IDisposable
     ID3D11PixelShader outputPixel = null!;
 
     MandelFluidSimulation? fluid;
+    MandelbenchDistanceField? distanceField;
     string? previousScene;
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
@@ -183,6 +184,7 @@ public sealed partial class Renderer : IDisposable
         ReleaseGeometryTargets();
         // Resizing changes the physical domain. Recreate lazily on next fluid frame.
         fluid?.Dispose(); fluid = null;
+        distanceField?.Dispose(); distanceField = null;
     }
 
     public void Render(bool present = true)
@@ -257,6 +259,14 @@ public sealed partial class Renderer : IDisposable
             context.RSSetViewport(0, 0, width, height);
         }
         previousScene = SceneName;
+        if (active.Distance != null)
+        {
+            distanceField ??= new(device, context, width, height);
+            distanceField.Update(active.Distance, active.Parameters!, namedBuffers);
+            namedTextures["DistanceField"] = distanceField.Field;
+            namedSamplers["DistanceSampler"] = distanceField.Sampler;
+            context.RSSetViewport(0, 0, width, height);
+        }
         context.OMSetRenderTargets(output.SceneTarget);
         (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         context.Draw(3, 0);
@@ -292,6 +302,7 @@ public sealed partial class Renderer : IDisposable
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();
+        distanceField?.Dispose();
         ReleaseGeometryTargets(); geometryDepthState?.Dispose();
         geometryNoDepthState?.Dispose(); geometryAdditiveState?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();

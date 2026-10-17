@@ -36,7 +36,10 @@ and `UV : TEXCOORDS`. The host supplies the fullscreen triangle vertex shader.
 Scene output follows the existing display-encoded RGB convention; presentation
 decodes it for scRGB output. Alpha should be one.
 
-Every scene must eventually turn black without music. Retained history, trails
+Music scenes must eventually turn black without music. The explicitly
+audio-independent `Mandelbench` study scene is an exception; it has a separate
+GPU regression for visibility and independence from audio and elapsed time.
+Retained history, trails
 and fluid may decay naturally; procedural backgrounds and ambient illumination
 must also lose their light. `VisualBreath` is a decaying audio envelope suitable
 for background illumination that should remain visible during music.
@@ -105,6 +108,14 @@ resources, resource arrays and unsupported parameter types fail reload before an
 working program is replaced. Engine inputs use reserved names and must retain their
 declared types and layouts.
 
+Referencing `DistanceField` requests Mandelbench's cached 2D boundary-distance
+passes (`DistanceSeedPS`, `DistanceJumpPS`, `DistanceResolvePS`). These use the
+scene's `Parameters`, `DistanceSeeds` and `DistanceConstants`; the final scene
+reads `Texture2D<float2> DistanceField` with `DistanceSampler`. The existing
+Mandelbench geometry/view controls are the cache contract. Geometry edits,
+resize and reload rebuild the field; contour appearance edits reuse it.
+This renderer capability requires one application rebuild/restart.
+
 The Gaussian STBR fit estimates sustained spectral structure, broadband temporal
 structure, local background, and an unexplained residual. RGB contains
 positive S/T and background B; alpha is spectral amplitude A, not residual R. All four channels use input-gained amplitude units, with no component display gains.
@@ -161,7 +172,8 @@ full preprocessor-aware include resolver; avoid missing includes in inactive bra
 
 ## Verification
 
-The GPU silence regression discovers every scene, verifies silent startup and
+The GPU silence regression discovers every music scene (excluding the explicitly
+audio-independent `Mandelbench` workbench), verifies silent startup and
 visible musical excitation, then keeps rendering the same scene for 10,000
 frames at 60 Hz (166.7 seconds of simulated silence). It tests both stopped
 capture and continuing zero-valued audio packets. Each of the following 60
