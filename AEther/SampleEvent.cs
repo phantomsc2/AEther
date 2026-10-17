@@ -14,6 +14,7 @@ namespace AEther
         public long ByteIndex { get; init; }
         public long CaptureTimestamp { get; init; }
         public long AnalysisTimestamp { get; init; }
+        public GlobalEvidence GlobalEvidence { get; init; }
 
         public Memory<T> GetChannel(int channelIndex)
         {

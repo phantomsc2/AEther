@@ -12,6 +12,14 @@ namespace AEther
         readonly int WindowSize;
         readonly double Normalization;
         readonly RingBuffer<double> Buffer;
+        int nonzero;
+
+        bool IsEmpty(double incoming, double outgoing)
+        {
+            if (outgoing != 0) nonzero--;
+            if (incoming != 0) nonzero++;
+            return nonzero == 0;
+        }
 
         public WindowedDFTFilterSIMD(double frequency, double frequencyResolution, double sampleRate, double[] window)
         {
@@ -68,7 +76,8 @@ namespace AEther
 
         public void Process(double newSample)
         {
-            var input = new Vector<double>(newSample - Buffer.Add(newSample));
+            var oldSample = Buffer.Add(newSample);
+            var input = new Vector<double>(newSample - oldSample);
             for (var g = 0; g < Real.Length; ++g)
             {
                 var re = Real[g];
@@ -76,6 +85,7 @@ namespace AEther
                 Real[g] = CoefficientReal[g] * re - CoefficientImaginary[g] * im + input;
                 Imaginary[g] = CoefficientReal[g] * im + CoefficientImaginary[g] * re;
             }
+            if (IsEmpty(newSample, oldSample)) { Array.Clear(Real); Array.Clear(Imaginary); }
         }
 
         public void Process(ReadOnlyMemory<double> samples)
@@ -105,6 +115,7 @@ namespace AEther
                     var next0 = a0 * r0 - b0 * i0 + input;
                     i0 = a0 * i0 + b0 * r0;
                     r0 = next0;
+                    if (IsEmpty(source[k], destination[k])) r0 = i0 = Vector<double>.Zero;
                 }
                 source.CopyTo(destination);
                 samples = samples[destination.Length..];
@@ -131,6 +142,7 @@ namespace AEther
                     var next1 = a1 * r1 - b1 * i1 + input;
                     i1 = a1 * i1 + b1 * r1;
                     r1 = next1;
+                    if (IsEmpty(source[k], destination[k])) r0 = i0 = r1 = i1 = Vector<double>.Zero;
                 }
                 source.CopyTo(destination);
                 samples = samples[destination.Length..];
@@ -163,6 +175,7 @@ namespace AEther
                     var next2 = a2 * r2 - b2 * i2 + input;
                     i2 = a2 * i2 + b2 * r2;
                     r2 = next2;
+                    if (IsEmpty(source[k], destination[k])) r0 = i0 = r1 = i1 = r2 = i2 = Vector<double>.Zero;
                 }
                 source.CopyTo(destination);
                 samples = samples[destination.Length..];
@@ -178,11 +191,12 @@ namespace AEther
             {
                 var destination = Buffer.GetMemory(samples.Length).Span;
                 var source = samples.Span[..destination.Length];
-                // Each group can traverse the same outgoing samples before the
-                // ring is overwritten. This also keeps arbitrary larger kernels
-                // vectorized without allocating scratch storage per block.
+                // Each group traverses the outgoing samples before overwrite.
+                // Replay occupancy from the same initial count for every group.
+                var initialNonzero = nonzero;
                 for (var g = 0; g < Real.Length; ++g)
                 {
+                    nonzero = initialNonzero;
                     var re = Real[g]; var im = Imaginary[g];
                     var a = CoefficientReal[g]; var b = CoefficientImaginary[g];
                     for (var k = 0; k < source.Length; ++k)
@@ -191,6 +205,7 @@ namespace AEther
                         var next = a * re - b * im + input;
                         im = a * im + b * re;
                         re = next;
+                        if (IsEmpty(source[k], destination[k])) re = im = Vector<double>.Zero;
                     }
                     Real[g] = re; Imaginary[g] = im;
                 }

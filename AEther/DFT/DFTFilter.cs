@@ -9,6 +9,7 @@ namespace AEther
         public int Length => Buffer.Length;
 
         Complex State;
+        int nonzero;
 
         readonly Complex Coefficient;
         readonly double Frequency;
@@ -41,6 +42,9 @@ namespace AEther
             var oldSample = Buffer.Add(newSample);
             var input = newSample - oldSample;
             State = Coefficient * State + input;
+            if (oldSample != 0) nonzero--;
+            if (newSample != 0) nonzero++;
+            if (nonzero == 0) State = Complex.Zero;
         }
 
         public void Process(ReadOnlyMemory<double> samples)
@@ -54,6 +58,9 @@ namespace AEther
                 {
                     var input = samples.Span[i] - dst.Span[i];
                     State = Coefficient * State + input;
+                    if (dst.Span[i] != 0) nonzero--;
+                    if (samples.Span[i] != 0) nonzero++;
+                    if (nonzero == 0) State = Complex.Zero;
                 }
 
                 samples[0..dst.Length].CopyTo(dst);

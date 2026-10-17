@@ -42,6 +42,12 @@ namespace AEther.Tests
             var analyzer = new Analyzer(Format, Options(2));
             var rows = new List<long>();
             var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var support = new List<int>();
+            analyzer.JointEvidenceAvailable += (_, evt) =>
+            {
+                support.Add(evt.GetChannel(0).Span[0].TimeSamples);
+                Assert.That(evt.GetChannel(0).Span[0].TimeSamples, Is.EqualTo(evt.GlobalEvidence.TimeSamples));
+            };
             analyzer.SamplesAnalyzed += (_, evt) =>
             {
                 rows.Add(evt.AnalysisRow);
@@ -61,6 +67,7 @@ namespace AEther.Tests
                 await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             }
             Assert.That(rows, Is.EqualTo(new long[] { 0, 1, 6 }));
+            Assert.That(support, Is.EqualTo(new[] { 1, 2, 1 }), "Both histories restart at a dropped-row gap.");
         }
 
         [Test]
@@ -188,7 +195,8 @@ namespace AEther.Tests
             {
                 var processor = new DFTProcessor(options.Domain, Format.SampleRate, false, window);
                 var samples = Enumerable.Range(0, 80)
-                    .Select(i => (double)BitConverter.ToSingle(bytes, (2 * i + c) * sizeof(float))).ToArray();
+                    .Select(i => (double)BitConverter.ToSingle(bytes, (2 * i + c) * sizeof(float))
+                        * Math.Pow(10, options.InputGainDb / 20)).ToArray();
                 processor.Process(samples);
                 var expected = new double[options.Domain.Length];
                 processor.Output(expected);
@@ -218,4 +226,3 @@ namespace AEther.Tests
         }
     }
 }
-

@@ -11,28 +11,30 @@ public sealed class Splitter
     public const int OutputStride = 4;
     const double Epsilon = 2.220446049250313e-16;
     readonly int Bands, Length;
-    readonly bool TimeSlope, FrequencySlope;
+    readonly bool TimeSlope, FrequencySlope, FullDomain;
     readonly double Rate, Resolution;
     readonly int[] First, End;
-    readonly double[] History, RowHistory, TiltHistory, Magnitude, Current, RowMeans, RowTilts, TimeTrends;
+    readonly double[] RawHistory, RowMaximum, History, RowHistory, TiltHistory, Magnitude, Current, RowMeans, RowTilts, TimeTrends;
     readonly Moment[] Columns, Rows, Tilts;
     readonly Sum[] TimeCross;
     readonly JointEvidence[] Results;
     int Next, Count, RebaseIndex;
     double Unit = 1;
+    double GlobalBackground, GlobalTransient, GlobalStructure, GlobalResidual;
 
-    /// <summary>Signed, ungained effects and residual RMS. Valid until the next Process call.</summary>
+    /// <summary>Signed effects and residual RMS in input amplitude units. Valid until the next Process/Reset call.</summary>
     public ReadOnlyMemory<JointEvidence> Estimates => Results;
 
     static int Odd(double count) => Math.Max(1, (int)Math.Min(65535, Math.Round(count))) | 1;
 
-    public Splitter(Domain domain, AnalyzerOptions options, double? analysisRate = null)
+    public Splitter(Domain domain, AnalyzerOptions options, double? analysisRate = null, bool fullDomain = false)
     {
         var rate = analysisRate ?? options.TimeResolution;
         if (!double.IsFinite(rate) || rate <= 0) throw new ArgumentOutOfRangeException(nameof(analysisRate));
         options.ValidateSplitter(domain.Resolution, rate);
         if (domain.Length <= 0) throw new ArgumentOutOfRangeException(nameof(domain));
         Bands = domain.Length;
+        FullDomain = fullDomain;
         Rate = rate; Resolution = domain.Resolution;
         TimeSlope = options.JointTimeSlopeEnabled;
         FrequencySlope = options.JointFrequencySlopeEnabled;
@@ -41,10 +43,12 @@ public sealed class Splitter
         First = new int[Bands]; End = new int[Bands];
         for (var k = 0; k < Bands; ++k)
         {
-            First[k] = Math.Max(0, k - width / 2);
-            End[k] = Math.Min(Bands, k + width / 2 + 1);
+            First[k] = fullDomain ? 0 : Math.Max(0, k - width / 2);
+            End[k] = fullDomain ? Bands : Math.Min(Bands, k + width / 2 + 1);
         }
         History = new double[checked(Bands * Length)];
+        RawHistory = new double[History.Length];
+        RowMaximum = new double[Length];
         RowHistory = new double[History.Length];
         TiltHistory = FrequencySlope ? new double[History.Length] : Array.Empty<double>();
         Magnitude = new double[Bands]; Current = new double[Bands]; RowMeans = new double[Bands];
@@ -58,63 +62,80 @@ public sealed class Splitter
     {
         if (input.Length != Bands || output.Length < Splitter.OutputStride * Bands)
             throw new ArgumentException("Spectrum dimensions do not match the joint splitter.");
+        for (var k = 0; k < Bands; ++k)
+            Magnitude[k] = SpectralMath.FromLog(input.Span[k]);
+        ProcessLinear(Magnitude, output);
+    }
+
+    /// <summary>Fit gained linear magnitudes. Nonpositive/nonfinite observations are zero.</summary>
+    public void ProcessLinear(ReadOnlyMemory<double> input, Memory<double> output)
+    {
+        if (input.Length != Bands || output.Length < OutputStride * Bands)
+            throw new ArgumentException("Spectrum dimensions do not match the joint splitter.");
         double maximum = 0;
         for (var k = 0; k < Bands; ++k)
         {
-            var value = double.IsFinite(input.Span[k]) ? Math.Pow(10, input.Span[k]) : 0;
-            Magnitude[k] = double.IsFinite(value) ? value : 0;
+            Magnitude[k] = SpectralMath.Sanitize(input.Span[k]);
             maximum = Math.Max(maximum, Magnitude[k]);
         }
-        // Ordinary audio stays in one unit system. Exceptional magnitudes are
-        // rescaled before squaring so finite input cannot overflow the moments.
-        if (maximum > Unit || Count == 0 && maximum > 0)
+        var offset = Next * Bands;
+        Magnitude.CopyTo(RawHistory, offset);
+        RowMaximum[Next] = maximum;
+        foreach (var peak in RowMaximum) maximum = Math.Max(maximum, peak);
+        // Keep original observations so quiet values survive a temporary enormous
+        // range. Rebuild bounded moments when the retained range changes materially.
+        if (maximum > Unit || maximum > 0 && (Count == 0 || maximum < Math.ScaleB(Unit, -32)))
         {
             var nextUnit = Math.ScaleB(1, Math.Clamp(Math.ILogB(maximum) + 2, -1074, 1023));
-            nextUnit = Math.Max(nextUnit, maximum);
-            Rescale(Unit / nextUnit);
-            Unit = nextUnit;
+            Unit = Math.Max(nextUnit, maximum);
+            Count = Math.Min(Count + 1, Length);
+            Next = (Next + 1) % Length;
+            RebuildHistory();
         }
-        var offset = Next * Bands;
-        for (var k = 0; k < Bands; ++k)
+        else
         {
-            var value = Magnitude[k] / Unit;
-            Current[k] = value;
-            var oldValue = History[offset + k];
-            if (TimeSlope)
+            for (var k = 0; k < Bands; ++k)
             {
-                // Cross moment against centered chronological sample indices.
-                // When the window advances, all retained coordinates shift by -1.
-                TimeCross[k].Add(Count < Length
-                    ? .5 * Count * (value - Columns[k].Mean)
-                    : .5 * (Count - 1) * (value - oldValue) - Count * (Columns[k].Mean - oldValue));
+                var value = Magnitude[k] / Unit;
+                Current[k] = value;
+                var oldValue = History[offset + k];
+                if (TimeSlope)
+                {
+                    // Cross moment against centered chronological sample indices.
+                    // When the window advances, all retained coordinates shift by -1.
+                    TimeCross[k].Add(Count < Length
+                        ? .5 * Count * (value - Columns[k].Mean)
+                        : .5 * (Count - 1) * (value - oldValue) - Count * (Columns[k].Mean - oldValue));
+                }
+                Columns[k].Update(oldValue, value, Count, Length);
+                if (Columns[k].Nonzero == 0) TimeCross[k] = default;
+                History[offset + k] = value;
             }
-            Columns[k].Update(oldValue, value, Count, Length);
-            if (Columns[k].Nonzero == 0) TimeCross[k] = default;
-            History[offset + k] = value;
-        }
-        NeighborhoodMeans();
-        for (var k = 0; k < Bands; ++k)
-        {
-            Rows[k].Update(RowHistory[offset + k], RowMeans[k], Count, Length);
-            RowHistory[offset + k] = RowMeans[k];
-            if (FrequencySlope)
+            NeighborhoodMeans();
+            for (var k = 0; k < Bands; ++k)
             {
-                Tilts[k].Update(TiltHistory[offset + k], RowTilts[k], Count, Length);
-                TiltHistory[offset + k] = RowTilts[k];
+                Rows[k].Update(RowHistory[offset + k], RowMeans[k], Count, Length);
+                RowHistory[offset + k] = RowMeans[k];
+                if (FrequencySlope)
+                {
+                    Tilts[k].Update(TiltHistory[offset + k], RowTilts[k], Count, Length);
+                    TiltHistory[offset + k] = RowTilts[k];
+                }
             }
+            Count = Math.Min(Count + 1, Length);
+            Next = (Next + 1) % Length;
+            // Rebuild one column and its neighborhood mean/tilt histories per row. This bounds
+            // long-run downdate drift at O(Length) extra work, not O(Bands*Length*Width).
+            Rebase(RebaseIndex);
+            RebaseIndex = (RebaseIndex + 1) % Bands;
         }
-        Count = Math.Min(Count + 1, Length);
-        Next = (Next + 1) % Length;
-        // Rebuild one column and its neighborhood mean/tilt histories per row. This bounds
-        // long-run downdate drift at O(Length) extra work, not O(Bands*Length*Width).
-        Rebase(RebaseIndex);
-        RebaseIndex = (RebaseIndex + 1) % Bands;
 
         var timeFactor = TimeSlope && Count > 1 ? 6.0 / (Count * ((double)Count + 1)) : 0;
         var timeVariance = TimeSlope && Count > 1 ? (Count + 1.0) / (3 * (Count - 1)) : 0;
         for (var k = 0; k < Bands; ++k)
             TimeTrends[k] = TimeCross[k].Value * timeFactor;
         Sum means = default, moments = default, trends = default, trendSquares = default, trendPositions = default;
+        Sum globalSquares = default;
         int left = 0, right = 0, active = 0;
         for (var k = 0; k < Bands; ++k)
         {
@@ -176,6 +197,18 @@ public sealed class Splitter
                 if (Math.Abs(sine) <= effectRoundoff) sine = 0;
                 if (Math.Abs(transient) <= effectRoundoff) transient = 0;
             }
+            if (FullDomain)
+            {
+                globalSquares.Add(sine * sine);
+                if (k == 0)
+                {
+                    GlobalBackground = Math.Max(0, background);
+                    GlobalTransient = RowMeans[0] - GlobalBackground;
+                    if (Math.Abs(GlobalTransient) <= 64 * Epsilon * Math.Max(GlobalBackground, Math.Abs(RowMeans[0])))
+                        GlobalTransient = 0;
+                    GlobalResidual = rms;
+                }
+            }
             Results[k] = new JointEvidence(sine * Unit, transient * Unit, Math.Max(0, background) * Unit,
                 rms * Unit, Magnitude[k], width, Count)
             {
@@ -187,6 +220,31 @@ public sealed class Splitter
             EvidenceOutput.Write(Results[k].Sine, Results[k].Transient, Results[k].Background,
                 Magnitude[k], output.Span.Slice(k * Splitter.OutputStride, Splitter.OutputStride));
         }
+        GlobalStructure = Math.Sqrt(Math.Max(0, globalSquares.Value / Bands));
+    }
+
+    /// <summary>Forget support after a discontinuity; gaps are not zero observations.</summary>
+    public void Reset()
+    {
+        Array.Clear(History); Array.Clear(RowHistory); Array.Clear(TiltHistory);
+        Array.Clear(RawHistory); Array.Clear(RowMaximum);
+        Array.Clear(Columns); Array.Clear(Rows); Array.Clear(Tilts); Array.Clear(TimeCross);
+        Array.Clear(Results);
+        Next = Count = RebaseIndex = 0;
+        Unit = 1;
+        GlobalBackground = GlobalTransient = GlobalStructure = GlobalResidual = 0;
+    }
+
+    internal GlobalEvidence GlobalSummary()
+    {
+        if (!FullDomain) throw new InvalidOperationException("Global summaries require full frequency support.");
+        var first = Results[0];
+        return new GlobalEvidence(GlobalBackground * Unit, GlobalTransient * Unit,
+            GlobalStructure * Unit, GlobalResidual * Unit, Bands, Count)
+        {
+            TimeBasisRank = first.TimeBasisRank,
+            FrequencyBasisRank = first.FrequencyBasisRank,
+        };
     }
 
     void NeighborhoodMeans()
@@ -233,13 +291,19 @@ public sealed class Splitter
         }
     }
 
-    void Rescale(double factor)
+    void RebuildHistory()
     {
-        if (Count == 0) return;
-        for (var i = 0; i < History.Length; ++i)
+        for (var t = 0; t < Count; ++t)
         {
-            History[i] *= factor; RowHistory[i] *= factor;
-            if (FrequencySlope) TiltHistory[i] *= factor;
+            var offset = ((Next - Count + t + Length) % Length) * Bands;
+            for (var k = 0; k < Bands; ++k)
+                History[offset + k] = Current[k] = RawHistory[offset + k] / Unit;
+            NeighborhoodMeans();
+            for (var k = 0; k < Bands; ++k)
+            {
+                RowHistory[offset + k] = RowMeans[k];
+                if (FrequencySlope) TiltHistory[offset + k] = RowTilts[k];
+            }
         }
         for (var k = 0; k < Bands; ++k) Rebase(k);
     }

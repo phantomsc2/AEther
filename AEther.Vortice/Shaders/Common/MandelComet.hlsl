@@ -1,7 +1,16 @@
 // All positions use the solver's viewport-height coordinates (positive Y down).
 // The display and simulation share this projection, boundary and emitter.
 float CometTime() { return S * Quality.MovementSpeed * 10; }
-float CometShapeTime() { return ShapeTime * Quality.MovementSpeed * 20; }
+float CometShapeTime()
+{
+#ifdef MANDEL_FLUID_V3
+    // Keep v2's silhouette and folds, but tumble/morph more actively during
+    // both rhythmic and sustained passages using the inertial musical clock.
+    return (ShapeTime * 1.25 + .35 * S) * Quality.MovementSpeed * 20;
+#else
+    return ShapeTime * Quality.MovementSpeed * 20;
+#endif
+}
 float CometNoiseResponse(float amplitude)
 {
     // Suppress low detector leakage, then span a wide distortion range rather

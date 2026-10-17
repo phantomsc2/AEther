@@ -8,13 +8,31 @@ cbuffer FrameConstants
     float VisualEnergy, VisualFlash, VisualGlow, VisualSustain;
     float S, HistoryAvailable, HistoryNewestAge, FractalDepth;
     float2 Resolution; float MusicalMovementTime, HistorySeconds;
+    // Raw amplitude units: (current S RMS, signed broadband T, rectangle mean B, interaction RMS).
+    float4 GlobalSTBR;
 };
 Texture2D<float4> Spectrum0;
 Texture2D<float4> Spectrum1;
 Texture2D<float4> Histogram0;
 Texture2D<float4> Histogram1;
+Texture2D<float4> GlobalHistogram;
 SamplerState Linear;
 #define HullHistory Linear
+// Age is in seconds. Shares the spectral history's coordinates, masks and interpolation.
+// Use this for historical modulation or exact row-aligned local B - global B.
+float4 GlobalSTBRAtAge(float seconds)
+{
+    float age = max(0, seconds) / max(HistorySeconds, 1e-6) * HistorySpan;
+    if (age > HistoryAvailable || age < HistoryNewestAge) return 0;
+    return GlobalHistogram.SampleLevel(Linear, float2(.5, HistogramShift - age), 0);
+}
+// Renderer sensitivity h must be positive. Zero remains zero; negative T has a separate response.
+float GlobalAmplitudeResponse(float amplitude, float h)
+{
+    float x = max(0, amplitude);
+    // This form also stays bounded for the largest finite float magnitudes.
+    return x > h ? 1 / (1 + h / x) : x / (h + x);
+}
 struct PSin { float4 Position : SV_POSITION; float2 UV : TEXCOORDS; };
 PSin VS(uint id : SV_VertexID)
 {

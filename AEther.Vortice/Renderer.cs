@@ -36,8 +36,8 @@ public sealed partial class Renderer : IDisposable
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
     ID3D11Buffer frameBuffer = null!;
-    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
-    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
+    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[5];
+    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[5];
     readonly string shaderDirectory;
     int width, height;
     double previousTime;
@@ -79,15 +79,15 @@ public sealed partial class Renderer : IDisposable
             output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain));
             if (attachSwapChain == null)
                 factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
-            frameBuffer = Own(device.CreateBuffer(96, BindFlags.ConstantBuffer));
+            frameBuffer = Own(device.CreateBuffer((uint)Marshal.SizeOf<Frame>(), BindFlags.ConstantBuffer));
 
             namedBuffers.Add("FrameConstants", frameBuffer);
 
-            for (var i = 0; i < 4; i++)
+            for (var i = 0; i < textures.Length; i++)
             {
                 textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
                 {
-                    Width = (uint)bands, Height = (uint)(i < 2 ? 1 : Audio.Rows),
+                    Width = (uint)(i == 4 ? 1 : bands), Height = (uint)(i < 2 ? 1 : Audio.Rows),
                     MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
                     SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
                     BindFlags = BindFlags.ShaderResource,
@@ -221,11 +221,11 @@ public sealed partial class Renderer : IDisposable
         // Upload after draining the mailbox; capture/analysis never touches a graphics lock.
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
-        for (var i = 0; i < 4; i++)
+        for (var i = 0; i < textures.Length; i++)
         {
-            var source = i < 2 ? Audio.Spectrum[i] : Audio.History[i - 2];
+            var source = i == 4 ? Audio.GlobalHistory : i < 2 ? Audio.Spectrum[i] : Audio.History[i - 2];
             fixed (float* data = source)
-                context.UpdateSubresource(textures[i], 0, null, (IntPtr)data, (uint)(Audio.Bands * 16), 0);
+                context.UpdateSubresource(textures[i], 0, null, (IntPtr)data, (uint)((i == 4 ? 1 : Audio.Bands) * 16), 0);
         }
         var frame = new Frame
         {
@@ -236,6 +236,7 @@ public sealed partial class Renderer : IDisposable
             E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge,
                 Audio.FractalDepth),
             F = new(width, height, (float)movementTime, (float)Audio.Seconds),
+            GlobalSTBR = Audio.GlobalSTBR,
         };
         context.UpdateSubresource(frame, frameBuffer);
         context.RSSetViewport(0, 0, width, height);
@@ -247,16 +248,20 @@ public sealed partial class Renderer : IDisposable
         var active = ActiveShader!;
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
+        namedTextures["GlobalHistogram"] = views[4];
         // Compatibility names now refer to the core evidence; there is no scene filter pass.
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.GeometryVertex != null) DrawGeometry(active);
         if (active.Fluid != null)
         {
-            fluid ??= new(device, context, width, height);
+            int gridLimit = SceneName == "MandelFluidv3" ? 512 : 256;
+            if (fluid != null && fluid.GridLimit != gridLimit) { fluid.Dispose(); fluid = null; }
+            fluid ??= new(device, context, width, height, gridLimit);
             if (previousScene != SceneName || dt > .5) fluid.Clear();
             fluid.Advance(dt, Audio, active.Fluid,
                 active.Parameters, namedBuffers, namedTextures, namedSamplers);
             namedTextures["FluidDye"] = fluid.Dye;
+            if (fluid.Age != null) namedTextures["FluidAge"] = fluid.Age;
             namedSamplers["FluidSampler"] = fluid.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
@@ -294,7 +299,7 @@ public sealed partial class Renderer : IDisposable
     public void SetCompositionScale(float x, float y) { lock (graphicsGate) output.SetCompositionScale(x, y); }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct Frame { public Vector4 A, B, C, D, E, F; }
+    struct Frame { public Vector4 A, B, C, D, E, F, GlobalSTBR; }
 
 
     public void Dispose()

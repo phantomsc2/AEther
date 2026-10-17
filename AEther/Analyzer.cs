@@ -27,6 +27,8 @@ namespace AEther
         readonly byte[] Batch;
         readonly DFTProcessor[] DFT;
         readonly Splitter[] Splitters;
+        readonly GlobalSplitter Global;
+        long previousAnalysisRow = -1;
         readonly TransientDetector[] Transients;
         readonly AudioFeatureExtractor Features;
         readonly Channel<(SampleEvent<byte> Event, long Arrival)> Input;
@@ -61,6 +63,7 @@ namespace AEther
             Profile.Describe("T frequency slope", options.JointFrequencySlopeEnabled.ToString());
             Splitters = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
+            Global = new(Domain, options, Format.SampleRate / (double)BatchSize);
             DFT = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled,
                     options.WindowFunction)).ToArray();
@@ -171,6 +174,12 @@ namespace AEther
         void AnalyzeBatch(DateTime time, long row, long captureTimestamp)
         {
             using var totalTiming = Profile.Measure("analysis.total_ms");
+            if (previousAnalysisRow >= 0 && row != previousAnalysisRow + 1)
+            {
+                foreach (var splitter in Splitters) splitter.Reset();
+                Global.Reset();
+            }
+            previousAnalysisRow = row;
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
             var spectrum = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var output = RentEvent<double>(AEther.Splitter.OutputStride * Domain.Length, Format.ChannelCount, time);
@@ -204,21 +213,24 @@ namespace AEther
                     using (Profile.Measure("analysis.dft_channel_ms"))
                     {
                     DFT[c].Process(samples.GetChannel(c));
-                    DFT[c].Output(spectrum.GetChannel(c));
+                    DFT[c].OutputLinear(spectrum.GetChannel(c));
                     }
                     using (Profile.Measure("analysis.split_channel_ms"))
                     {
-                        Splitters[c].Process(spectrum.GetChannel(c), output.GetChannel(c));
+                        Splitters[c].ProcessLinear(spectrum.GetChannel(c), output.GetChannel(c));
                         if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
                     }
                 }
+                GlobalEvidence global;
+                using (Profile.Measure("analysis.global_split_ms"))
+                    global = Global.Process(spectrum.Samples.AsMemory(0, Domain.Length * Format.ChannelCount), Format.ChannelCount);
                 // Publish immediately; render pacing belongs to the renderer.
                 output = output with { SampleIndex = row * BatchSize, AnalysisRow = row,
-                    CaptureTimestamp = captureTimestamp, AnalysisTimestamp = Stopwatch.GetTimestamp() };
+                    CaptureTimestamp = captureTimestamp, AnalysisTimestamp = Stopwatch.GetTimestamp(), GlobalEvidence = global };
                 if (jointEvidence is not null)
                 {
                     jointEvidence = jointEvidence with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
-                        CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp };
+                        CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp, GlobalEvidence = global };
                     JointEvidenceAvailable?.Invoke(this, jointEvidence);
                 }
                 Profile.Elapsed("analysis.capture_to_completion_ms", captureTimestamp);

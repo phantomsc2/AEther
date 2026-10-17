@@ -6,7 +6,7 @@ namespace AEther.Vortice;
 /// <summary>Owned, bounded handoff. Only the render thread touches history or graphics resources.</summary>
 public sealed class AudioHistory
 {
-    readonly Channel<(long Row, long Capture, long Completed, double Arrival, float[] Samples)> pending;
+    readonly Channel<(long Row, long Capture, long Completed, double Arrival, float[] Samples, GlobalEvidence Global)> pending;
 
     readonly TimeProvider timeProvider;
     readonly long started;
@@ -26,6 +26,11 @@ public sealed class AudioHistory
     public double Seconds { get; }
     public float[][] History { get; }
     public float[][] Spectrum { get; }
+    /// <summary>Newest complete packet; signed T is retained. Expires with live audio.</summary>
+    public GlobalEvidence GlobalEvidence { get; private set; }
+    public Vector4 GlobalSTBR => PackGlobal(GlobalEvidence);
+    /// <summary>Width-one RGBA history in (structure, signed transient, background, interaction RMS) order.</summary>
+    public float[] GlobalHistory { get; }
     /// <summary>Bounded tone/transient/noise envelopes, advanced in audio-row time.</summary>
     public Vector3 Components { get; private set; }
     public float FractalEnergy { get; private set; }
@@ -60,8 +65,9 @@ public sealed class AudioHistory
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
+        GlobalHistory = new float[4 * Rows];
         peak = new float[8 * bands];
-        pending = Channel.CreateBounded<(long, long, long, double, float[])>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
+        pending = Channel.CreateBounded<(long, long, long, double, float[], GlobalEvidence)>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
             AllowSynchronousContinuations = false,
@@ -80,7 +86,14 @@ public sealed class AudioHistory
                 owned[c * Bands * 4 + i] = double.IsFinite(src[i])
                     ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
         }
-        pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, Now, owned));
+        pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, Now, owned, input.GlobalEvidence));
+    }
+
+    static Vector4 PackGlobal(GlobalEvidence value)
+    {
+        static float Finite(double x) => double.IsFinite(x) ? (float)Math.Clamp(x, -float.MaxValue, float.MaxValue) : 0;
+        return new(Math.Max(0, Finite(value.Structure)), Finite(value.Transient),
+            Math.Max(0, Finite(value.Background)), Math.Max(0, Finite(value.InteractionRms)));
     }
 
     public void Advance(double dt)
@@ -98,6 +111,8 @@ public sealed class AudioHistory
                 > packet.Row + .15 * rate)
             {
                 foreach (var history in History) Array.Clear(history);
+                Array.Clear(GlobalHistory);
+                GlobalEvidence = default;
                 firstRow = packet.Row;
                 latestRow = newestRow = packet.Row - 1;
                 anchored = false;
@@ -126,15 +141,21 @@ public sealed class AudioHistory
             newestRow = Math.Max(newestRow, row);
             // Skipped analysis rows remain empty, including after ring wrap.
             for (var clear = Math.Max(latestRow + 1, row - Rows + 1); clear <= row; clear++)
+            {
+                Array.Clear(GlobalHistory, (int)((clear % Rows + Rows) % Rows) * 4, 4);
                 for (var c = 0; c < 2; c++)
                 {
                     Array.Clear(History[c], (int)((clear % Rows + Rows) % Rows) * Bands * 4, Bands * 4);
                 }
+            }
             latestRow = Math.Max(latestRow, row);
             if (row < latestRow - Rows + 1) continue;
             if (packet.Capture != 0) Profile?.Elapsed("render.capture_to_consume_ms", packet.Capture);
             if (packet.Completed != 0) Profile?.Elapsed("render.analysis_to_consume_ms", packet.Completed);
             var offset = (int)((row % Rows + Rows) % Rows) * Bands * 4;
+            var global = PackGlobal(packet.Global);
+            global.CopyTo(GlobalHistory.AsSpan(offset / Bands, 4));
+            if (row == latestRow) GlobalEvidence = packet.Global;
             for (var c = 0; c < 2; c++)
             {
                 packet.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
@@ -210,6 +231,7 @@ public sealed class AudioHistory
         {
             foreach (var spectrum in Spectrum) Array.Clear(spectrum);
             Energy = 0;
+            GlobalEvidence = default;
             Components *= (float)Math.Exp(-dt / .35);
             FractalEnergy *= (float)Math.Exp(-dt / .35);
         }

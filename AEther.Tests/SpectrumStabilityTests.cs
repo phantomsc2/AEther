@@ -44,11 +44,14 @@ namespace AEther.Tests
             var splitter = new Splitter(options.Domain, options);
             var input = Enumerable.Repeat(-10.0, options.Domain.Length).ToArray();
             var output = new double[4 * input.Length];
-            for (var i = 0; i < 80; ++i) splitter.Process(input, output);
+            for (var i = 0; i <= Math.Round(options.TimeWindowSeconds * options.TimeResolution); ++i)
+                splitter.Process(input, output);
             input[30] = -8.5; // a large relative change at -170 dBFS
             splitter.Process(input, output);
             Assert.That(output.AsSpan(4 * 30, 3).ToArray(), Is.All.InRange(0, Math.Pow(10, -8.5)));
-            for (var i = 0; i < 80; ++i) splitter.Process(input, output);
+            // Let the current configured support expire before expecting a settled S field.
+            for (var i = 0; i <= Math.Round(options.TimeWindowSeconds * options.TimeResolution); ++i)
+                splitter.Process(input, output);
             Assert.That(output[4 * 30], Is.EqualTo(Math.Pow(10, -8.5) - splitter.Estimates.Span[30].Background).Within(1e-20));
         }
     }

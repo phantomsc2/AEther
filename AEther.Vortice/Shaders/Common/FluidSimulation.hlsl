@@ -2,9 +2,30 @@
 #undef Histogram1
 // Vortice migration of the SharpDX fluid/multigrid passes. Coordinates and
 // velocities are in viewport-height units, independent of the grid resolution.
-cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, UnusedDecay, UnusedDiffusion; float4 UnusedForcing; };
+cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, UnusedDecay, UnusedDiffusion; float AgeCatchupSeconds; float3 UnusedForcing; };
 Texture2D<float2> Velocity;
 Texture2D<float4> Dye;
+Texture2D<float4> Advected;
+#ifdef MANDEL_FLUID_V3
+// Density-weighted age in seconds and matching density, transported together.
+Texture2D<float2> DyeAge;
+Texture2D<float2> AdvectedAge;
+struct DyeOutput { float4 Color : SV_Target0; float2 Age : SV_Target1; };
+float2 AgeBounds(float2 uv, bool upper)
+{
+    int2 p = int2(floor(uv * GridSize - .5));
+    float2 bound = upper ? -1e30 : 1e30;
+    [unroll] for (int y = 0; y < 2; ++y)
+        [unroll] for (int x = 0; x < 2; ++x)
+        {
+            int2 q = p + int2(x, y);
+            float2 v = 0;
+            if (all(q >= 0) && all(q < int2(GridSize))) v = DyeAge.Load(int3(q, 0));
+            bound = upper ? max(bound, v) : min(bound, v);
+        }
+    return bound;
+}
+#endif
 Texture2D<float> Pressure;
 Texture2D<float> Rhs;
 Texture2D<float> Correction;
@@ -29,7 +50,9 @@ float Laplacian(int2 p)
 }
 float4 Source(float2 p)
 {
-#ifdef MANDEL_COMET
+#ifdef MANDEL_FLUID_V3
+    return RadiatingSource(p, SourceAge);
+#elif defined(MANDEL_COMET)
     return CometSource(p, SourceAge);
 #elif defined(PROJECTIVE_FLIGHT)
     // The flight scene supplies a continuous IFS-to-history map. SourceAge is
@@ -54,9 +77,22 @@ float CurlAt(int2 p)
         - (ReadVelocity(p + int2(0, 1)).x - ReadVelocity(p - int2(0, 1)).x) / (2 * CellSize.y);
 }
 float Mobility() { return smoothstep(.02, .55, PoseZ + .2 * PoseY); }
+float2 SampleTransportVelocity(float2 uv)
+{
+#ifdef MANDEL_FLUID_V3
+    // Pressure is cell centered; x/y velocities live on the right/bottom
+    // faces. Reconstruct both components at the same physical point.
+    return float2(Velocity.SampleLevel(ClampFluid, uv - float2(.5 / GridSize.x, 0), 0).x,
+        Velocity.SampleLevel(ClampFluid, uv - float2(0, .5 / GridSize.y), 0).y);
+#else
+    return Velocity.SampleLevel(ClampFluid, uv, 0);
+#endif
+}
 float2 Transport(float2 p)
 {
-#ifdef MANDEL_COMET
+#ifdef MANDEL_FLUID_V3
+    return SampleTransportVelocity(ToUV(p)) + RadiatingCarrier(p);
+#elif defined(MANDEL_COMET)
     return Velocity.SampleLevel(ClampFluid, ToUV(p), 0) + CometCarrier(p);
 #elif defined(PROJECTIVE_FLIGHT)
     // Camera optical flow is compressible in image space. Keep it outside the
@@ -70,19 +106,73 @@ float2 Transport(float2 p)
         + Mobility() * (Fluid.Flow * 3) * .65 * p / max(.08, r) / (1 + .65 * r);
 #endif
 }
-float2 Backtrace(float2 uv)
+float2 Trace(float2 uv, float dt)
 {
     float2 p = World(uv);
-    float2 midpoint = p - .5 * StepSeconds * Transport(p);
-    return ToUV(p - StepSeconds * Transport(midpoint));
+    float2 midpoint = p - .5 * dt * Transport(p);
+    return ToUV(p - dt * Transport(midpoint));
 }
+float2 Backtrace(float2 uv) { return Trace(uv, StepSeconds); }
+
+// MacCormack correction uses the predicted field transported backward in
+// time. Clamp to the four original donors: no new extrema or negative dye.
+float4 DonorBounds(float2 uv, bool upper, bool velocityField)
+{
+    int2 p = int2(floor(uv * GridSize - .5));
+    float4 bound = upper ? -1e30 : 1e30;
+    [unroll] for (int y = 0; y < 2; ++y)
+        [unroll] for (int x = 0; x < 2; ++x)
+        {
+            int2 q = p + int2(x, y);
+            float4 v = 0;
+            if (all(q >= 0) && all(q < int2(GridSize)))
+                v = velocityField ? float4(Velocity.Load(int3(q, 0)), 0, 0) : Dye.Load(int3(q, 0));
+            bound = upper ? max(bound, v) : min(bound, v);
+        }
+    return bound;
+}
+float2 PredictVelocity(PSin input) : SV_Target
+{
+    float2 x = float2(.5 / GridSize.x, 0), y = float2(0, .5 / GridSize.y);
+    return float2(Velocity.SampleLevel(ClampFluid, Backtrace(input.UV + x) - x, 0).x,
+        Velocity.SampleLevel(ClampFluid, Backtrace(input.UV + y) - y, 0).y);
+}
+#ifdef MANDEL_FLUID_V3
+DyeOutput PredictDye(PSin input)
+{
+    float2 uv = Backtrace(input.UV);
+    DyeOutput output;
+    output.Color = Dye.SampleLevel(ClampFluid, uv, 0);
+    output.Age = DyeAge.SampleLevel(ClampFluid, uv, 0);
+    return output;
+}
+#else
+float4 PredictDye(PSin input) : SV_Target
+{
+    return Dye.SampleLevel(ClampFluid, Backtrace(input.UV), 0);
+}
+#endif
 
 float2 AdvectVelocity(PSin input) : SV_Target
 {
     float2 p = World(input.UV);
+#ifdef MANDEL_FLUID_V3
+    float2 x = float2(.5 / GridSize.x, 0), y = float2(0, .5 / GridSize.y);
+    float2 backX = Backtrace(input.UV + x) - x, backY = Backtrace(input.UV + y) - y;
+    float2 reverse = float2(Advected.SampleLevel(ClampFluid, Trace(input.UV + x, -StepSeconds) - x, 0).x,
+        Advected.SampleLevel(ClampFluid, Trace(input.UV + y, -StepSeconds) - y, 0).y);
+    float2 corrected = Advected.Load(int3(int2(input.Position.xy), 0)).xy
+        + .5 * (Velocity.Load(int3(int2(input.Position.xy), 0)) - reverse);
+    float2 lower = float2(DonorBounds(backX, false, true).x, DonorBounds(backY, false, true).y);
+    float2 upper = float2(DonorBounds(backX, true, true).x, DonorBounds(backY, true, true).y);
+    float2 v = clamp(corrected, lower, upper) * exp(-.25 * StepSeconds);
+#else
     float2 v = Velocity.SampleLevel(ClampFluid, Backtrace(input.UV), 0) * exp(-.65 * StepSeconds);
+#endif
     float4 source = Source(p);
-#ifdef MANDEL_COMET
+#ifdef MANDEL_FLUID_V3
+    float2 force = RadiatingTurbulence(p, source);
+#elif defined(MANDEL_COMET)
     float2 force = CometTurbulence(p, source);
 #elif defined(PROJECTIVE_FLIGHT)
     float2 force = FlightTurbulence(p, source);
@@ -128,7 +218,11 @@ float Relax(PSin input) : SV_Target
     float center = ReadPressure(p);
     float2 coefficient = 1 / (CellSize * CellSize);
     float residual = Rhs.Load(int3(p, 0)) - Laplacian(p);
-    return center - .8 * residual / (2 * (coefficient.x + coefficient.y));
+    // Neumann walls remove neighbors from the diagonal as well as the
+    // stencil. Using the interior diagonal under-relaxes boundary errors.
+    float diagonal = coefficient.x * ((p.x > 0 ? 1 : 0) + (p.x < GridSize.x - 1 ? 1 : 0))
+        + coefficient.y * ((p.y > 0 ? 1 : 0) + (p.y < GridSize.y - 1 ? 1 : 0));
+    return center - .8 * residual / diagonal;
 }
 float Residual(PSin input) : SV_Target
 {
@@ -155,10 +249,25 @@ float2 Project(PSin input) : SV_Target
     return ReadVelocity(p) - float2(ReadPressure(p + int2(1, 0)) - center,
         ReadPressure(p + int2(0, 1)) - center) / CellSize;
 }
+#ifdef MANDEL_FLUID_V3
+DyeOutput AdvectDye(PSin input)
+#else
 float4 AdvectDye(PSin input) : SV_Target
+#endif
 {
     float2 uv = Backtrace(input.UV);
+#ifdef MANDEL_FLUID_V3
+    float4 reverse = Advected.SampleLevel(ClampFluid, Trace(input.UV, -StepSeconds), 0);
+    float4 corrected = Advected.Load(int3(int2(input.Position.xy), 0))
+        + .5 * (Dye.Load(int3(int2(input.Position.xy), 0)) - reverse);
+    float4 dye = clamp(corrected, DonorBounds(uv, false, false), DonorBounds(uv, true, false));
+    float2 ageReverse = AdvectedAge.SampleLevel(ClampFluid, Trace(input.UV, -StepSeconds), 0);
+    float2 ageCorrected = AdvectedAge.Load(int3(int2(input.Position.xy), 0))
+        + .5 * (DyeAge.Load(int3(int2(input.Position.xy), 0)) - ageReverse);
+    float2 age = clamp(ageCorrected, AgeBounds(uv, false), AgeBounds(uv, true));
+#else
     float4 dye = Dye.SampleLevel(ClampFluid, uv, 0);
+#endif
     float4 neighbors = .25 * (Dye.SampleLevel(ClampFluid, uv + float2(1 / GridSize.x, 0), 0)
         + Dye.SampleLevel(ClampFluid, uv - float2(1 / GridSize.x, 0), 0)
         + Dye.SampleLevel(ClampFluid, uv + float2(0, 1 / GridSize.y), 0)
@@ -175,7 +284,9 @@ float4 AdvectDye(PSin input) : SV_Target
     // Conserve pigment as the carrier expands. Without dilution a fading
     // ambient plume gains total light merely by occupying more screen area.
     float r = length(p);
-#ifdef MANDEL_COMET
+#ifdef MANDEL_FLUID_V3
+    float expansion = RadiatingDilution(p);
+#elif defined(MANDEL_COMET)
     float expansion = CometDilution(p);
 #elif defined(PROJECTIVE_FLIGHT)
     float expansion = FlightDilution(p);
@@ -183,7 +294,17 @@ float4 AdvectDye(PSin input) : SV_Target
     float expansion = Mobility() * .65 * (Fluid.Flow * 3) / (max(.08, r) * pow(1 + .65 * r, 2));
 #endif
     dye = lerp(dye, neighbors, diffusion) * exp(-((0.69314718 / (0.1 + Fluid.HalfLife * 9.9)) + expansion) * StepSeconds);
-#ifdef MANDEL_COMET
+#ifdef MANDEL_FLUID_V3
+    float2 ageNeighbors = .25 * (DyeAge.SampleLevel(ClampFluid, uv + float2(1 / GridSize.x, 0), 0)
+        + DyeAge.SampleLevel(ClampFluid, uv - float2(1 / GridSize.x, 0), 0)
+        + DyeAge.SampleLevel(ClampFluid, uv + float2(0, 1 / GridSize.y), 0)
+        + DyeAge.SampleLevel(ClampFluid, uv - float2(0, 1 / GridSize.y), 0));
+    age = lerp(age, ageNeighbors, diffusion);
+    float meanAge = clamp(age.x / max(1e-12, age.y), 0, 120) + StepSeconds + AgeCatchupSeconds;
+    float oldDensity = dye.a;
+    age = float2(meanAge * oldDensity, oldDensity);
+    float4 dose = StepSeconds * 6 * RadiatingPigment(p, source);
+#elif defined(MANDEL_COMET)
     float4 dose = StepSeconds * 6 * CometPigment(p, source);
 #elif defined(PROJECTIVE_FLIGHT)
     // Capture the continuously mapped IFS foreground for a fluid afterglow.
@@ -204,6 +325,11 @@ float4 AdvectDye(PSin input) : SV_Target
     // material, asymptotic near capacity. Convex advection/diffusion and exact
     // exponential losses keep every update positive and bounded for any input.
     dye += (12 - dye) * (1 - exp(-dose / 12));
+#ifdef MANDEL_FLUID_V3
+    // Fresh emission has zero residence age; only a late source row is older.
+    float birthAge = max(0, HistoryNewestAge - SourceAge) * HistorySeconds / max(1e-6, HistorySpan);
+    age += float2(birthAge, 1) * max(0, dye.a - oldDensity);
+#endif
 #ifdef PROJECTIVE_FLIGHT
     // A directional tonal blade removes existing cloud material. Its wake is
     // retained in the advected state, so the cut travels with the cloud.
@@ -211,5 +337,13 @@ float4 AdvectDye(PSin input) : SV_Target
 #endif
     // A soft sink prevents edge buildup and clamped streaks on resize/aspect extremes.
     float edge = min(min(input.UV.x, 1 - input.UV.x), min(input.UV.y, 1 - input.UV.y));
-    return min(dye * exp(-StepSeconds * 12 * (1 - smoothstep(0, .04, edge))), 12);
+    float edgeDecay = exp(-StepSeconds * 12 * (1 - smoothstep(0, .04, edge)));
+#ifdef MANDEL_FLUID_V3
+    DyeOutput output;
+    output.Color = min(dye * edgeDecay, 12);
+    output.Age = age * edgeDecay;
+    return output;
+#else
+    return min(dye * edgeDecay, 12);
+#endif
 }

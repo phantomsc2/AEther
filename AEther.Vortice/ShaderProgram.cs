@@ -29,11 +29,11 @@ internal sealed class ShaderProgram : IDisposable
                 ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler",
                 ShaderInputType.Texture => binding.Name is "PreviousImage" or "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
-                    or "FilteredHistogram0" or "FilteredHistogram1"
-                    or "FluidDye" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField",
+                    or "FilteredHistogram0" or "FilteredHistogram1" or "GlobalHistogram"
+                    or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField",
                 _ => false,
             };
-            if (entry == "PS" && binding.Name is "FluidConstants" or "Velocity" or "Dye" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler" or "DistanceConstants" or "DistanceSeeds")
+            if (entry == "PS" && binding.Name is "FluidConstants" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler" or "DistanceConstants" or "DistanceSeeds")
                 supported = false;
             if (!supported) throw new InvalidOperationException($"{file}: unknown {binding.Type} resource '{binding.Name}'.");
             bindings.Add(binding.Name, binding);

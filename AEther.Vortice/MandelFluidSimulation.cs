@@ -7,17 +7,20 @@ using Vortice.DXGI;
 using Vortice.Mathematics;
 
 [assembly: InternalsVisibleTo("AEther.Smoke")]
+[assembly: InternalsVisibleTo("AEther.Tests")]
 
 namespace AEther.Vortice;
 
 /// <summary>Persistent pigment and projected turbulence, owned by the render thread.</summary>
 internal sealed class MandelFluidSimulation : IDisposable
 {
-    internal enum Pass { AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, AdvectDye }
+    internal enum Pass { PredictVelocity, AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, PredictDye, AdvectDye }
     internal sealed class Programs : IDisposable
     {
         internal readonly Dictionary<Pass, ShaderProgram> Shaders = [];
         public ID3D11PixelShader this[Pass pass] => Shaders[pass].Pixel;
+        public bool CorrectedAdvection => Shaders[Pass.AdvectVelocity].Uses("Advected");
+        public bool TransportsAge => Shaders[Pass.PredictDye].Uses("DyeAge");
         public Programs(ID3D11Device device, string source)
         {
             try
@@ -68,14 +71,18 @@ internal sealed class MandelFluidSimulation : IDisposable
     readonly ID3D11Buffer constants;
     readonly ID3D11SamplerState borderSampler, pressureSampler;
     Surface velocity, nextVelocity, dye, nextDye;
+    Surface? predictedVelocity, predictedDye;
+    Surface? age, nextAge, predictedAge;
     Programs programs = null!; // Borrowed from Renderer, swapped atomically on reload.
     Parameters parameters;
     double accumulator;
     public const double TimeStep = 1.0 / 60;
     public int Width => velocity.Width;
     public int Height => velocity.Height;
+    public int GridLimit { get; }
     public float Aspect { get; }
     public ID3D11ShaderResourceView Dye => dye.View;
+    public ID3D11ShaderResourceView? Age => age?.View;
     public ID3D11SamplerState Sampler => borderSampler;
     ShaderParameters? sceneParameters;
     readonly Dictionary<string, ID3D11Buffer> namedBuffers = new(StringComparer.Ordinal);
@@ -85,14 +92,15 @@ internal sealed class MandelFluidSimulation : IDisposable
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
     Surface Create(int w, int h, Format format) => Own(new Surface(device, w, h, format));
 
-    public MandelFluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height)
+    public MandelFluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, int gridLimit = 256)
     {
         this.device = device; this.context = context;
         Aspect = width / (float)height;
+        GridLimit = gridLimit;
         // Power-of-two levels guarantee exact 2:1 restriction, even for odd windows.
         // Bound cost independently of display resolution; pressure stays in float32.
-        static int Size(float n) => (int)BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(n, 32, 256));
-        int w = Size(256 * Math.Min(Aspect, 1)), h = Size(256 / Math.Max(Aspect, 1));
+        int Size(float n) => (int)BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(n, 32, gridLimit));
+        int w = Size(gridLimit * Math.Min(Aspect, 1)), h = Size(gridLimit / Math.Max(Aspect, 1));
         try
         {
             constants = Own(device.CreateBuffer(48, BindFlags.ConstantBuffer));
@@ -139,6 +147,7 @@ internal sealed class MandelFluidSimulation : IDisposable
         IReadOnlyDictionary<string, ID3D11SamplerState>? samplers = null)
     {
         programs = shaders;
+        EnsureAge();
         this.sceneParameters = sceneParameters;
         if (buffers != null) foreach (var pair in buffers) namedBuffers[pair.Key] = pair.Value;
         if (textures != null) foreach (var pair in textures) namedTextures[pair.Key] = pair.Value;
@@ -146,7 +155,8 @@ internal sealed class MandelFluidSimulation : IDisposable
         parameters = new Parameters
         {
             B = new((float)TimeStep, 0, 0, 0),
-            C = default,
+            // Age follows elapsed time even when motion drops a stalled interval.
+            C = new((float)Math.Max(0, dt - .05), 0, 0, 0),
         };
         // Fixed steps avoid frame-rate-dependent decay and forcing. Drop excess time
         // after stalls/minimize rather than replaying seconds of stale injection.
@@ -156,6 +166,7 @@ internal sealed class MandelFluidSimulation : IDisposable
             accumulator -= TimeStep;
             parameters.B.Y = (float)(accumulator / audio.Seconds) * audio.TimeScale;
             Step();
+            parameters.C.X = 0;
         }
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
@@ -168,11 +179,13 @@ internal sealed class MandelFluidSimulation : IDisposable
     }
 
     void Draw(Pass pass, Surface target, Surface? v = null, Surface? pigment = null,
-        Surface? pressure = null, Surface? rhs = null, Surface? correction = null)
+        Surface? pressure = null, Surface? rhs = null, Surface? correction = null, Surface? advected = null,
+        Surface? ageInput = null, Surface? agePrediction = null, Surface? ageTarget = null)
     {
         // Unbind reads before changing the target; no pass reads its own render target.
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        context.OMSetRenderTargets(target.Target);
+        if (ageTarget != null) context.OMSetRenderTargets([target.Target, ageTarget.Target]);
+        else context.OMSetRenderTargets(target.Target);
         context.RSSetViewport(0, 0, target.Width, target.Height);
         namedBuffers["FluidConstants"] = constants;
         namedSamplers["ClampFluid"] = borderSampler;
@@ -182,6 +195,9 @@ internal sealed class MandelFluidSimulation : IDisposable
         if (pressure != null) namedTextures["Pressure"] = pressure.View;
         if (rhs != null) namedTextures["Rhs"] = rhs.View;
         if (correction != null) namedTextures["Correction"] = correction.View;
+        if (advected != null) namedTextures["Advected"] = advected.View;
+        if (ageInput != null) namedTextures["DyeAge"] = ageInput.View;
+        if (agePrediction != null) namedTextures["AdvectedAge"] = agePrediction.View;
         programs.Shaders[pass].Bind(context, sceneParameters, namedBuffers, namedTextures, namedSamplers);
         context.Draw(3, 0);
     }
@@ -202,8 +218,10 @@ internal sealed class MandelFluidSimulation : IDisposable
     void VCycle(int index)
     {
         var level = levels[index];
-        if (index == levels.Count - 1) { Smooth(level, 16); return; }
-        Smooth(level, 2);
+        // Finish low spatial frequencies on the tiny coarse grid rather than
+        // leaving them for the expensive fine-grid smoother to propagate.
+        if (index == levels.Count - 1) { Smooth(level, 64); return; }
+        Smooth(level, 3);
         Draw(Pass.Residual, level.Residual, pressure: level.Pressure, rhs: level.Rhs);
         var coarse = levels[index + 1];
         Draw(Pass.Restrict, coarse.Rhs, rhs: level.Residual);
@@ -213,7 +231,7 @@ internal sealed class MandelFluidSimulation : IDisposable
         Grid(level.Pressure);
         Draw(Pass.Prolong, level.Scratch, pressure: level.Pressure, correction: coarse.Pressure);
         (level.Pressure, level.Scratch) = (level.Scratch, level.Pressure);
-        Smooth(level, 2);
+        Smooth(level, 3);
     }
 
     void Project()
@@ -224,19 +242,41 @@ internal sealed class MandelFluidSimulation : IDisposable
         context.ClearRenderTargetView(levels[0].Pressure.Target, new(0, 0, 0, 0));
         VCycle(0);
         VCycle(0);
+        VCycle(0);
         Grid(velocity);
         Draw(Pass.Project, nextVelocity, v: velocity, pressure: levels[0].Pressure);
         (velocity, nextVelocity) = (nextVelocity, velocity);
     }
 
+    void EnsureAge()
+    {
+        if (!programs.TransportsAge || age != null) return;
+        age = Create(Width, Height, Format.R32G32_Float);
+        nextAge = Create(Width, Height, Format.R32G32_Float);
+        predictedAge = Create(Width, Height, Format.R32G32_Float);
+        context.ClearRenderTargetView(age.Target, new(0, 0, 0, 0));
+    }
+
     void Step()
     {
         Grid(velocity);
-        Draw(Pass.AdvectVelocity, nextVelocity, v: velocity);
+        EnsureAge();
+        if (programs.CorrectedAdvection)
+        {
+            predictedVelocity ??= Create(Width, Height, Format.R32G32_Float);
+            predictedDye ??= Create(Width, Height, Format.R16G16B16A16_Float);
+            Draw(Pass.PredictVelocity, predictedVelocity, v: velocity);
+        }
+        Draw(Pass.AdvectVelocity, nextVelocity, v: velocity, advected: predictedVelocity);
         (velocity, nextVelocity) = (nextVelocity, velocity);
         Project();
-        Draw(Pass.AdvectDye, nextDye, v: velocity, pigment: dye);
+        if (programs.CorrectedAdvection)
+            Draw(Pass.PredictDye, predictedDye!, v: velocity, pigment: dye,
+                ageInput: age, ageTarget: programs.TransportsAge ? predictedAge : null);
+        Draw(Pass.AdvectDye, nextDye, v: velocity, pigment: dye, advected: predictedDye,
+            ageInput: age, agePrediction: predictedAge, ageTarget: programs.TransportsAge ? nextAge : null);
         (dye, nextDye) = (nextDye, dye);
+        if (programs.TransportsAge) (age, nextAge) = (nextAge, age);
     }
 
     // GPU smoke checks use the actual production passes at deterministic time steps.
@@ -244,13 +284,13 @@ internal sealed class MandelFluidSimulation : IDisposable
     {
         programs = shaders;
         parameters.B = new((float)TimeStep, 0, MathF.Log(2) / halfLife, .001f);
-        parameters.C = new(1, 1, .45f, 0);
+        parameters.C = default;
         for (int i = 0; i < steps; i++) Step();
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
     }
 
-    internal unsafe (double Before, double After) CheckProjection(Programs shaders)
+    internal unsafe (double Before, double After, double CurlError) CheckProjection(Programs shaders)
     {
         programs = shaders;
         var data = new float[Width * Height * 2];
@@ -278,11 +318,35 @@ internal sealed class MandelFluidSimulation : IDisposable
         Project();
         Draw(Pass.Divergence, levels[0].Rhs, v: velocity);
         var after = Rms(levels[0].Rhs);
+        var projected = ReadVelocity();
+        double curlPower = 0, curlError = 0;
+        double Curl(float[] v, int x, int y)
+        {
+            int i = 2 * (y * Width + x);
+            return (v[i + 3] - v[i + 1]) / (2 * Aspect / Width)
+                - (v[i + 2 * Width] - v[i]) / (2.0 / Height);
+        }
+        for (int y = 0; y < Height - 1; y++)
+            for (int x = 0; x < Width - 1; x++)
+            {
+                double original = Curl(data, x, y), difference = Curl(projected, x, y) - original;
+                curlPower += original * original;
+                curlError += difference * difference;
+            }
         Clear();
-        return (before, after);
+        return (before, after, Math.Sqrt(curlError / Math.Max(1e-20, curlPower)));
     }
 
     internal float[] ReadVelocity() => ReadFloatSurface(velocity, 2);
+    internal float[] ReadAge() => ReadFloatSurface(age!, 2);
+    internal unsafe void AddAgeForCheck(float seconds)
+    {
+        var values = ReadAge();
+        for (int i = 0; i < values.Length; i += 2) values[i] += seconds * values[i + 1];
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
+        fixed (float* p = values) context.UpdateSubresource(age!.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+    }
     internal float[] ReadDye()
     {
         var bytes = ReadSurface(dye, 8);

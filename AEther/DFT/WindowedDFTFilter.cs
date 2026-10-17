@@ -16,6 +16,7 @@ namespace AEther
         readonly int M;
         readonly double[] Window;
         readonly RingBuffer<double> Buffer;
+        int nonzero;
 
         public WindowedDFTFilter(double frequency, double frequencyResolution, double sampleRate, double[] window)
         {
@@ -55,6 +56,9 @@ namespace AEther
             {
                 States[j] = Coefficients[j] * States[j] + input;
             }
+            if (oldSample != 0) nonzero--;
+            if (newSample != 0) nonzero++;
+            if (nonzero == 0) Array.Clear(States);
         }
 
         public void Process(ReadOnlyMemory<double> samples)
@@ -69,6 +73,9 @@ namespace AEther
                     {
                         States[j] = Coefficients[j] * States[j] + input;
                     }
+                    if (dst.Span[i] != 0) nonzero--;
+                    if (samples.Span[i] != 0) nonzero++;
+                    if (nonzero == 0) Array.Clear(States);
                 }
                 samples[0..dst.Length].CopyTo(dst);
                 samples = samples[dst.Length..];

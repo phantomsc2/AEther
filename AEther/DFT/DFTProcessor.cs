@@ -88,8 +88,15 @@ namespace AEther
             {
                 var filter = Filters[k];
                 var bin = 2 * filter.GetOutput().Magnitude;
-                dst.Span[k] = Math.Log10(Math.Max(1e-10, bin));
+                dst.Span[k] = Math.Log10(SpectralMath.Sanitize(bin));
             }
+        }
+
+        /// <summary>Linear magnitudes; exact zero is retained without a log floor.</summary>
+        public void OutputLinear(Memory<double> dst)
+        {
+            for (int k = 0; k < Filters.Length; ++k)
+                dst.Span[k] = SpectralMath.Sanitize(2 * Filters[k].GetOutput().Magnitude);
         }
 
         public void Process(ReadOnlyMemory<double> samples)

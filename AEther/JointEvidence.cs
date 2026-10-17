@@ -16,6 +16,8 @@ public readonly record struct JointEvidence(double Sine, double Transient, doubl
     public double Scale => ResidualRms;
     public int ResidualDegreesOfFreedom => (FrequencySamples - FrequencyBasisRank) * (TimeSamples - TimeBasisRank);
     public bool HasResidualScale => Scale > 0;
+    /// <summary>Signed local intercept relative to a row-aligned global background.</summary>
+    public double BackgroundContrast(GlobalEvidence global) => Background - global.Background;
     public double NormalizedSine => Standardize(Sine, Scale);
     public double NormalizedTransient => Standardize(Transient, Scale);
 
