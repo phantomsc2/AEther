@@ -3,7 +3,7 @@
 cbuffer FrameConstants
 {
     float T, DT, HistogramShift, AspectRatio;
-    float Transient, Motion, MotionVelocity, HistorySpan;
+    float Transient, ShapeTime, DistortionMomentum, HistorySpan;
     float PoseX, PoseY, PoseZ, VisualBreath;
     float VisualEnergy, VisualFlash, VisualGlow, VisualSustain;
     float S, HistoryAvailable, HistoryNewestAge, FractalDepth;

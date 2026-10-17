@@ -32,10 +32,10 @@ namespace AEther
         [DisplayName("Window function")]
         [DefaultValue(DFTWindow.Blackman)]
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
-        public DFTWindow WindowFunction { get; set; } = DFTWindow.Blackman;
+        public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
         [Category("Visualization")]
-        public double HistorySeconds { get; set; } = .3f;
+        public double HistorySeconds { get; set; } = .5f;
 
         [Category("Alternative evidence modes")]
         [DefaultValue(true)]

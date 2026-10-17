@@ -40,6 +40,8 @@ public sealed partial class Renderer : IDisposable
     int width, height;
     double previousTime;
     double previousMusicalTime, movementTime;
+    double shapeTime;
+    double distortionMomentum;
     bool disposed;
     long previousFrame;
     public AudioHistory Audio { get; }
@@ -197,6 +199,16 @@ public sealed partial class Renderer : IDisposable
         var now = Audio.Now;
         var dt = Math.Max(0, now - previousTime);
         Audio.Advance(dt);
+        // Material evolution follows sustained components. Onsets can pulse a
+        // silhouette without permanently advancing its underlying shape.
+        shapeTime += Math.Clamp(dt, 0, .05) * (Audio.Components.X + .7 * Audio.Components.Z);
+        // A passage builds deformation over sustained energy/noise, then coasts
+        // through brief gaps rather than changing strength on every analysis row.
+        var passageEnergy = 1 - Math.Exp(-2.5 * Math.Max(0, Audio.Energy));
+        var distortionTarget = Math.Clamp(.55 * Audio.Components.Z + .45 * passageEnergy, 0, 1);
+        var distortionResponse = 1 - Math.Exp(-Math.Clamp(dt, 0, .05)
+            / (distortionTarget > distortionMomentum ? .85 : 3.2));
+        distortionMomentum += (distortionTarget - distortionMomentum) * distortionResponse;
         var activity = Math.Clamp((Audio.Components.Z + .2f * Audio.Components.Y - .02f) / .53f, 0, 1);
         var mobility = ActiveShader?.Fluid != null ? activity * activity * (3 - 2 * activity) : 1;
         movementTime += (Audio.MusicalTime - previousMusicalTime) * mobility;
@@ -214,7 +226,7 @@ public sealed partial class Renderer : IDisposable
         var frame = new Frame
         {
             A = new((float)now, (float)dt, Audio.Shift, width / (float)height),
-            B = new(Audio.Flash, 0, 0, Audio.TimeScale),
+            B = new(Audio.Flash, (float)shapeTime, (float)distortionMomentum, Audio.TimeScale),
             C = new(Audio.Components, Audio.FractalEnergy),
             D = new(Audio.Energy, Audio.Flash, Audio.Flash * .3f, Audio.Energy),
             E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge,

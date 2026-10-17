@@ -51,7 +51,7 @@ public class ShaderSilenceTests
             bool lit = false;
             for (int frame = 0; frame < 120; frame++)
             {
-                if (scene == "Mandelbox" && frame == 30)
+                if ((scene is "Mandelbox" or "MandelFluidv2") && frame == 30)
                 {
                     // A dropped input row followed by analysis arriving late.
                     // Keep this same history alive through recovery and silence.
@@ -109,6 +109,85 @@ public class ShaderSilenceTests
                 if (i % 4 != 3 && pixels[i] != 0) { nonblack++; maximum = Math.Max(maximum, pixels[i]); }
             Assert.That(nonblack, Is.Zero,
                 $"{scene}: {stage}: {nonblack} nonzero RGB channels, peak {maximum}/255. Expected exact black.");
+        }
+    }
+
+    [Test, Category("GPU")]
+    public void TransientCutoutDistortionIsSpectralAndReversible()
+    {
+        var temporaryRoot = Path.GetFullPath(Path.GetTempPath());
+        var shaders = Path.Combine(temporaryRoot, "AEther-cutout-pulse-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(shaders, "Common"));
+        Directory.CreateDirectory(Path.Combine(shaders, "Scenes"));
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Common"), "*.hlsl"))
+                File.Copy(file, Path.Combine(shaders, "Common", Path.GetFileName(file)));
+            // Render the production cutout as a binary silhouette, isolating
+            // its geometry from flashes, fluid memory and exposure changes.
+            var source = File.ReadAllText(Path.Combine(ShaderDirectory, "Scenes", "MandelFluidv2.hlsl"));
+            const string entry = "float4 PS(const PSin input)";
+            Assert.That(source, Does.Contain(entry));
+            source = source.Replace(entry, "float4 OriginalPS(const PSin input)") + """
+
+                float4 PS(const PSin input) : SV_Target
+                {
+                    float2 p = (2 * input.UV - 1) * float2(AspectRatio, 1);
+                    float outside = step(CometBoundary(), CometDistances(p).x);
+                    return float4(outside, outside, outside, 1);
+                }
+                """;
+            File.WriteAllText(Path.Combine(shaders, "Scenes", "CutoutPulseProbe.hlsl"), source);
+            using var window = new HiddenWindow();
+            var clock = new RenderClock();
+            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
+                shaderDirectory: shaders, timeProvider: clock);
+            // Hold the ongoing tumble still to isolate the deformation, and
+            // settle the tonal/noise material at a useful fractal depth.
+            var parameters = renderer.ActiveShader!.Parameters!;
+            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Quality")
+                .Children.Single(p => p.Name == "MovementSpeed"), 0);
+            long row = 0;
+            for (int frame = 0; frame < 1200; frame++) Tick();
+            var original = renderer.ReadPixels(false);
+            int originalArea = Area(original);
+            Assert.That(originalArea, Is.GreaterThan(10), "The fixture must contain a visible cutout.");
+
+            Tick(Bands / 4);
+            var lowHit = renderer.ReadPixels(false);
+            Assert.That(lowHit, Is.Not.EqualTo(original), "A low-band hit must deform the cutout.");
+            for (int frame = 0; frame < 90; frame++) Tick();
+            Assert.That(renderer.ReadPixels(false), Is.EqualTo(original),
+                "After the deformation, every pixel must return to the underlying silhouette.");
+            Tick(3 * Bands / 4);
+            var highHit = renderer.ReadPixels(false);
+            Assert.That(highHit, Is.Not.EqualTo(original), "A high-band hit must deform the cutout.");
+            Assert.That(highHit, Is.Not.EqualTo(lowHit), "Different transient bands must deform different regions.");
+            for (int frame = 0; frame < 90; frame++) Tick();
+            Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
+
+            void Tick(int attackBand = -1)
+            {
+                var samples = new double[Bands * 8];
+                for (int i = 0; i < samples.Length; i += 4)
+                {
+                    int band = i / 4 % Bands;
+                    samples[i] = .6;
+                    samples[i + 1] = attackBand >= 0 && Math.Abs(band - attackBand) <= 4 ? .8 : 0;
+                    samples[i + 2] = .3;
+                    samples[i + 3] = .9;
+                }
+                renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
+                    { AnalysisRow = row++ }, 2);
+                clock.Advance(); renderer.Render(false);
+            }
+            static int Area(byte[] pixels) => Enumerable.Range(0, pixels.Length / 4).Count(i => pixels[4 * i] == 0);
+        }
+        finally
+        {
+            if (!Path.GetFullPath(shaders).StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Cutout probe cleanup escaped the temporary directory.");
+            Directory.Delete(shaders, true);
         }
     }
 

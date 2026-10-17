@@ -29,7 +29,9 @@ float Laplacian(int2 p)
 }
 float4 Source(float2 p)
 {
-#ifdef PROJECTIVE_FLIGHT
+#ifdef MANDEL_COMET
+    return CometSource(p, SourceAge);
+#elif defined(PROJECTIVE_FLIGHT)
     // The flight scene supplies a continuous IFS-to-history map. SourceAge is
     // only the solver's substep offset, not a discretized event index.
     return FlightFluidSource(p, SourceAge);
@@ -54,7 +56,9 @@ float CurlAt(int2 p)
 float Mobility() { return smoothstep(.02, .55, PoseZ + .2 * PoseY); }
 float2 Transport(float2 p)
 {
-#ifdef PROJECTIVE_FLIGHT
+#ifdef MANDEL_COMET
+    return Velocity.SampleLevel(ClampFluid, ToUV(p), 0) + CometCarrier(p);
+#elif defined(PROJECTIVE_FLIGHT)
     // Camera optical flow is compressible in image space. Keep it outside the
     // pressure projection, which applies only to the turbulent perturbation.
     return Velocity.SampleLevel(ClampFluid, ToUV(p), 0) + FlightCarrier(p);
@@ -78,7 +82,9 @@ float2 AdvectVelocity(PSin input) : SV_Target
     float2 p = World(input.UV);
     float2 v = Velocity.SampleLevel(ClampFluid, Backtrace(input.UV), 0) * exp(-.65 * StepSeconds);
     float4 source = Source(p);
-#ifdef PROJECTIVE_FLIGHT
+#ifdef MANDEL_COMET
+    float2 force = CometTurbulence(p, source);
+#elif defined(PROJECTIVE_FLIGHT)
     float2 force = FlightTurbulence(p, source);
 #else
     // Saturating drive keeps very loud or broadband material numerically bounded.
@@ -169,13 +175,17 @@ float4 AdvectDye(PSin input) : SV_Target
     // Conserve pigment as the carrier expands. Without dilution a fading
     // ambient plume gains total light merely by occupying more screen area.
     float r = length(p);
-#ifdef PROJECTIVE_FLIGHT
+#ifdef MANDEL_COMET
+    float expansion = CometDilution(p);
+#elif defined(PROJECTIVE_FLIGHT)
     float expansion = FlightDilution(p);
 #else
     float expansion = Mobility() * .65 * (Fluid.Flow * 3) / (max(.08, r) * pow(1 + .65 * r, 2));
 #endif
     dye = lerp(dye, neighbors, diffusion) * exp(-((0.69314718 / (0.1 + Fluid.HalfLife * 9.9)) + expansion) * StepSeconds);
-#ifdef PROJECTIVE_FLIGHT
+#ifdef MANDEL_COMET
+    float4 dose = StepSeconds * 6 * CometPigment(p, source);
+#elif defined(PROJECTIVE_FLIGHT)
     // Capture the continuously mapped IFS foreground for a fluid afterglow.
     float4 dose = StepSeconds * 6 * FlightPigment(p, source);
 #else
