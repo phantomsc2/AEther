@@ -33,6 +33,33 @@ float GlobalAmplitudeResponse(float amplitude, float h)
     // This form also stays bounded for the largest finite float magnitudes.
     return x > h ? 1 / (1 + h / x) : x / (h + x);
 }
+// Artistic responses in gained amplitude units. B supplies the passage bed;
+// the current mean supplies immediate startup response before B has settled.
+float MusicBed(float4 g) { return GlobalAmplitudeResponse(g.b, .01); }
+float MusicStructure(float4 g) { return GlobalAmplitudeResponse(g.r, .035); }
+float MusicRise(float4 g) { return GlobalAmplitudeResponse(g.g, .02); }
+float MusicFall(float4 g) { return GlobalAmplitudeResponse(-g.g, .02); }
+float MusicInteraction(float4 g) { return GlobalAmplitudeResponse(g.a, .02); }
+float MusicBody(float4 g)
+{
+    return max(MusicBed(g), .65 * GlobalAmplitudeResponse(g.b + g.g, .015));
+}
+float MusicActivity()
+{
+    return saturate(max(MusicBody(GlobalSTBR), .6 * MusicStructure(GlobalSTBR) + .4 * MusicRise(GlobalSTBR)));
+}
+// Match FlightAudio's interpolation between history and the undelayed source.
+float4 MusicAtAge(float age, float liveSpan)
+{
+    if (age < 0 || age >= 1) return 0;
+    return lerp(GlobalSTBRAtAge(age * HistorySeconds), GlobalSTBR, 1 - smoothstep(0, liveSpan, age));
+}
+float4 MusicAtAge(float age) { return MusicAtAge(age, .035); }
+// The fluid solver supplies ages in ring coordinates, not seconds.
+float4 MusicAtRingAge(float age)
+{
+    return GlobalSTBRAtAge(age * HistorySeconds / max(HistorySpan, 1e-6));
+}
 struct PSin { float4 Position : SV_POSITION; float2 UV : TEXCOORDS; };
 PSin VS(uint id : SV_VertexID)
 {

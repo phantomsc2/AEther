@@ -50,9 +50,11 @@ float FlightLine(float distance, float width)
     return 1 - smoothstep(width, width + aa, abs(distance));
 }
 
-float FlightLevel(float4 audio, float gain)
+float FlightLevel(float4 audio, float gain, float age)
 {
-    return 1 - exp(-(2 + 18 * gain) * (audio.r + .8 * audio.g + .45 * audio.b));
+    float local = 1 - exp(-(2 + 18 * gain) * (audio.r + .8 * audio.g + .45 * audio.b));
+    float4 global = MusicAtAge(age);
+    return local + (1 - local) * .45 * MusicBody(global);
 }
 
 float4 FlightOutput(float3 light, float2 screen, float glow)

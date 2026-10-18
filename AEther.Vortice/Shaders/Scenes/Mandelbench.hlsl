@@ -398,5 +398,7 @@ float4 PS(PSin input) : SV_Target
             float2 offset = ((float2(x, y) + .5) / samples - .5) / Resolution;
             color += ShadeAt(input.UV + offset, pixelSize);
         }
-    return float4(color / (samples * samples), 1);
+    float illumination = MusicBody(GlobalSTBR);
+    illumination *= 1 + .25 * MusicStructure(GlobalSTBR) + .4 * MusicRise(GlobalSTBR);
+    return float4(saturate(color * illumination / (samples * samples)), 1);
 }

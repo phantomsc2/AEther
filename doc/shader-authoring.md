@@ -27,7 +27,8 @@ cbuffer Parameters
 
 float4 PS(PSin input) : SV_TARGET
 {
-    return float4(Appearance.Enabled ? Appearance.Tint * Appearance.Brightness : 0, 1);
+    float level = MusicBody(GlobalSTBR);
+    return float4(Appearance.Enabled ? Appearance.Tint * Appearance.Brightness * level : 0, 1);
 }
 ```
 
@@ -36,13 +37,14 @@ and `UV : TEXCOORDS`. The host supplies the fullscreen triangle vertex shader.
 Scene output follows the existing display-encoded RGB convention; presentation
 decodes it for scRGB output. Alpha should be one.
 
-Music scenes must eventually turn black without music. The explicitly
-audio-independent `Mandelbench` study scene is an exception; it has a separate
-GPU regression for visibility and independence from audio and elapsed time.
+Every scene must eventually turn black without music, including Mandelbench.
+Its study geometry stays static while the global controls drive exposure.
 Retained history, trails
 and fluid may decay naturally; procedural backgrounds and ambient illumination
-must also lose their light. `VisualBreath` is a decaying audio envelope suitable
-for background illumination that should remain visible during music.
+must also lose their light. `MusicBody(GlobalSTBR)` provides a bounded global
+background/current-level response for passage illumination. Structure, signed
+rise/fall and interaction controls are described in [global STBR](global-stbr.md).
+Historical sources must use controls sampled at their own age.
 
 ## Geometry scenes and image afterglow
 
@@ -94,6 +96,14 @@ geometry shader edits, vertex-count changes and parameter changes use normal hot
 No comments or annotations are parsed for metadata. Reflection supplies names, types,
 defaults, offsets and bindings. Byte offsets are used only to serialize values into
 the compiled layout. No author-assigned `register` or `packoffset` is required.
+
+Fluid scenes expose `Fluid.PeriodicBoundary` as a boolean. The host selects the
+matching wrap samplers, while the simulation wraps pressure, velocity, pigment
+and residence-age stencils. Periodic mode uses a translating music-driven
+carrier and keeps HalfLife decay, with no boundary sink or expansion dilution.
+Changing the checkbox preserves simulation state. Every fluid parameter struct
+used with the shared simulation must include this boolean; source defaults are
+false in the bundled scenes.
 
 ## Shared inputs and capabilities
 
@@ -172,10 +182,9 @@ full preprocessor-aware include resolver; avoid missing includes in inactive bra
 
 ## Verification
 
-The GPU silence regression discovers every music scene (excluding the explicitly
-audio-independent `Mandelbench` workbench), verifies silent startup and
-visible musical excitation, then keeps rendering the same scene for 10,000
-frames at 60 Hz (166.7 seconds of simulated silence). It tests both stopped
+The GPU silence regression discovers every scene, verifies silent startup and
+visible musical excitation, then allows 1200 to 10,000 decay frames at 60 Hz
+(20 to 166.7 seconds of simulated silence). It tests both stopped
 capture and continuing zero-valued audio packets. Each of the following 60
 frames must have every RGB channel exactly zero in undithered RGBA8 output.
 No scene changes, simulation clears or large time steps shortcut the decay.

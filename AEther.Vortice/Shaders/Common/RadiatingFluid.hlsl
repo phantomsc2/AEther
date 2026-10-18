@@ -1,27 +1,11 @@
 // V3's solver is centered at the origin and projected around the animated
 // silhouette. All positions use viewport-height units.
-float RadiatingFrequency(float3 pigment)
-{
-    // Invert the fixed cosine palette. Least squares recovers its circular
-    // phase from all three channels, so mixtures follow their resulting hue.
-    float3 c = cos(6.2831853 * float3(.04, .38, .62));
-    float3 s = sin(6.2831853 * float3(.04, .38, .62));
-    float3 y = 2 * pigment - 1;
-    float cc = dot(c, c), ss = dot(s, s), cs = dot(c, s);
-    float u = dot(y, c) * ss - dot(y, s) * cs;
-    float v = dot(y, c) * cs - dot(y, s) * cc;
-    if (u * u + v * v < 1e-8) return .5;
-    float phase = frac(atan2(v, u) / 6.2831853 + 1);
-    // The palette spans 85% of the hue circle. Clamp mixtures falling in the
-    // unused gap to the nearer spectral endpoint instead of wrapping bass.
-    return phase > .85 ? (phase < .925 ? 1 : 0) : phase / .85;
-}
 float RadiatingStereo(float2 p)
 {
     float side = p.x / max(.001, length(p));
     return .5 + .5 * side * abs(side);
 }
-float RadiatingActivity() { return smoothstep(.005, .5, PoseX + .6 * PoseZ); }
+float RadiatingActivity() { return max(MusicActivity(), smoothstep(.005, .5, PoseX + .6 * PoseZ)); }
 float4 RadiatingRead(float frequency, float age, float right)
 {
     float2 uv = float2(saturate(frequency), HistogramShift - age);
@@ -52,22 +36,35 @@ float4 RadiatingSource(float2 p, float sourceAge)
 }
 float2 RadiatingCarrier(float2 p)
 {
-    return RadiatingActivity() * Fluid.Flow * 2.4 * p;
+    float flow = 1 + .65 * MusicBed(GlobalSTBR) + .4 * MusicRise(GlobalSTBR) - .2 * MusicFall(GlobalSTBR);
+    return RadiatingActivity() * Fluid.Flow * 2.4 * flow * p;
 }
-float RadiatingDilution(float2 p) { return RadiatingActivity() * Fluid.Flow * 4.8; }
+float RadiatingDilution(float2 p)
+{
+    // Divergence of the same expanding carrier; added flow must also dilute dye.
+    float flow = 1 + .65 * MusicBed(GlobalSTBR) + .4 * MusicRise(GlobalSTBR) - .2 * MusicFall(GlobalSTBR);
+    return RadiatingActivity() * Fluid.Flow * 4.8 * flow;
+}
 float RadiatingBackground(float4 source)
 {
     // One local B response drives both stirring and pigment injection. The
     // Background control sets its sensitivity; silence supplies exactly zero.
+    // Preserve local/stereo contrast. Global B supplies the added passage-wide
+    // drive separately; normalizing each faint stereo blend would wash it out.
     return Fluid.Background * 3 * (1 - exp(-3 * max(0, source.b)));
 }
 float2 RadiatingTurbulence(float2 p, float4 source)
 {
-    float r = length(p), t = CometTime();
+    float r = length(p), t = RadiatingTime();
     float tone = 1 - exp(-3 * source.r);
     float background = RadiatingBackground(source);
+    float bed = MusicBed(GlobalSTBR);
     float strength = ((.8 * tone + 4 * source.a) * (1 + background) + 3 * background)
         * (.12 + 4 * Fluid.Curl * Fluid.Curl);
+    // Broadband B keeps the fluid moving even when local contrast S is small.
+    // Interaction changes existing eddy strength, without creating pigment.
+    strength = (strength + 2 * Fluid.Curl * bed)
+        * (1 + .65 * MusicInteraction(GlobalSTBR) + .25 * MusicStructure(GlobalSTBR));
     float2 force = 0;
     // Localized counter-rotating vortices roll whole streams into spirals.
     // Curl changes their forcing as well as the small-scale confinement;
@@ -85,20 +82,22 @@ float2 RadiatingTurbulence(float2 p, float4 source)
     force += .18 * float2(-p.y, p.x) * exp(-2 * r * r);
     return force * strength * RadiatingActivity();
 }
-float4 RadiatingPigment(float2 p, float4 source)
+float4 RadiatingPigment(float2 p, float4 source, float sourceAge)
 {
-    // Same inverse display projection and distance field as the black head.
+    // Same inverse display projection and distance field as the dark core.
     // Evaluate only on the simulation grid, not in every pressure pass.
-    float2 screen = p / .55 + CometHead();
-    float surface = CometDistances(screen).x - CometBoundary();
+    float2 screen = p / .55 + RadiatingCenter();
+    float surface = RadiatingDistances(screen).x - RadiatingBoundary();
     float band = max(.0015, 1.25 * fwidth(surface));
     float angle = atan2(p.y, p.x);
-    float streams = .25 + .75 * pow(.5 + .5 * sin(7 * angle - 1.2 * CometTime()), 2);
+    float streams = .25 + .75 * pow(.5 + .5 * sin(7 * angle - 1.2 * RadiatingTime()), 2);
     float emitter = exp(-abs(surface) / band) * streams;
     float tone = 1 - exp(-3 * source.r);
     float background = RadiatingBackground(source);
-    float density = 2.2 * (tone * (1 + background) + background) * emitter;
+    float4 global = MusicAtRingAge(max(sourceAge, HistoryNewestAge));
+    float density = 2.2 * (tone * (1 + background + .6 * MusicStructure(global)
+        + .5 * MusicBody(global)) + background) * emitter;
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
     // Color is a frequency identity, so it must not rotate with the clock.
-    return float4(CometPalette(frequency, 0) * density, density);
+    return float4(RadiatingPalette(frequency) * density, density);
 }

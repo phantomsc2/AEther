@@ -203,17 +203,26 @@ public sealed partial class Renderer : IDisposable
         var now = Audio.Now;
         var dt = Math.Max(0, now - previousTime);
         Audio.Advance(dt);
+        var global = Audio.GlobalSTBR;
+        static float Response(float value, float sensitivity) => value > 0 ? 1 / (1 + sensitivity / value) : 0;
+        var bed = Response(global.Z, .01f);
+        var structure = Response(global.X, .035f);
+        var interaction = Response(global.W, .02f);
+        var rise = Response(global.Y, .02f);
         // Material evolution follows sustained components. Onsets can pulse a
         // silhouette without permanently advancing its underlying shape.
-        shapeTime += Math.Clamp(dt, 0, .05) * (Audio.Components.X + .7 * Audio.Components.Z);
+        shapeTime += Math.Clamp(dt, 0, .05)
+            * Math.Max(Audio.Components.X + .7 * Audio.Components.Z, .55 * structure + .65 * bed);
         // A passage builds deformation over sustained energy/noise, then coasts
         // through brief gaps rather than changing strength on every analysis row.
         var passageEnergy = 1 - Math.Exp(-2.5 * Math.Max(0, Audio.Energy));
-        var distortionTarget = Math.Clamp(.55 * Audio.Components.Z + .45 * passageEnergy, 0, 1);
+        var distortionTarget = Math.Clamp(Math.Max(.55 * Audio.Components.Z + .45 * passageEnergy,
+            .55 * bed + .25 * interaction + .2 * structure), 0, 1);
         var distortionResponse = 1 - Math.Exp(-Math.Clamp(dt, 0, .05)
             / (distortionTarget > distortionMomentum ? .85 : 3.2));
         distortionMomentum += (distortionTarget - distortionMomentum) * distortionResponse;
         var activity = Math.Clamp((Audio.Components.Z + .2f * Audio.Components.Y - .02f) / .53f, 0, 1);
+        activity = Math.Clamp(Math.Max(activity, .8f * bed + .2f * structure + .25f * rise), 0, 1);
         var mobility = ActiveShader?.Fluid != null ? activity * activity * (3 - 2 * activity) : 1;
         movementTime += (Audio.MusicalTime - previousMusicalTime) * mobility;
         previousMusicalTime = Audio.MusicalTime;

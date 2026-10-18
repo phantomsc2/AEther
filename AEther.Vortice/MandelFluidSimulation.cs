@@ -69,7 +69,7 @@ internal sealed class MandelFluidSimulation : IDisposable
     readonly List<IDisposable> resources = [];
     readonly List<Level> levels = [];
     readonly ID3D11Buffer constants;
-    readonly ID3D11SamplerState borderSampler, pressureSampler;
+    readonly ID3D11SamplerState borderSampler, pressureSampler, wrapSampler;
     Surface velocity, nextVelocity, dye, nextDye;
     Surface? predictedVelocity, predictedDye;
     Surface? age, nextAge, predictedAge;
@@ -83,7 +83,8 @@ internal sealed class MandelFluidSimulation : IDisposable
     public float Aspect { get; }
     public ID3D11ShaderResourceView Dye => dye.View;
     public ID3D11ShaderResourceView? Age => age?.View;
-    public ID3D11SamplerState Sampler => borderSampler;
+    public bool PeriodicBoundary { get; private set; }
+    public ID3D11SamplerState Sampler => PeriodicBoundary ? wrapSampler : borderSampler;
     ShaderParameters? sceneParameters;
     readonly Dictionary<string, ID3D11Buffer> namedBuffers = new(StringComparer.Ordinal);
     readonly Dictionary<string, ID3D11ShaderResourceView> namedTextures = new(StringComparer.Ordinal);
@@ -115,6 +116,12 @@ internal sealed class MandelFluidSimulation : IDisposable
             {
                 Filter = Filter.MinMagLinearMipPoint, AddressU = TextureAddressMode.Clamp,
                 AddressV = TextureAddressMode.Clamp, AddressW = TextureAddressMode.Clamp,
+                MaxLOD = float.MaxValue, ComparisonFunc = ComparisonFunction.Never,
+            }));
+            wrapSampler = Own(device.CreateSamplerState(new SamplerDescription
+            {
+                Filter = Filter.MinMagLinearMipPoint, AddressU = TextureAddressMode.Wrap,
+                AddressV = TextureAddressMode.Wrap, AddressW = TextureAddressMode.Wrap,
                 MaxLOD = float.MaxValue, ComparisonFunc = ComparisonFunction.Never,
             }));
             velocity = Create(w, h, Format.R32G32_Float);
@@ -149,6 +156,9 @@ internal sealed class MandelFluidSimulation : IDisposable
         programs = shaders;
         EnsureAge();
         this.sceneParameters = sceneParameters;
+        var boundary = sceneParameters?.Items.FirstOrDefault(p => p.Name == "Fluid")?.Children
+            .FirstOrDefault(p => p.Name == "PeriodicBoundary");
+        PeriodicBoundary = boundary != null && sceneParameters!.GetBoolean(boundary);
         if (buffers != null) foreach (var pair in buffers) namedBuffers[pair.Key] = pair.Value;
         if (textures != null) foreach (var pair in textures) namedTextures[pair.Key] = pair.Value;
         if (samplers != null) foreach (var pair in samplers) namedSamplers[pair.Key] = pair.Value;
@@ -188,8 +198,8 @@ internal sealed class MandelFluidSimulation : IDisposable
         else context.OMSetRenderTargets(target.Target);
         context.RSSetViewport(0, 0, target.Width, target.Height);
         namedBuffers["FluidConstants"] = constants;
-        namedSamplers["ClampFluid"] = borderSampler;
-        namedSamplers["PressureSampler"] = pressureSampler;
+        namedSamplers["ClampFluid"] = Sampler;
+        namedSamplers["PressureSampler"] = PeriodicBoundary ? wrapSampler : pressureSampler;
         if (v != null) namedTextures["Velocity"] = v.View;
         if (pigment != null) namedTextures["Dye"] = pigment.View;
         if (pressure != null) namedTextures["Pressure"] = pressure.View;
@@ -338,6 +348,31 @@ internal sealed class MandelFluidSimulation : IDisposable
     }
 
     internal float[] ReadVelocity() => ReadFloatSurface(velocity, 2);
+    /// <summary>GPU transport fixture: a small dyed patch near the right edge in a uniform current.</summary>
+    internal unsafe void SeedRecirculationForCheck(float densityScale = 1, float speed = .8f)
+    {
+        var flow = new float[Width * Height * 2];
+        var pigment = new Half[Width * Height * 4];
+        var residence = new float[Width * Height * 2];
+        for (int y = 0; y < Height; y++)
+            for (int x = 0; x < Width; x++)
+            {
+                int cell = y * Width + x;
+                flow[2 * cell] = speed;
+                double px = (2 * (x + .5) / Width - 1) * Aspect;
+                double py = 2 * (y + .5) / Height - 1;
+                float density = densityScale * (float)Math.Exp(-((px - Aspect + .16) * (px - Aspect + .16) + py * py) / .003);
+                pigment[4 * cell] = pigment[4 * cell + 3] = (Half)density;
+                residence[2 * cell] = .5f * (float)(Half)density;
+                residence[2 * cell + 1] = (float)(Half)density;
+            }
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
+        fixed (float* p = flow) context.UpdateSubresource(velocity.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+        fixed (Half* p = pigment) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+        if (age != null)
+            fixed (float* p = residence) context.UpdateSubresource(age.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+    }
     internal float[] ReadAge() => ReadFloatSurface(age!, 2);
     internal unsafe void AddAgeForCheck(float seconds)
     {

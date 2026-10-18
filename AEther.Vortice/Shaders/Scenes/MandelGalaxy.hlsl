@@ -216,38 +216,41 @@ float4 PS(StarVertex input) : SV_Target
     float pan = .5 + (Hash(input.Seed*113+7)-.5)*Orbits.StereoWidth;
     float bandFrequency;
     float4 audio=AudioAt(input.Frequency,input.Trail ? input.UV.y : 0,pan,bandFrequency);
+    float4 global=MusicAtAge(input.Trail ? input.UV.y : 0,.025);
+    float bed=MusicBody(global), structure=MusicStructure(global);
+    float rise=MusicRise(global), interaction=MusicInteraction(global);
     float3 bandColor=Palette(bandFrequency);
     // A band's tone/noise deepens its hue; its transients add a pale flash.
     // All modulation uses the same mapped band and the same history age.
     float saturation=.45+.55*saturate(audio.x+.5*audio.z);
     float3 color=lerp(dot(bandColor,float3(.2126,.7152,.0722)).xxx,bandColor,saturation);
-    color=lerp(color,float3(1,1,1),.3*audio.y);
+    color=lerp(color,float3(1,1,1),.3*max(audio.y,.5*rise));
     if(input.Trail)
     {
         float x=input.UV.x*2-1, age=input.UV.y/(.05+.95*Trails.Length);
         float profile=exp(-18*x*x)*(1-smoothstep(.85,1,age))*exp(-age*(.5+6*Trails.Falloff));
         // Follow the historical mapped band's tone. Noise and transients can
         // tint an existing trail, but cannot illuminate a silent tonal band.
-        float light=audio.x;
+        float light=audio.x*(1+.6*bed+.35*structure);
         return float4(color*profile*light*.45,0);
     }
     float2 p=input.UV; float r=length(p); clip(2.95-r);
-    float cloud=Noise(p*2+float2(input.Seed*71,T*.09));
-    float gas=Layers.Gas ? audio.z*cloud*exp(-r*r*.65)*Appearance.Gas : 0;
+    float cloud=Noise(p*2+float2(input.Seed*71,MusicalMovementTime*.09));
+    float gas=Layers.Gas ? max(audio.z,.15*bed)*cloud*exp(-r*r*.65)*Appearance.Gas*(1+.5*interaction) : 0;
     float rays=pow(saturate(.5+.5*cos(atan2(p.y,p.x)*(6+floor(input.Frequency*18))+input.Seed*17)),18);
     if(Layers.NoteRays) gas*=1+audio.x*rays*(3+24*Appearance.Rays);
     float3 light=color*gas;
-    float core=1-smoothstep(.7,1,r);
-    if(Layers.Cores) light+=color*core*(.025*VisualBreath+.65*audio.x);
-    if(Layers.Shells) light+=color*exp(-25*abs(r-1.15))*(.02*VisualBreath+.4*audio.x);
+    float core=1-smoothstep(.7+.1*structure,1+.16*structure,r);
+    if(Layers.Cores) light+=color*core*(.045*bed+.65*audio.x)*(1+.4*rise);
+    if(Layers.Shells) light+=color*exp(-25*abs(r-1.15))*(.035*bed+.4*audio.x);
     // Tiny stars use an integrated glow; resolve folds only when they cover pixels.
     if(Layers.Mandelstars && input.Lod>1.5)
     {
         float fractal=Slice(p,input.Seed)*(1-smoothstep(1.6,2.7,r));
         light*=1+fractal*(.3+6*audio.y)*Appearance.Fractal;
-        light+=color*fractal*(.025*VisualBreath+.8*audio.y)*Appearance.Fractal;
+        light+=color*fractal*(.04*bed+.8*max(audio.y,.4*rise))*Appearance.Fractal;
     }
-    else if(Layers.Mandelstars) light+=color*exp(-r*r*2)*(.025*VisualBreath+.2*audio.y);
+    else if(Layers.Mandelstars) light+=color*exp(-r*r*2)*(.04*bed+.2*max(audio.y,.4*rise));
     return float4(light,0);
 }
 Texture2D<float4> SceneImage;
@@ -258,11 +261,9 @@ float4 AfterglowPS(PSin input) : SV_Target
     {
         float2 p=input.UV*float2(AspectRatio,1)*150;
         float seed=Hash(dot(floor(p),float2(1,157)));
-        light+=float3(.25,.35,.5)*exp(-180*dot(frac(p)-.5,frac(p)-.5))*step(.996,seed)*VisualBreath;
+        light+=float3(.25,.35,.5)*exp(-180*dot(frac(p)-.5,frac(p)-.5))*step(.996,seed)*MusicBody(GlobalSTBR);
     }
     return float4(pow(saturate(1-exp(-max(0,light)*(1+3*Appearance.Exposure))),1/2.2),1);
 }
-
-
 
 

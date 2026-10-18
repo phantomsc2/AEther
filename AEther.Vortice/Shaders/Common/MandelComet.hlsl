@@ -3,13 +3,7 @@
 float CometTime() { return S * Quality.MovementSpeed * 10; }
 float CometShapeTime()
 {
-#ifdef MANDEL_FLUID_V3
-    // Keep v2's silhouette and folds, but tumble/morph more actively during
-    // both rhythmic and sustained passages using the inertial musical clock.
-    return (ShapeTime * 1.25 + .35 * S) * Quality.MovementSpeed * 20;
-#else
     return ShapeTime * Quality.MovementSpeed * 20;
-#endif
 }
 float CometNoiseResponse(float amplitude)
 {
@@ -28,11 +22,14 @@ float CometNoiseDrive(float frequency, float age, float right)
         + .35 * max(0, History(frequency, age + .12 / HistorySeconds, right).b)
         + .2 * max(0, History(frequency, age + .4 / HistorySeconds, right).b);
     float localNoise = CometNoiseResponse(.2 * max(0, live) + recorded);
-    return saturate(.7 * localNoise + .3 * DistortionMomentum);
+    float4 global = MusicAtAge(age);
+    return saturate(max(.7 * localNoise + .3 * DistortionMomentum,
+        .45 * MusicBed(global) + .35 * MusicInteraction(global)));
 }
 float3 CometReaction()
 {
-    return 1 - exp(-float3(3 * max(0, PoseX), 4 * max(0, VisualFlash), 3 * max(0, PoseZ)));
+    return max(1 - exp(-float3(3 * max(0, PoseX), 4 * max(0, VisualFlash), 3 * max(0, PoseZ))),
+        float3(MusicStructure(GlobalSTBR), MusicRise(GlobalSTBR), MusicBed(GlobalSTBR)));
 }
 float2 CometHead()
 {
@@ -45,7 +42,7 @@ float2 CometHead()
 float CometScale() { return 12 / ((.7 + .8 * Comet.Size) * min(1, AspectRatio)); }
 float CometBoundary()
 {
-    return .003 + .003 * saturate(PoseX);
+    return .003 + .003 * max(saturate(PoseX), MusicStructure(GlobalSTBR));
 }
 float CometSpectralImpact(float frequency, float right)
 {
@@ -71,7 +68,7 @@ float2 CometDistances(float2 p)
         * (.9 * sin(1.1 * t) + .4 * sin(1.93 * t));
     q.z += .12 * reaction.x + .1 * reaction.z;
     float depth = max(1, (1 + round(Quality.MaximumIterations * 29))
-        * lerp(.3, 1, saturate(PoseX + PoseZ)));
+        * lerp(.3, 1, max(saturate(PoseX + PoseZ), MusicActivity())));
     float2 distances = max(1e-8, BoxDistanceAtDepth(q, t, depth));
     // Outside the local deformation region, skip spectral/history sampling.
     [branch] if (local <= 0) return distances;
@@ -138,7 +135,8 @@ float4 CometSource(float2 p, float sourceAge)
     float stereo = .5 + .5 * q.x / max(.001, length(q));
     return max(0, lerp(Histogram0.SampleLevel(Linear, uv, 0), Histogram1.SampleLevel(Linear, uv, 0), stereo));
 }
-float CometActivity() { return smoothstep(.005, .5, PoseX + PoseZ + .6 * PoseY); }
+float CometActivity() { return max(MusicActivity(), smoothstep(.005, .5, PoseX + PoseZ + .6 * PoseY)); }
+float CometFlow() { return 1 + .6 * MusicBed(GlobalSTBR) + .35 * MusicRise(GlobalSTBR) - .2 * MusicFall(GlobalSTBR); }
 float2 CometDirection()
 {
     float t = CometTime();
@@ -148,9 +146,9 @@ float2 CometCarrier(float2 p)
 {
     // Expansion is kept outside pressure projection and carries the wake past
     // every screen edge. Audio never kicks the whole image's travel speed.
-    return CometActivity() * Fluid.Flow * 3 * (1.25 * (p - CometHead()) + .14 * CometDirection());
+    return CometActivity() * Fluid.Flow * CometFlow() * 3 * (1.25 * (p - CometHead()) + .14 * CometDirection());
 }
-float CometDilution(float2 p) { return CometActivity() * Fluid.Flow * 7.5; }
+float CometDilution(float2 p) { return CometActivity() * Fluid.Flow * CometFlow() * 7.5; }
 float2 CometTurbulence(float2 p, float4 source)
 {
     float2 q = p - CometHead(), direction = CometDirection();
@@ -160,11 +158,12 @@ float2 CometTurbulence(float2 p, float4 source)
         + .5 * sin(23 * along + 9 * across + 2.3 * t);
     float strength = .2 * (1 - exp(-2 * source.r))
         + 7 * Fluid.Background * CometNoiseResponse(source.b) * (.35 + 1.1 * DistortionMomentum)
-        + 4 * (1 - exp(-2 * source.g));
+        + 4 * (1 - exp(-2 * source.g)) + 2 * Fluid.Background * MusicBed(GlobalSTBR);
+    strength *= 1 + .6 * MusicInteraction(GlobalSTBR);
     return (side * eddies + .3 * direction * sin(17 * across - t))
         * strength * exp(-1.2 * across * across - .35 * along * along) * CometActivity();
 }
-float4 CometPigment(float2 p, float4 source)
+float4 CometPigment(float2 p, float4 source, float sourceAge)
 {
     float2 distances = CometDistances(p);
     float surface = distances.x - CometBoundary();
@@ -172,6 +171,8 @@ float4 CometPigment(float2 p, float4 source)
     float emitter = exp(-abs(surface) / band);
     float density = emitter * ((1 - exp(-2 * source.r)) + .6 * (1 - exp(-2 * source.b))
         + .2 * (1 - exp(-2 * source.g)));
+    float4 global = MusicAtRingAge(max(sourceAge, HistoryNewestAge));
+    density *= 1 + .65 * MusicBody(global) + .35 * MusicStructure(global);
     float frequency = saturate((log2(distances.x) + 17) / 17);
     return float4(CometPalette(frequency, -.05 * CometTime()) * density, density);
 }

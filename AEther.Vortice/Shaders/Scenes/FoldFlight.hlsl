@@ -19,10 +19,10 @@ float4 PS(PSin input) : SV_Target
     float2 screen = FlightScreen(input.UV, Steering);
     float speed = 12 + 24 * FlightSpeed;
     float farPlane = speed;
-    float camera = T * speed;
+    float camera = MusicalMovementTime * speed;
     float spacing = 1.55;
     float first = floor(camera / spacing) + 1;
-    float background = Background * VisualBreath;
+    float background = Background * MusicBody(GlobalSTBR);
     float3 light = float3(.006, .008, .018) * background;
     [loop] for (int layer = 0; layer < 24; ++layer)
     {
@@ -30,7 +30,9 @@ float4 PS(PSin input) : SV_Target
         float depth = world - camera;
         if (depth > farPlane) break;
         float age = saturate((farPlane - depth) / speed);
-        float birth = T - age;
+        float birth = MusicalMovementTime - age;
+        float4 global = MusicAtAge(age);
+        float recordedBackground = Background * MusicBody(global);
         float2 p = screen * depth / 1.5;
         p -= Bend * float2(1.1 * sin(world * .15) - 1.1 * sin(camera * .15),
             .7 * cos(world * .11) - .7 * cos(camera * .11));
@@ -43,7 +45,7 @@ float4 PS(PSin input) : SV_Target
         float filaments = 20;
         [unroll] for (int iteration = 0; iteration < 6; ++iteration)
         {
-            z = FlightRotate(abs(z), .42 + .14 * sin(birth * .23));
+            z = FlightRotate(abs(z), .42 + .14 * sin(birth * .23) + .08 * MusicStructure(global));
             z = 1.75 * z - float2(1.15, .7);
             scale *= 1.75;
             filaments = min(filaments, abs(length(z) - .48) / scale);
@@ -52,14 +54,14 @@ float4 PS(PSin input) : SV_Target
             * smoothstep(1.1, 1.6, squareRadius) * (1 - smoothstep(2.25, 2.9, squareRadius));
         float frequency = atan2(abs(p.x), -p.y) / 3.14159265;
         float4 audio = FlightAudio(frequency, age, smoothstep(-.1, .1, p.x));
-        float level = FlightLevel(audio, AudioGain);
-        float attack = 1 - exp(-12 * audio.g);
+        float level = FlightLevel(audio, AudioGain, age);
+        float attack = max(1 - exp(-12 * audio.g), .5 * MusicRise(global));
         float visibility = smoothstep(0, .8, depth) * (1 - smoothstep(.8, 1, depth / farPlane));
         float3 color = FlightPalette(frequency, birth);
         light += color * visibility * (rim + lace * FoldDetail)
-            * (.08 * background + 1.25 * level + attack);
+            * (.08 * recordedBackground + 1.25 * level + attack);
         light += color * visibility * exp(-24 * abs(squareRadius - 2.25))
-            * (.012 * background + .07 * level);
+            * (.012 * recordedBackground + .07 * level);
     }
     return FlightOutput(light, screen, Glow);
 }

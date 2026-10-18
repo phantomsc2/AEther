@@ -192,7 +192,13 @@ float4 PS(TraceVertex input) : SV_Target
         float shade = .25 + .75 * saturate(dot(normal, normalize(float3(-.4, .6, -1))));
         float age = lerp(input.Ages.x, input.Ages.y, t);
         float4 audio = max(0, AudioAt(input.Frequency, age, input.Pan));
+        float offset = age / max(HistorySeconds, 1e-6) * HistorySpan;
+        float4 global = offset < HistoryNewestAge ? GlobalSTBR : GlobalSTBRAtAge(age);
         float energy = 1 - exp(-(audio.x + .45 * audio.y + .2 * audio.z) * (2 + 30 * Appearance.Gain));
+        // Integrate passage exposure at each shutter sample's own age. Today's
+        // level must not brighten an old trail or extinguish its release.
+        energy = max(energy, .3 * MusicBody(global));
+        energy *= 1 + .35 * MusicStructure(global) + .25 * MusicRise(global);
         float nearFade = smoothstep(input.Radius + .15, input.Radius + 1, center.z);
         light += color * shade * coverage * nearFade * energy;
     }

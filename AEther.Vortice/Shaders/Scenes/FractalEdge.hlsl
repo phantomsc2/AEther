@@ -26,18 +26,18 @@ struct EdgeMaterial
 };
 struct EdgeLighting { float Ambient; float Sun; float Headlight; };
 struct EdgeEffects { float Amount; float Turbulence; float Exposure; };
-struct FluidParameters { float Flow; float HalfLife; float Diffusion; float Background; float Curl; };
+struct FluidParameters { float Flow; float HalfLife; float Diffusion; float Background; float Curl; bool PeriodicBoundary; };
 cbuffer Parameters : register(b1)
 {
     EdgeCamera Camera = { .45, .4, .35, .5, .5, float2(.5, .5) };
     EdgeMaterial Material = { .45, .7, .35, .7, .7, .45 };
     EdgeLighting Lighting = { .2, .65, .6 };
     EdgeEffects Effects = { .2, .2, .35 };
-    FluidParameters Fluid = { .1, .12, .3, .1, .1 };
+    FluidParameters Fluid = { .1, .12, .3, .1, .1, false };
 };
 
 float EdgePath(float z) { return .3 * sin(z * .075) + .12 * sin(z * .19); }
-float EdgeTravel() { return T * (1 + 12 * Camera.Speed) + .6 * S; }
+float EdgeTravel() { return MusicalMovementTime * (1 + 12 * Camera.Speed) + .6 * S; }
 
 void EdgeView(out float3 eye, out float3 right, out float3 up, out float3 forward)
 {
@@ -147,6 +147,9 @@ float4 PS(EdgeVertex input) : SV_Target
     float tone = 1 - exp(-gain * audio.r);
     float noise = 1 - exp(-gain * audio.b);
     float attack = 1 - exp(-gain * audio.g);
+    float4 global = MusicAtAge(age);
+    float bed = MusicBody(global);
+    attack = max(attack, .55 * MusicRise(global));
     float3 eye, right, up, forward;
     EdgeView(eye, right, up, forward);
     float3 normal = input.Normal;
@@ -171,9 +174,10 @@ float4 PS(EdgeVertex input) : SV_Target
     float3 viewDirection = normalize(eye - input.World);
     float specular = pow(saturate(dot(normal, normalize(normalize(lamp) + viewDirection))), 32);
     float3 palette = lerp(float3(.32, .48, .55), FlightPalette(frequency, .03 * input.World.z), .65);
-    float body = (.12 * VisualBreath + .65 * noise + .25 * tone) * (.25 + .75 * field.y);
+    float body = (.3 * bed + .65 * noise + .25 * tone) * (.25 + .75 * field.y)
+        * (1 + .35 * MusicStructure(global));
     float lightning = 1 + (4 + 18 * Material.Lightning) * attack * pow(saturate(field.y), .7);
-    float3 light = (palette * body * diffuse + .12 * specular * (noise + tone)) * lightning;
+    float3 light = (palette * body * diffuse + .12 * specular * (noise + tone + .5 * bed)) * lightning;
     // Keep the small central patch readable as the place to look toward.
     if (input.Face == 7) light *= 1.5;
     light *= exp(-input.Depth * .012);

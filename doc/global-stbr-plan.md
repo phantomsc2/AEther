@@ -1,9 +1,10 @@
 # Global level and global STBR: design proposal
 
-Status: numerical/event/GPU infrastructure and optional analysis diagnostics
-implemented, 2026-10-18. The original proposal and mathematical discussion below
+Status: numerical/event/GPU infrastructure, analysis diagnostics, artistic shader
+mappings and optional periodic fluid transport implemented, 2026-10-18.
+The original proposal and mathematical discussion below
 remain the design rationale. See [implementation and shader contract](global-stbr.md)
-for the shipped interfaces, diagnostics, validation and remaining artistic rollout.
+for the current interfaces, mappings, fluid options and validation.
 
 ## Recommendation
 
@@ -650,7 +651,7 @@ an unscaled amount per frame.
 | `FractalEdge` | Bg for the shared body/ambient contribution; s for slow material response; positive t for a passage-wide pulse | Local tone/noise and attack for face detail |
 | `Mandelbox`, `MandelFluid` | Bg for passage illumination, s for deformation demand, t for a global pulse | Tonal rays, recorded attacks and local B |
 | `MandelFluidv2` / `MandelComet` | Bg for broad wake visibility, s for slow morphology, t for an additional global rise response | Existing undelayed waveform/local attacks and spectral ray identities |
-| `MandelFluidv3` / `RadiatingFluid` | s/Bg may modulate shared transport demand; r may modulate local turbulence | Local B must continue to inject/stir locally; S pigment and T lightning retain their current roles |
+| `MandelFluidv3` / `RadiatingFluid` | s/Bg modulate shared transport; r strengthens local turbulence; positive t supplies a central strobe | Local B continues to inject/stir locally; S/B supply clouds and local attacks can strobe them even when broadband T is small |
 | `MandelGalaxy` | Bg for shared starfield and faint core illumination; s/t for bounded size or exposure modulation | Historical band tone for trails, channel-specific gas and note placement |
 | `EdgeIFS` | t for an ink pulse, s for bounded branch-shape response | Local injection and decaying image feedback |
 | `Spectrum`, `Histogram` | Optional diagnostic global strip showing s, signed t, Bg and r | Raw alpha view and current local RGB view |
@@ -668,6 +669,11 @@ current source/documentation explicitly exempts the audio-independent
 `Mandelbench` study from the music-scene regression. This is an existing policy
 mismatch, not an exception granted by this proposal. A literal all-scene rollout
 must reconcile that study's visibility contract and regression discovery.
+
+Implementation update, 2026-10-18: the artistic rollout now gives Mandelbench
+global music-driven exposure while keeping its study geometry static, and the
+silence regression discovers it together with all other scenes. See
+[current shader mappings and fluid options](global-stbr.md#artistic-mappings).
 
 ## 9. Validation and rollout
 

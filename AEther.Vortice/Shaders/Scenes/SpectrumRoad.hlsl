@@ -24,8 +24,8 @@ float4 PS(PSin input) : SV_Target
     float2 screen = FlightScreen(input.UV, Steering);
     screen.y -= .12;
     float speed = 12 + 24 * FlightSpeed;
-    float camera = T * speed;
-    float background = Background * VisualBreath;
+    float camera = MusicalMovementTime * speed;
+    float background = Background * MusicBody(GlobalSTBR);
     float3 light = float3(.008, .012, .03) * background;
 
     // Ray intersection with a horizontal road below the camera.
@@ -37,16 +37,17 @@ float4 PS(PSin input) : SV_Target
         float age = saturate((speed - depth) / speed);
         float frequency = saturate((x + 2.2) / 4.4);
         float4 audio = FlightAudio(frequency, age, step(0, x));
-        float level = FlightLevel(audio, AudioGain);
+        float level = FlightLevel(audio, AudioGain, age);
         float fade = (1 - smoothstep(speed * .75, speed, depth)) * smoothstep(0, .8, depth);
         float rails = FlightLine(abs(x) - 2.2, .025);
         float lane = FlightLine(abs(frac((x + 2.2) / .55) - .5) * .55, .012);
         float cross = FlightLine(abs(frac(world / 1.55) - .5) * 1.55, .018);
         float inside = 1 - smoothstep(2.15, 2.25, abs(x));
-        float3 color = FlightPalette(frequency, T - age);
-        light += color * fade * (rails * (.15 * background + level)
-            + inside * (lane * (.035 * background + .15 * level)
-                + cross * (.08 * background + .7 * level)));
+        float3 color = FlightPalette(frequency, MusicalMovementTime - age);
+        float recordedBackground = Background * MusicBody(MusicAtAge(age));
+        light += color * fade * (rails * (.15 * recordedBackground + level)
+            + inside * (lane * (.035 * recordedBackground + .15 * level)
+                + cross * (.08 * recordedBackground + .7 * level)));
         light += color * fade * inside * level * .045;
     }
 
@@ -57,14 +58,15 @@ float4 PS(PSin input) : SV_Target
         float depth = world - camera;
         if (depth > speed) break;
         float age = saturate((speed - depth) / speed);
-        float birth = T - age;
+        float birth = MusicalMovementTime - age;
+        float recordedBackground = Background * MusicBody(MusicAtAge(age));
         float2 p = screen * depth / 1.5;
         p.x -= RoadCurve(world) - RoadCurve(camera);
         float frequency = saturate((abs(p.x) - 2.5) / 3.0);
         float band = min(11, floor(frequency * 12));
         frequency = (band + .5) / 12;
         float4 audio = FlightAudio(frequency, age, step(0, p.x));
-        float level = FlightLevel(audio, AudioGain);
+        float level = FlightLevel(audio, AudioGain, age);
         float height = .12 + (1 + 4 * TowerHeight) * level;
         float localX = abs(p.x) - (2.5 + (band + .5) * .25);
         float vertical = smoothstep(-1.04, -.98, p.y) * (1 - smoothstep(height - 1, height - .94, p.y));
@@ -72,7 +74,7 @@ float4 PS(PSin input) : SV_Target
         float top = FlightLine(p.y - (height - 1), .018) * (1 - smoothstep(.07, .1, abs(localX)));
         float visibility = smoothstep(0, .9, depth) * (1 - smoothstep(.8, 1, depth / speed));
         float3 color = FlightPalette(frequency, birth);
-        light += color * visibility * (columns * (.025 * background + .22 * level) + top * level);
+        light += color * visibility * (columns * (.025 * recordedBackground + .22 * level) + top * level);
 
         // Folded overhead scenery stays attached to a world-space slice.
         float2 z = float2(p.x, p.y + 1);
@@ -88,7 +90,7 @@ float4 PS(PSin input) : SV_Target
         float4 skyAudio = FlightAudio(atan2(abs(p.x), max(.01, p.y)) / 1.5707963,
             age, step(0, p.x));
         light += FlightPalette(.65 + .15 * sin(p.x), birth) * arch * visibility * Backdrop
-            * (.04 * background + .5 * FlightLevel(skyAudio, AudioGain));
+            * (.04 * recordedBackground + .5 * FlightLevel(skyAudio, AudioGain, age));
     }
     return FlightOutput(light, screen, Glow);
 }

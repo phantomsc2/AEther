@@ -7,6 +7,7 @@ struct FluidParameters
     float Diffusion;
     float Background;
     float Curl;
+    bool PeriodicBoundary;
 };
 struct CometParameters
 {
@@ -20,7 +21,7 @@ cbuffer Parameters
 {
     GeometryParameters Geometry = { 0.3125, 0.45, 0.5, 0.44, 0.5 };
     QualityParameters Quality = { false, 0.37931034, 0.45 };
-    FluidParameters Fluid = { 0.544, 0.385, 0.609, 0.45, 0.986 };
+    FluidParameters Fluid = { 0.544, 0.385, 0.609, 0.45, 0.986, false };
     CometParameters Comet = { 1, 0.726, 0.679, 1, 0.472 };
 };
 // The shared orbit supplies both the foreground silhouette and the original
@@ -49,7 +50,7 @@ float3 CometShade(float2 uv, float sampleWidth)
     float sourceToneFrequency = CometRayFrequency(q, distances, rayNoise);
     // Flash has a 45 ms release; cubing its bounded response makes an onset
     // illuminate the entire wake briefly, then relinquish it to advancing fronts.
-    float flash = pow(1 - exp(-4 * max(0, VisualFlash)), 3);
+    float flash = max(pow(1 - exp(-4 * max(0, VisualFlash)), 3), .6 * pow(MusicRise(GlobalSTBR), 2));
     float t = CometTime();
 
     // The untouched Mandelbox slice supplies fine spectral structure behind
@@ -102,17 +103,19 @@ float3 CometShade(float2 uv, float sampleWidth)
     // The live edge flashes immediately, before its row enters delayed history.
     float rim = exp(-max(0, surface) / max(.0015, 1.5 * pixel));
     float front = pow(1 - exp(-4 * max(0, attack)), 2) * exp(-2.8 * age);
+    front = max(front, .35 * pow(MusicRise(GlobalSTBRAtAge(attackAge * HistorySeconds)), 2) * exp(-2.8 * age));
     front *= ShockEdgeAttenuation(uv, attackAge);
     float3 flashPalette = lerp(CometPalette(attackFrequency, -.07 * t), float3(.7, .88, 1), .3);
     float excitation = Comet.Shockwaves * (7 * flash + 5 * front);
-    float3 light = background * (.8 * pow(CometReaction().x, 2) + .45 * noise + .6 * excitation);
+    float bed = MusicBody(GlobalSTBR);
+    float3 light = background * (.8 * pow(CometReaction().x, 2) + .45 * noise + .6 * excitation + .7 * bed);
     // Pigment supplies soft material between sharp rays. Existing orbit relief
     // adds fine wisps without any additional fractal or 3D-noise evaluations.
     float3 wakeColor = wake.rgb / max(.001, wake.a);
     float wakeRelief = lerp(.4, 1.2, sliceRelief) * (1 + .3 * saturate(length(slope)));
     float edge = 1 - .7 * smoothstep(.6, 1.2, length(2 * uv - 1));
     light += (1 + 3 * Comet.Tail) * wakeColor * wakeBody * wakeRelief * edge
-        * (.16 * tone + .24 * noise + .7 * excitation);
+        * (.16 * tone + .24 * noise + .7 * excitation + .4 * bed + .15 * MusicStructure(GlobalSTBR));
     // Tones pick fine distance hulls; noise reveals broader folded texture.
     // Every term follows a spectral component, without persistent field lighting.
     light += CometPalette(frequency, -.05 * t) * Comet.Background

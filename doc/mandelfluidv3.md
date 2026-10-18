@@ -1,89 +1,84 @@
 # MandelFluidv3
 
-Select **MandelFluidv3** in the scene picker. The center keeps v2's black
-Mandelbox slice, with faster tumbling and depth morphing during music.
+V3 is a cloud scene: real fluid carries colored pigment away from a dark
+Mandelbox slice, and musical transients strobe the clouds from its center.
+The core occludes the fluid behind it. There is no separate procedural cloud
+layer, comet tail, ray layer or illuminated empty background.
 
-The sustained/transient roles are reversed:
+## Music and lighting
 
-- **Transients** illuminate all retained material of the matching frequency,
-  wherever the fluid has carried it, with an exponential age envelope. The
-  fixed dye color selects the current spectrum, with stereo blended so each
-  transient reaches the whole matching color population. An 80% spectral
-  response and 20% smooth strobe response multiply the dyed material's body
-  and wet highlights. Illumination blends exponentially from the flash to a
-  quiet ambient intensity as material ages. **Lighting.FadeTime** maps 0..1
-  to a decay time of 0.05..4 seconds; default 0.1 gives 0.445 seconds, about
-  4.5 times faster than before. **Lighting.Ambient** sets the background floor
-  (default 0.04); zero restores a fade to darkness. Ambient light requires
-  decaying dye, and transients cannot light empty space. The history buffer does
-  not limit how old material can be when a new hit illuminates it.
-  A soft density mask shapes wispy edges without diffusing the simulation.
-  Emission runs from bass below to treble above. Left and right emission stays
-  distinct at the sides and blends smoothly to mono at both vertical poles.
-- **Sustained notes** inject colored liquid into a persistent fluid simulation.
-  Separated tonal bands stir each other's streams more strongly than a lone note.
-  Transients do not inject dye or directly force the simulation.
-- **Background B** increases both local vortex forcing and the intensity of
-  material emitted from the matching spectral/stereo region of the fractal.
-  It can emit liquid on its own and strengthens sustained-note emission where
-  they coincide. **Fluid.Background** controls the sensitivity of both effects.
+- **Local S** emits frequency-colored material from the actual fractal boundary.
+  Stereo determines its placement. Separated tonal bands strengthen shear.
+- **Local B** also emits and stirs material, controlled by **Fluid.Background**.
+  It preserves local spectral and stereo contrast.
+- **Global B** supplies passage-wide flow, curl and confinement, even when local
+  tonal contrast is weak. It also strengthens the small ambient illumination.
+- **Global S** drives core evolution and strengthens emitted tonal pigment.
+- **Local attacks and positive global T** light existing clouds with a central
+  strobe. The spectral attack envelope has a 45 ms release. Illumination falls
+  off with distance from the core and responds to the actual density gradient.
+  All pigment colors can be revealed by any hit, including old clouds returning
+  through the periodic boundary. Residence age does not weaken a new flash.
+  Negative global T eases expansion; transients never inject pigment.
+- **Global interaction** strengthens turbulent motion, confinement and optional
+  mixing. It is spectral/time interaction, not a noise classifier.
 
-The fluid emits from the actual Mandelbox boundary: injection evaluates the
-same distance field, cutout threshold and inverse display projection as the
-black silhouette. A filtered band resolves the emitter at the simulation's
-resolution. The simulation carries its liquid outward; the silhouette
-occludes material passing behind it.
+Every light term requires transported pigment. After capture stops or packets
+become silent, emission stops and the existing fluid decays naturally to black.
+The onset envelope releases independently of pigment lifetime.
 
-V3 uses limited MacCormack advection for velocity and pigment, with correctly
-positioned face velocity samples and reduced velocity damping. This reduces
-the numerical blur that remained even with diffusion at zero. Counter-rotating
-localized vortices roll streams into spirals, and separated tonal bands
-strengthen the forcing. The Curl control adjusts both this forcing and
-vorticity confinement. The bounded correction adds two transport passes per
-step and keeps pigment nonnegative without introducing new extrema.
+## Controls
 
-Density-weighted age travels alongside pigment through the same corrected
-advection passes. New emission mixes in young material; existing material ages
-in seconds, including time dropped from motion during short frame stalls.
-Diffusion, dilution, decay and edge losses preserve a mass-weighted mean age
-when streams mix. This age blends current transient illumination toward ambient;
-it does not select historical audio or change fluid forcing. Three float32 RG
-surfaces add 6 MiB at 512 by 512, without additional transport draws.
+The **Comet** group has been removed. Core size, depth travel and material response
+are part of this scene's design. **Geometry** still controls the Mandelbox field;
+**Quality** controls antialiasing, maximum iterations and musical movement speed.
 
-The shared multigrid solver uses the correct Neumann boundary diagonal,
-three pre/post smoothing iterations, a more complete coarse solve and three
-V-cycles. GPU fixtures over landscape, portrait, square and wide domains leave
-under 1% of the original RMS divergence while preserving discrete curl. The
-V3 fluid grid reaches 512 by 512 (other scenes retain their 256 cap); five dye
-taps supply body and resolution-independent wet highlights. Pressure precision,
-smoothing counts and V-cycle counts are unchanged. The larger grid uses roughly
-four times the surface memory and fine-grid work.
+| Control | Purpose | Default |
+|---|---|---:|
+| Fluid.Flow | Outward transport; translating current in periodic mode | 0.089 |
+| Fluid.HalfLife | Pigment lifetime; maps 0..1 to 0.1..10 seconds | 0.145 (1.5355 s) |
+| Fluid.Diffusion | Optional pigment mixing | 0 |
+| Fluid.Background | Local B emission and stirring sensitivity | 0.324 |
+| Fluid.Curl | Vortex forcing and confinement | 0.243 |
+| Fluid.PeriodicBoundary | Recirculate existing material through opposite edges | off |
+| Lighting.Strobe | Central transient illumination strength | 0.7 |
+| Lighting.Ambient | Restrained cloud visibility between hits | 0.008 |
 
-**Fluid.Flow** sets physical expansion, **HalfLife** pigment decay, **Diffusion**
-mixing, **Background** B-driven emission and stirring, and **Curl** vortex strength and confinement.
-**Comet.Tail** sets material response, **Shockwaves** transient illumination,
-**Background** transient brightness, **Size** silhouette size and **Morph** depth
-travel. Geometry and quality controls retain their v2 meanings.
+Fluid defaults and **Geometry.Anisotropy = 0.526** follow the visible reference
+settings. Ambient is deliberately small: the dominant light is the central
+strobe. Setting Ambient to zero makes retained pigment dark between hits;
+setting Strobe to zero leaves only the ambient cloud response.
+Use **Reload**, then **Reset defaults** in the shader panel to adopt the new look
+if an existing session has retained older parameter values.
 
-Fluid defaults follow the reference settings: flow 0.12, half-life 1 (10 seconds),
-diffusion 0, background 0.069 and curl 0.543.
+## Fluid implementation
 
-Higher Flow stretches the rotating sheets into long outward plumes. Curl
-controls their roll-up. Diffusion is disabled by default; the optional control
-still permits deliberate pigment mixing.
+The emitter uses the same distance field and inverse display projection as the
+dark core. Limited MacCormack advection transports pigment and velocity without
+introducing new pigment extrema. Counter-rotating localized vortices roll sheets
+into clouds. Diffusion is optional and starts disabled.
 
-The musical and wall clocks retain their existing meanings; the role swap is
-between sustained and transient audio components. Every light term requires
-dyed material; current transients supply the flash and aging dye supplies the
-ambient afterglow. Missing audio stops injection,
-and the scene is automatically covered by `ShaderSilenceTests` at normal and high input
-gain, including startup, interrupted input, and explicit silent packets. The
-regression allows a generous decay and then checks every RGB channel over 60
-final frames.
+The v3 grid reaches 512 cells on its longest side. Five dye samples provide
+opacity and density gradients for central lighting. Cloud shading uses no
+fractal relief outside the silhouette, so visible cloud detail comes from the
+simulation. Density-weighted residence age remains transported for diagnostics
+and periodic transport checks; lighting no longer samples it.
 
-Additional GPU regressions check that Curl increases measured vorticity, pigment
-stays finite and bounded, current transients illuminate old pigment at the
-matching frequency, lighting leaves fluid state unchanged, and the cloud
-can go dark between hits with ambient disabled. Age checks cover elapsed
-time, configurable exponential attenuation measured before gamma and tone
-mapping, and the adjustable ambient floor.
+Pressure projection uses the shared multigrid solver. With PeriodicBoundary on,
+velocity, dye, age and pressure stencils wrap consistently. The carrier becomes
+a music-driven translating current; expansion dilution and edge sinks are
+disabled. Half-life decay remains active, and a minimum half-float quantum is
+removed from subnormal pigment each fixed step to prevent immortal faint dye.
+The checkbox can change live without clearing the simulation.
+
+## Regression coverage
+
+`ShaderSilenceTests` covers silent startup and natural decay after active music,
+with stopped capture and silent packets, normal and +60 dB gain, and open and
+periodic boundaries. It permits a generous decay period, then checks every RGB
+channel for exact black across 60 final frames.
+
+Focused fixtures check B-driven intensity and motion, local B/stereo emission,
+Curl-driven vorticity and bounded pigment, central strobe activation of old dye,
+frequency-independent illumination, global-only attacks, adjustable lighting,
+unchanged simulation state during lighting edits, and darkness without pigment.
