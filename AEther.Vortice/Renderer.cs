@@ -65,7 +65,7 @@ public sealed partial class Renderer : IDisposable
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
-        double historySeconds = 1, string? shaderDirectory = null, bool highPrecisionOutput = true,
+        double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
         Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null)
     {
         Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
@@ -263,9 +263,16 @@ public sealed partial class Renderer : IDisposable
         if (active.GeometryVertex != null) DrawGeometry(active);
         if (active.Fluid != null)
         {
-            int gridLimit = SceneName == "MandelFluidv3" ? 512 : 256;
-            if (fluid != null && fluid.GridLimit != gridLimit) { fluid.Dispose(); fluid = null; }
-            fluid ??= new(device, context, width, height, gridLimit);
+            int gridLimit = SceneName switch
+            {
+                "MandelFluidv4" => ReadBoolean("Fluid.LowQuality") ? 128 : 512,
+                "MandelFluidv3" => 512,
+                _ => 256,
+            };
+            bool squareGrid = SceneName == "MandelFluidv4";
+            if (fluid != null && (fluid.GridLimit != gridLimit || fluid.SquareGrid != squareGrid))
+            { fluid.Dispose(); fluid = null; }
+            fluid ??= new(device, context, width, height, gridLimit, squareGrid);
             if (previousScene != SceneName || dt > .5) fluid.Clear();
             fluid.Advance(dt, Audio, active.Fluid,
                 active.Parameters, namedBuffers, namedTextures, namedSamplers);

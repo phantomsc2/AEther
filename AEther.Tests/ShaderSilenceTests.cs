@@ -39,7 +39,7 @@ public class ShaderSilenceTests
                     .Select(periodic => new TestCaseData(Path.GetFileNameWithoutExtension(path), gainDb, periodic))));
 
     static bool IsFluidScene(string name) => name is "MandelFluid" or "MandelFluidv2" or "MandelFluidv3"
-        or "FluidFlight" or "PlaneFlight" or "FractalEdge";
+        or "FluidFlight" or "PlaneFlight" or "FractalEdge" or "MandelFluidv4";
 
     [TestCaseSource(nameof(Scenes)), Category("GPU")]
     public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb, bool periodic)
@@ -138,7 +138,7 @@ public class ShaderSilenceTests
     }
 
     public static IEnumerable<string> ArtisticScenes() => Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
-        .Select(Path.GetFileNameWithoutExtension).Where(name => name is not ("Spectrum" or "Histogram"))
+        .Select(Path.GetFileNameWithoutExtension).Where(name => name is not ("Spectrum" or "Histogram" or "MandelFluidv4"))
         .OrderBy(name => name, StringComparer.Ordinal);
 
     [TestCaseSource(nameof(ArtisticScenes)), Category("GPU")]

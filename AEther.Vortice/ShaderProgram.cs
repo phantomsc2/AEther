@@ -140,7 +140,8 @@ public sealed class ShaderScene : IDisposable
                 Composite = new(device, source, "AfterglowPS", name + ".hlsl");
             }
             if (Program.Uses("FluidDye") || Composite?.Uses("FluidDye") == true)
-                Fluid = new(device, source + ShaderSource.Read(root, "Common/FluidSimulation.hlsl"));
+                Fluid = new(device, source + ShaderSource.Read(root, name == "MandelFluidv4"
+                    ? "Common/RingFluidSimulation.hlsl" : "Common/FluidSimulation.hlsl"));
             if (Program.Uses("DistanceField"))
             {
                 if (Parameters == null) throw new InvalidOperationException("DistanceField requires scene Parameters for its geometry passes.");

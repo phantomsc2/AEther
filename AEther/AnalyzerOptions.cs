@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 
 namespace AEther
@@ -35,7 +35,8 @@ namespace AEther
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
         [Category("Visualization")]
-        public double HistorySeconds { get; set; } = .5f;
+        [Description("Seconds of spectral history retained for age-based shader lookups. Longer values allow longer fluid tails and use more memory.")]
+        public double HistorySeconds { get; set; } = 2;
 
         [Category("STBR fit")]
         [DefaultValue(false)]
