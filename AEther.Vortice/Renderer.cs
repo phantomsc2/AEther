@@ -31,6 +31,7 @@ public sealed partial class Renderer : IDisposable
 
     MandelFluidSimulation? fluid;
     MandelbenchDistanceField? distanceField;
+    EpipolarShadowMap? epipolarShadow;
     ImageFeedback? feedback;
     string? previousScene;
     internal MandelFluidSimulation Fluid => fluid!;
@@ -255,6 +256,27 @@ public sealed partial class Renderer : IDisposable
 
 
         var active = ActiveShader!;
+        if (active.Atmosphere != null)
+        {
+            epipolarShadow ??= new(device, context);
+            epipolarShadow.PrecalculateAtmosphere(active.Atmosphere, active.Parameters!, namedBuffers);
+            bool atmosphereOnly = ReadBoolean("View.ShowAtmosphereLookup");
+            if (active.StaticSurface != null)
+            {
+                epipolarShadow.PrecalculateSurface(active.StaticSurface, active.Parameters!, namedBuffers, width, height, !atmosphereOnly, (float)now);
+                namedTextures["SurfaceCache"] = epipolarShadow.SurfaceCache;
+            }
+            if (active.Lighting != null)
+            {
+                epipolarShadow.IntegrateLights(active.Shadow!, active.Lighting, active.Parameters!, namedBuffers,
+                    width, height, (float)now, atmosphereOnly);
+                namedTextures["LightRadiance"] = epipolarShadow.Radiance;
+            }
+            namedTextures["EpipolarShadow"] = epipolarShadow.View;
+            namedTextures["AtmosphereOpticalDepth"] = epipolarShadow.Atmosphere;
+            namedSamplers["AtmosphereSampler"] = epipolarShadow.Sampler;
+            context.RSSetViewport(0, 0, width, height);
+        }
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
         namedTextures["GlobalHistogram"] = views[4];
@@ -332,6 +354,7 @@ public sealed partial class Renderer : IDisposable
 
         fluid?.Dispose();
         distanceField?.Dispose();
+        epipolarShadow?.Dispose();
         feedback?.Dispose();
         ReleaseGeometryTargets(); geometryDepthState?.Dispose();
         geometryNoDepthState?.Dispose(); geometryAdditiveState?.Dispose();

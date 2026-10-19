@@ -10,6 +10,9 @@
   previously active audio. Trails, history and fluid may decay naturally, but
   ambient lighting, procedural backgrounds and persistent simulation state must
   not keep the screen lit indefinitely.
+- Audio-independent proof-of-concept/prototype scenes, such as `MandelVolume` and `MandelLight`,
+  are exceptions to this rule. Mark and document them as prototypes; apply the
+  silence requirement when they become production audio-reactive scenes.
 - Preserve this invariant with the GPU regression in
   `AEther.Tests/ShaderSilenceTests.cs`. Allow a generous decay period before
   applying strict checks to every RGB channel across multiple final frames.
