@@ -51,13 +51,18 @@ public sealed partial class Renderer : IDisposable
     long previousFrame;
     public AudioHistory Audio { get; }
     public string SceneName { get; private set; } = "Mandelbox";
-    public IReadOnlyCollection<ShaderScene> Scenes => scenes.Values;
-    public ShaderScene? ActiveShader => scenes.GetValueOrDefault(SceneName);
+    public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
+    public ShaderScene? ActiveShader { get { lock (graphicsGate) return scenes.GetValueOrDefault(SceneName); } }
     public event EventHandler? ShadersChanged;
     public void SelectScene(string name)
     {
-        if (!scenes.ContainsKey(name)) throw new ArgumentException("Unknown scene.", nameof(name));
-        SceneName = name;
+        lock (graphicsGate)
+        {
+            if (!scenes.TryGetValue(name, out var scene)) throw new ArgumentException("Unknown scene.", nameof(name));
+            scene.EnsureCompiled();
+            if (!scene.ProgramReady) throw new InvalidOperationException($"Scene '{name}' did not compile.");
+            SceneName = name;
+        }
     }
     public string? ShaderError { get; private set; }
     public string ShaderDirectory => shaderDirectory;
@@ -169,6 +174,93 @@ public sealed partial class Renderer : IDisposable
 
     public bool ReloadShaders() { lock (graphicsGate) return ReloadShadersCore(); }
 
+    public bool CompileScene(string name)
+    {
+        lock (graphicsGate)
+        {
+            if (!scenes.TryGetValue(name, out var scene)) return false;
+            try
+            {
+                if (!scene.ProgramReady) scene.EnsureCompiled();
+                else
+                {
+                    var replacement = scene.Recompile();
+                    scene.ReplaceWith(replacement);
+                    replacement.Dispose();
+                }
+                if (scene.Parameters != null && savedParameters.TryGetValue(name, out var old)) scene.Parameters.Restore(old);
+                if (StringComparer.Ordinal.Equals(SceneName, name))
+                {
+                    fluid?.Dispose(); fluid = null;
+                    distanceField?.Dispose(); distanceField = null;
+                    feedback?.Dispose(); feedback = null;
+                }
+                ShaderError = null;
+                ShadersChanged?.Invoke(this, EventArgs.Empty);
+                return true;
+            }
+            catch (Exception error)
+            {
+                ShaderError = error.Message;
+                return false;
+            }
+        }
+    }
+
+    public bool CompileActiveScene() => CompileScene(SceneName);
+
+    public bool ReloadScene(string name)
+    {
+        lock (graphicsGate)
+        {
+            if (!scenes.TryGetValue(name, out var scene)) return false;
+            try
+            {
+                return ReloadSceneCore(name, scene);
+            }
+            catch (Exception error)
+            {
+                ShaderError = error.Message;
+                return false;
+            }
+        }
+    }
+
+    public bool ReloadActiveScene()
+    {
+        lock (graphicsGate)
+        {
+            var name = SceneName;
+            if (!scenes.TryGetValue(name, out var scene)) return false;
+            try { return ReloadSceneCore(name, scene); }
+            catch (Exception error) { ShaderError = error.Message; return false; }
+        }
+    }
+
+    bool ReloadSceneCore(string name, ShaderScene scene)
+    {
+        var common = ShaderSource.Read(shaderDirectory, "Common/Inputs.hlsl");
+        var source = common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
+        var replacement = new ShaderScene(device, name, source, shaderDirectory, compileImmediately: false);
+        if (StringComparer.Ordinal.Equals(SceneName, name))
+        {
+            replacement.EnsureCompiled();
+            if (scene.Parameters is { } old && replacement.Parameters is { } parameters) parameters.Restore(old);
+        }
+        else if (scene.Parameters is { } old && savedParameters.ContainsKey(name)) savedParameters[name] = old;
+        scenes[name] = replacement;
+        scene.Dispose();
+        if (StringComparer.Ordinal.Equals(SceneName, name))
+        {
+            fluid?.Dispose(); fluid = null;
+            distanceField?.Dispose(); distanceField = null;
+            feedback?.Dispose(); feedback = null;
+        }
+        ShaderError = null;
+        ShadersChanged?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
     bool ReloadShadersCore()
     {
         ID3D11VertexShader? nextVertex = null;
@@ -182,24 +274,30 @@ public sealed partial class Renderer : IDisposable
             foreach (var path in Directory.EnumerateFiles(Path.Combine(shaderDirectory, "Scenes"), "*.hlsl").Order(StringComparer.Ordinal))
             {
                 var name = Path.GetFileNameWithoutExtension(path);
-                var scene = new ShaderScene(device, name, common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl")), shaderDirectory);
-                nextScenes.Add(name, scene);
-                if (scene.Parameters != null)
+                var source = common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
+                if (name == SceneName)
                 {
-                    if (scenes.GetValueOrDefault(name)?.Parameters is { } old) scene.Parameters.Restore(old);
-                    else if (savedParameters.TryGetValue(name, out old)) scene.Parameters.Restore(old);
+                    var scene = new ShaderScene(device, name, source, shaderDirectory, compileImmediately: false);
+                    scene.EnsureCompiled();
+                    if (scenes.GetValueOrDefault(name)?.Parameters is { } old && scene.Parameters is { } parameters)
+                        parameters.Restore(old);
+                    nextScenes.Add(name, scene);
                 }
+                else nextScenes.Add(name, new ShaderScene(device, name, source, shaderDirectory, compileImmediately: false));
             }
             if (nextScenes.Count == 0) throw new InvalidOperationException("Shaders/Scenes must contain at least one .hlsl scene.");
+            var selected = nextScenes.GetValueOrDefault(SceneName) ?? nextScenes.Values.First();
+            if (!selected.ProgramReady) selected.EnsureCompiled();
+            if (selected.Parameters != null && savedParameters.TryGetValue(selected.Name, out var saved)) selected.Parameters.Restore(saved);
             foreach (var scene in scenes.Values)
             {
                 if (scene.Parameters != null) savedParameters[scene.Name] = scene.Parameters;
                 scene.Dispose();
             }
             scenes = nextScenes;
-            if (!scenes.ContainsKey(SceneName)) SceneName = scenes.Keys.First();
-            vertex?.Dispose(); vertex = nextVertex;
-            outputPixel?.Dispose(); outputPixel = nextOutput;
+            SceneName = selected.Name;
+            vertex?.Dispose(); vertex = nextVertex; nextVertex = null;
+            outputPixel?.Dispose(); outputPixel = nextOutput; nextOutput = null;
             ShaderError = null;
         }
         catch (Exception error)
@@ -296,6 +394,8 @@ public sealed partial class Renderer : IDisposable
 
 
         var active = ActiveShader!;
+        if (!active.ProgramReady && !CompileScene(active.Name)) throw new InvalidOperationException(ShaderError);
+        active = ActiveShader!;
         if (active.Raster != null)
         {
             rasterTransport ??= new(device, context);

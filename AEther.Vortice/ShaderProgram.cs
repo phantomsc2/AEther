@@ -105,71 +105,142 @@ internal sealed class ShaderProgram : IDisposable
 public sealed class ShaderScene : IDisposable
 {
     public string Name { get; }
-    public ShaderParameters? Parameters => Program.Parameters;
-    internal ShaderProgram Program { get; }
-    internal ID3D11VertexShader? GeometryVertex { get; }
-    internal int GeometryVertexCount { get; }
-    internal int GeometryInstanceCount { get; } = 1;
-    internal bool GeometryAdditive { get; }
-    internal ShaderProgram? Composite { get; }
-    internal MandelFluidSimulation.Programs? Fluid { get; }
-    internal MandelbenchDistanceField.Programs? Distance { get; }
-    internal ShaderProgram? LightTransport { get; }
-    internal ShaderProgram? Atmosphere { get; }
-    internal ShaderProgram? CameraTransport { get; }
-    internal ShaderProgram? Lighting { get; }
-    internal ShaderProgram? FourierShadow { get; }
-    internal RasterLightTransport.Programs? Raster { get; }
-    internal ShaderScene(ID3D11Device device, string name, string source, string root)
+    readonly ID3D11Device device;
+    readonly string root;
+    readonly string source;
+    ShaderProgram? program;
+    ShaderProgram? composite;
+    MandelFluidSimulation.Programs? fluid;
+    MandelbenchDistanceField.Programs? distance;
+    ShaderProgram? lightTransport, atmosphere, cameraTransport, lighting, fourierShadow;
+    RasterLightTransport.Programs? raster;
+    ID3D11VertexShader? geometryVertex;
+    int geometryVertexCount;
+    int geometryInstanceCount = 1;
+    bool geometryAdditive;
+    bool initialized;
+    internal bool ProgramReady => program != null;
+    internal ShaderProgram Program => program ?? throw new InvalidOperationException($"Scene '{Name}' has not been compiled yet.");
+    public ShaderParameters? Parameters => program?.Parameters;
+    internal ID3D11VertexShader? GeometryVertex => geometryVertex;
+    internal int GeometryVertexCount => geometryVertexCount;
+    internal int GeometryInstanceCount => geometryInstanceCount;
+    internal bool GeometryAdditive => geometryAdditive;
+    internal ShaderProgram? Composite => composite;
+    internal MandelFluidSimulation.Programs? Fluid => fluid;
+    internal MandelbenchDistanceField.Programs? Distance => distance;
+    internal ShaderProgram? LightTransport => lightTransport;
+    internal ShaderProgram? Atmosphere => atmosphere;
+    internal ShaderProgram? CameraTransport => cameraTransport;
+    internal ShaderProgram? Lighting => lighting;
+    internal ShaderProgram? FourierShadow => fourierShadow;
+    internal RasterLightTransport.Programs? Raster => raster;
+    internal ShaderScene(ID3D11Device device, string name, string source, string root, bool compileImmediately = true)
     {
         Name = name;
-        Program = new(device, source, "PS", name + ".hlsl");
+        this.device = device;
+        this.source = source;
+        this.root = root;
+        if (compileImmediately) EnsureCompiled();
+    }
+
+    internal void EnsureCompiled()
+    {
+        if (initialized) return;
         try
         {
-            if (Program.Uses("RasterSurface"))
-                Raster = new(device, source, name + ".hlsl");
-            if (Program.Uses("FourierDeep0"))
-                FourierShadow = new(device, source, "FourierShadowPS", name + ".hlsl");
-            if (Program.Uses("LightRadiance"))
-                Lighting = new(device, source, "LightPS", name + ".hlsl");
-            if (Program.Uses("LightTransport") || Lighting?.Uses("LightTransport") == true)
-                LightTransport = new(device, source, "LightTransportPS", name + ".hlsl");
-            if (Program.Uses("AtmosphereOpticalDepth") || LightTransport?.Uses("AtmosphereOpticalDepth") == true || Lighting?.Uses("AtmosphereOpticalDepth") == true)
-                Atmosphere = new(device, source, "AtmospherePS", name + ".hlsl");
-            if (Program.Uses("CameraTransport") || Lighting?.Uses("CameraTransport") == true)
-                CameraTransport = new(device, source, "CameraTransportPS", name + ".hlsl");
-            if (Program.Uses("PreviousImage"))
-                Composite = new(device, source, "FeedbackDisplayPS", name + ".hlsl");
-            var geometry = System.Text.RegularExpressions.Regex.Match(source,
+            var nextProgram = new ShaderProgram(device, source, "PS", Name + ".hlsl");
+            ShaderProgram? nextComposite = null, nextLightTransport = null, nextAtmosphere = null,
+                nextCameraTransport = null, nextLighting = null, nextFourierShadow = null;
+            RasterLightTransport.Programs? nextRaster = null;
+            MandelFluidSimulation.Programs? nextFluid = null;
+            MandelbenchDistanceField.Programs? nextDistance = null;
+            ID3D11VertexShader? nextGeometryVertex = null;
+            try
+            {
+                var geometry = System.Text.RegularExpressions.Regex.Match(source,
                 @"^\s*#define\s+GEOMETRY_VERTEX_COUNT\s+(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
-            if (geometry.Success)
-            {
-                if (!int.TryParse(geometry.Groups[1].Value, out var count) || count < 3 || count > 65536 || count % 3 != 0)
-                    throw new InvalidOperationException("GEOMETRY_VERTEX_COUNT must be a multiple of three from 3 to 65535.");
-                GeometryVertexCount = count;
-                var instances = System.Text.RegularExpressions.Regex.Match(source,
-                    @"^\s*#define\s+GEOMETRY_INSTANCE_COUNT\s+(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
-                if (instances.Success)
+                if (geometry.Success)
                 {
-                    if (!int.TryParse(instances.Groups[1].Value, out var instanceCount) || instanceCount < 1 || instanceCount > 1048576)
-                        throw new InvalidOperationException("GEOMETRY_INSTANCE_COUNT must be from 1 to 1048576.");
-                    GeometryInstanceCount = instanceCount;
+                    if (!int.TryParse(geometry.Groups[1].Value, out var count) || count < 3 || count > 65536 || count % 3 != 0)
+                        throw new InvalidOperationException("GEOMETRY_VERTEX_COUNT must be a multiple of three from 3 to 65535.");
+                    var nextGeometryVertexCount = count;
+                    var nextGeometryInstanceCount = 1;
+                    var nextGeometryAdditive = System.Text.RegularExpressions.Regex.IsMatch(source,
+                        @"^\s*#define\s+GEOMETRY_ADDITIVE\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+                    var instances = System.Text.RegularExpressions.Regex.Match(source,
+                        @"^\s*#define\s+GEOMETRY_INSTANCE_COUNT\s+(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+                    if (instances.Success)
+                    {
+                        if (!int.TryParse(instances.Groups[1].Value, out nextGeometryInstanceCount) || nextGeometryInstanceCount < 1 || nextGeometryInstanceCount > 1048576)
+                            throw new InvalidOperationException("GEOMETRY_INSTANCE_COUNT must be from 1 to 1048576.");
+                    }
+                    nextGeometryVertex = device.CreateVertexShader(Compiler.Compile(source, "GeometryVS", Name + ".hlsl", "vs_5_0").Span);
+                    nextComposite = new(device, source, "AfterglowPS", Name + ".hlsl");
+                    geometryVertexCount = nextGeometryVertexCount;
+                    geometryInstanceCount = nextGeometryInstanceCount;
+                    geometryAdditive = nextGeometryAdditive;
                 }
-                GeometryAdditive = System.Text.RegularExpressions.Regex.IsMatch(source,
-                    @"^\s*#define\s+GEOMETRY_ADDITIVE\s*$", System.Text.RegularExpressions.RegexOptions.Multiline);
-                GeometryVertex = device.CreateVertexShader(Compiler.Compile(source, "GeometryVS", name + ".hlsl", "vs_5_0").Span);
-                Composite = new(device, source, "AfterglowPS", name + ".hlsl");
+                if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
+                if (nextProgram.Uses("FourierDeep0")) nextFourierShadow = new(device, source, "FourierShadowPS", Name + ".hlsl");
+                if (nextProgram.Uses("LightRadiance")) nextLighting = new(device, source, "LightPS", Name + ".hlsl");
+                if (nextProgram.Uses("LightTransport") || nextLighting?.Uses("LightTransport") == true)
+                    nextLightTransport = new(device, source, "LightTransportPS", Name + ".hlsl");
+                if (nextProgram.Uses("AtmosphereOpticalDepth") || nextLightTransport?.Uses("AtmosphereOpticalDepth") == true || nextLighting?.Uses("AtmosphereOpticalDepth") == true)
+                    nextAtmosphere = new(device, source, "AtmospherePS", Name + ".hlsl");
+                if (nextProgram.Uses("CameraTransport") || nextLighting?.Uses("CameraTransport") == true)
+                    nextCameraTransport = new(device, source, "CameraTransportPS", Name + ".hlsl");
+                if (nextProgram.Uses("PreviousImage")) nextComposite = new(device, source, "FeedbackDisplayPS", Name + ".hlsl");
+                if (nextProgram.Uses("FluidDye") || nextComposite?.Uses("FluidDye") == true)
+                    nextFluid = new(device, source + ShaderSource.Read(root, Name == "MandelFluidv4"
+                        ? "Common/RingFluidSimulation.hlsl" : "Common/FluidSimulation.hlsl"));
+                if (nextProgram.Uses("DistanceField"))
+                {
+                    if (nextProgram.Parameters == null) throw new InvalidOperationException("DistanceField requires scene Parameters for its geometry passes.");
+                    nextDistance = new(device, source);
+                }
+                program = nextProgram; composite = nextComposite; raster = nextRaster; lighting = nextLighting;
+                fourierShadow = nextFourierShadow; lightTransport = nextLightTransport; atmosphere = nextAtmosphere;
+                cameraTransport = nextCameraTransport; fluid = nextFluid; distance = nextDistance;
+                geometryVertex = nextGeometryVertex;
+                initialized = true;
             }
-            if (Program.Uses("FluidDye") || Composite?.Uses("FluidDye") == true)
-                Fluid = new(device, source + ShaderSource.Read(root, name == "MandelFluidv4"
-                    ? "Common/RingFluidSimulation.hlsl" : "Common/FluidSimulation.hlsl"));
-            if (Program.Uses("DistanceField"))
+            catch
             {
-                if (Parameters == null) throw new InvalidOperationException("DistanceField requires scene Parameters for its geometry passes.");
-                Distance = new(device, source);
+                nextProgram.Dispose(); nextComposite?.Dispose(); nextRaster?.Dispose(); nextLighting?.Dispose();
+                nextFourierShadow?.Dispose(); nextLightTransport?.Dispose(); nextAtmosphere?.Dispose();
+                nextCameraTransport?.Dispose(); nextFluid?.Dispose(); nextDistance?.Dispose(); nextGeometryVertex?.Dispose();
+                throw;
             }
         }
-        catch { Dispose(); throw; }
+        catch { DisposePrograms(); program = null; initialized = false; throw; }
     }
-    public void Dispose() { Program.Dispose(); Raster?.Dispose(); Lighting?.Dispose(); FourierShadow?.Dispose(); LightTransport?.Dispose(); Atmosphere?.Dispose(); CameraTransport?.Dispose(); Fluid?.Dispose(); Distance?.Dispose(); GeometryVertex?.Dispose(); Composite?.Dispose(); }
+    void DisposePrograms() { program?.Dispose(); raster?.Dispose(); lighting?.Dispose(); fourierShadow?.Dispose(); lightTransport?.Dispose(); atmosphere?.Dispose(); cameraTransport?.Dispose(); fluid?.Dispose(); distance?.Dispose(); geometryVertex?.Dispose(); composite?.Dispose(); raster = null; lighting = null; fourierShadow = null; lightTransport = null; atmosphere = null; cameraTransport = null; fluid = null; distance = null; geometryVertex = null; composite = null; }
+    internal ShaderScene Recompile()
+    {
+        var replacement = new ShaderScene(device, Name, source, root, compileImmediately: false);
+        replacement.EnsureCompiled();
+        if (Parameters is { } old && replacement.Parameters is { } next) next.Restore(old);
+        return replacement;
+    }
+    internal void ReplaceWith(ShaderScene replacement)
+    {
+        DisposePrograms();
+        program = replacement.program; replacement.program = null;
+        composite = replacement.composite; replacement.composite = null;
+        fluid = replacement.fluid; replacement.fluid = null;
+        distance = replacement.distance; replacement.distance = null;
+        lightTransport = replacement.lightTransport; replacement.lightTransport = null;
+        atmosphere = replacement.atmosphere; replacement.atmosphere = null;
+        cameraTransport = replacement.cameraTransport; replacement.cameraTransport = null;
+        lighting = replacement.lighting; replacement.lighting = null;
+        fourierShadow = replacement.fourierShadow; replacement.fourierShadow = null;
+        raster = replacement.raster; replacement.raster = null;
+        geometryVertex = replacement.geometryVertex; replacement.geometryVertex = null;
+        geometryVertexCount = replacement.geometryVertexCount;
+        geometryInstanceCount = replacement.geometryInstanceCount;
+        geometryAdditive = replacement.geometryAdditive;
+        initialized = true;
+    }
+    public void Dispose() => DisposePrograms();
 }

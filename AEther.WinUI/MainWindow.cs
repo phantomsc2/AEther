@@ -80,7 +80,15 @@ public sealed class MainWindow : Window
         {
             reloadTimer.Stop();
             if (session == null || closing) return;
-            shaders.Reload();
+            var changedPath = pendingShaderPath;
+            pendingShaderPath = null;
+            if (changedPath != null && Path.GetDirectoryName(changedPath) == Path.Combine(session.Renderer.ShaderDirectory, "Scenes"))
+            {
+                session.Renderer.ReloadScene(Path.GetFileNameWithoutExtension(changedPath));
+                shaders.RefreshParameters();
+            }
+            else if (changedPath != null && session.Renderer.ReloadActiveScene()) shaders.RefreshParameters();
+            else shaders.Reload();
             if (session.Renderer.ShaderError != null) shaders.Show();
         };
         // A Tick already queued before Stop can still arrive during window teardown.
@@ -195,12 +203,15 @@ public sealed class MainWindow : Window
     void ShaderChanged(object sender, FileSystemEventArgs e)
     {
         if (closing) return;
+        pendingShaderPath = e.FullPath;
         DispatcherQueue.TryEnqueue(() =>
         {
             if (closing || !ReferenceEquals(sender, watcher)) return;
             reloadTimer.Stop(); reloadTimer.Start();
         });
     }
+
+    string? pendingShaderPath;
 
     async Task StopSessionAsync()
     {

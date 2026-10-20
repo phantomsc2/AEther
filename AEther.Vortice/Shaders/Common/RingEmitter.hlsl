@@ -25,20 +25,14 @@ bool RingEmissionSample(float2 p, float sourceAge, out float3 stb)
     Histogram0.GetDimensions(bands, rows);
     if (HistoryNewestAge > sourceAge + 2.0 / rows) return false;
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
-    bool available = RingHistorySample(frequency, max(sourceAge, HistoryNewestAge), p, stb);
-    // A smooth tilt along the existing log-frequency coordinate. Lift only
-    // emission S/B; zero stays zero, with no new bins or transient modulation.
-    float tilt = exp2(4 * Emitter.HighFrequencyBoost * frequency);
-    stb.r *= tilt;
-    stb.b *= tilt;
-    return available;
+    return RingHistorySample(frequency, max(sourceAge, HistoryNewestAge), p, stb);
 }
 float2 RingBoundaryVelocity(float2 p)
 {
     float3 stb;
     RingEmissionSample(p, 0, stb);
     float background = GlobalAmplitudeResponse(stb.b * exp2(20 * Fluid.VelocityGain - 10), .01);
-    float speed = 20 * (Fluid.AmbientVelocity + Fluid.EmissionVelocity * background);
+    float speed = 20 * Fluid.EmissionVelocity * background;
     float2 normal = p / max(1e-6, length(p));
     float2 tangent = float2(-normal.y, normal.x);
     // Mirror circulation across the centerline: positive on the left, negative

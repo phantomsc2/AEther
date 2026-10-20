@@ -8,13 +8,11 @@ struct EmitterParameters
     float Rate;              // 0 .. 200 density units per second, scaled by local S.
     float MaterialGain;      // Local S material sensitivity; .5 = unity gain.
     float Capacity;          // 0 .. 100 density units.
-    float HighFrequencyBoost; // 0 = flat; 1 = 16x at the highest frequency.
 };
 struct FluidParameters
 {
     float EmissionVelocity;  // 0 .. 20 simulation units per second, scaled by local B.
     float VelocityGain;      // Local B sensitivity; .5 = unity gain.
-    float AmbientVelocity;   // Additional constant outward speed, 0 .. 20 units per second.
     float Viscosity;         // 0 .. .1 via .1 * slider^3; no dye diffusion.
     float Curl;              // Local B-driven counter-rotating launch velocity.
     bool PeriodicBoundary;
@@ -26,15 +24,15 @@ struct DisplayParameters
 };
 struct LightingParameters
 {
-    float Ambient;           // Low baseline for old, strobe-lit material.
+    float Ambient;           // Steady illumination, additive with live flashes at every age.
     float FlashStrength;     // 0 .. 1023x live spectral T multiplier; 0 disables flashes.
 };
 cbuffer Parameters
 {
-    EmitterParameters Emitter = { .056, 1, .1, .462, 1, .12, .25 };
-    FluidParameters Fluid = { .619, .177, .081, .207, .15, false, false };
+    EmitterParameters Emitter = { .667, .1600, .1, .1600, 1, .12 };
+    FluidParameters Fluid = { .3270, .0690, 0, 0, true, false };
     DisplayParameters Display = { .75 };
-    LightingParameters Lighting = { 0, .494 };
+    LightingParameters Lighting = { .1960, .3330 };
 };
 #define RING_FLUID
 #include "../Common/RingEmitter.hlsl"
@@ -82,12 +80,9 @@ float4 PS(const PSin input) : SV_Target
     float angularWeight = smoothstep(emitterEdge, max(emitterEdge + 1e-6, screenEdge), radius);
     float liveT = lerp(fluidSource.g, angularSource.g, angularWeight);
     float transient = max(0, liveT) * (exp2(10 * Lighting.FlashStrength) - 1);
-    float seconds = max(0, T - material.x / dye.a);
-    // Linear lighting handoff over the configured history duration.
-    // Fresh material is fully steady; age >= HistorySeconds is fully strobe-lit.
-    float strobeWeight = saturate(seconds / max(HistorySeconds, 1e-6));
-    float strobe = Lighting.Ambient + transient;
-    float illumination = lerp(1, strobe, strobeWeight);
+    // Add lighting before exposure and presentation; material age only affects
+    // pigment decay during transport, never the balance of ambient and flashes.
+    float illumination = Lighting.Ambient + transient;
     float gain = exp2(24 * Display.Exposure - 12);
     return float4(max(0, gain * pigment * illumination), 1);
 }
