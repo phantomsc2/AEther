@@ -295,12 +295,14 @@ public sealed partial class Renderer : IDisposable
         if (active.Raster != null)
         {
             rasterTransport ??= new(device, context);
+            namedSamplers["RasterShadowSampler"] = rasterTransport.ShadowSampler;
+            namedBuffers["RasterLightConstants"] = rasterTransport.LightBuffer;
             rasterTransport.PassMarker = TransportPassMarker;
-            rasterTransport.Prepare(active.Raster, active.Parameters!, (float)now, width, height,
+            rasterTransport.Prepare(active.Raster, active.Parameters!, Audio, (float)now, width, height,
                 namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
             context.RSSetViewport(0, 0, width, height);
-            rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers, namedSamplers);
+            rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers);
         }
         if (active.FourierShadow != null)
         {

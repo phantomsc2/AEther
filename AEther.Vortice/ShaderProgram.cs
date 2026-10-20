@@ -26,8 +26,8 @@ internal sealed class ShaderProgram : IDisposable
             if (binding.BindCount != 1) throw new InvalidOperationException($"{file}: resource arrays are not supported ({binding.Name}).");
             var supported = binding.Type switch
             {
-                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants" or "FourierConstants" or "FourierPassConstants" or "RasterPassConstants",
-                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler" or "AtmosphereSampler",
+                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants" or "FourierConstants" or "FourierPassConstants" or "RasterPassConstants" or "RasterLightConstants",
+                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler" or "AtmosphereSampler" or "RasterShadowSampler",
                 ShaderInputType.Texture => binding.Name is "PreviousImage" or "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1" or "GlobalHistogram"
                     or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField"

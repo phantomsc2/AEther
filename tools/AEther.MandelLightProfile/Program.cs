@@ -49,8 +49,9 @@ internal static class Program
         Console.WriteLine(adapter.Description.Description);
         if (scene=="MandelLightv4")
         {
-            if (args.Contains("--filter")) MeasureV4Filter(renderer,device,context,clock,output,args.Contains("--small"));
-            else MeasureV4(renderer,device,context,clock,output,args.Contains("--quick"),args.Contains("--small"));
+            if (args.Contains("--shadows")) MeasureV4Shadows(renderer,device,context,clock,output,args.Contains("--small"));
+            else if (args.Contains("--filter")) MeasureV4Filter(renderer,device,context,clock,output,args.Contains("--small"));
+            else MeasureV4(renderer,device,context,clock,output,args.Contains("--quick"),args.Contains("--small"),args.Contains("--modes"));
             return;
         }
         if (scene=="MandelLightv3")
@@ -132,6 +133,59 @@ internal static class Program
         }, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    static long v4AudioRow;
+    static void RenderV4(Renderer renderer)
+    {
+        // Deterministic live-T fixture for this now audio-reactive scene. No
+        // production fallback illumination is injected into the shader itself.
+        int bands=renderer.Audio.Bands;
+        var spectrum=new double[8*bands];
+        for (int channel=0;channel<2;channel++)
+        for (int band=0;band<bands;band++)
+        {
+            double f=(band+.5)/bands;
+            spectrum[4*(channel*bands+band)+1]=.025*(.25+.75*Math.Pow(.5+.5*Math.Cos(10*f+channel*1.7),2));
+        }
+        renderer.PostAudio(new(spectrum,bands*4,DateTime.UnixEpoch) {AnalysisRow=v4AudioRow++},2);
+        renderer.Render(false);
+    }
+    static void MeasureV4Shadows(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool small)
+    {
+        int width=small ? 320 : 640,height=small ? 180 : 360;
+        renderer.Resize(width,height);
+        var results=new List<object>();
+        foreach (bool air in new[] {true,false})
+        foreach (int resolution in new[] {256,512})
+        foreach (bool pcf in new[] {false,true})
+        {
+            string name=$"{(pcf ? "pcf" : "point")}{resolution}"+(air ? "" : "-no-air");
+            renderer.ActiveShader!.Parameters!.Reset();
+            Set(renderer,"View.CameraSpeed",0);
+            Set(renderer,"Quality.ShadowResolution",resolution==256 ? .5f : 1f);
+            Set(renderer,"Quality.HardwarePCF",pcf);
+            if (!air) Set(renderer,"Air.Density",0);
+            clock.Reset();
+            for (int i=0;i<8;i++) { clock.Advance(); RenderV4(renderer); renderer.ReadPixels(false); }
+            var frames=new List<Dictionary<string,double>>();
+            for (int i=0;i<11;i++)
+            {
+                using var timer=new Timestamps(device,context);
+                renderer.TransportPassMarker=timer.Marker;
+                clock.Advance(); timer.Begin(); RenderV4(renderer); timer.End();
+                frames.Add(timer.Resolve()); renderer.TransportPassMarker=null;
+            }
+            var medians=frames.SelectMany(f=>f.Keys).Distinct().ToDictionary(k=>k,k=>Median(frames.Select(f=>f.GetValueOrDefault(k))));
+            Console.WriteLine(name+": "+string.Join(", ",medians.Select(p=>$"{p.Key}={p.Value:F3}ms")));
+            results.Add(new {name,width,height,milliseconds=medians});
+            Save(renderer.ReadPixels(false),width,height,Path.Combine(output,name+".png"));
+        }
+        File.WriteAllText(Path.Combine(output,"shadows.json"),JsonSerializer.Serialize(new
+        {
+            adapter=renderer.AdapterDescription,
+            note="Same camera and time sequence, moving cubes, static 20-light ring, 32 air samples. Median of 11 frames after 8 warmups.",
+            results,
+        },new JsonSerializerOptions {WriteIndented=true}));
+    }
     static void MeasureV4Filter(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool small)
     {
         int width=small ? 320 : 640,height=small ? 180 : 360;
@@ -151,18 +205,20 @@ internal static class Program
             }
             renderer.ActiveShader!.Parameters!.Reset();
             Set(renderer,"Quality.Samples",mode=="reference" ? 1f : 15f/127);
+            Set(renderer,"Quality.HalfResolutionAirlight",false);
+            Set(renderer,"Sampling.RandomLight",false);
             Set(renderer,"Filter.Enabled",mode=="filtered");
             Set(renderer,"Shape.Speed",0);
             Set(renderer,"View.CameraSpeed",0);
-            foreach (string light in new[] {"Light","Light2","Light3","Light4"}) Set(renderer,light+".Speed",0);
+
             clock.Reset();
-            for (int i=0;i<8;i++) { clock.Advance(); renderer.Render(false); renderer.ReadPixels(false); }
+            for (int i=0;i<8;i++) { clock.Advance(); RenderV4(renderer); renderer.ReadPixels(false); }
             var frames=new List<Dictionary<string,double>>();
             for (int i=0;i<11;i++)
             {
                 using var timer=new Timestamps(device,context);
                 renderer.TransportPassMarker=timer.Marker;
-                clock.Advance(); timer.Begin(); renderer.Render(false); timer.End();
+                clock.Advance(); timer.Begin(); RenderV4(renderer); timer.End();
                 frames.Add(timer.Resolve()); renderer.TransportPassMarker=null;
             }
             timings[mode]=frames.SelectMany(f=>f.Keys).Distinct().ToDictionary(k=>k,k=>Median(frames.Select(f=>f.GetValueOrDefault(k))));
@@ -186,9 +242,9 @@ internal static class Program
             milliseconds=timings,rmse=errors,
         },new JsonSerializerOptions {WriteIndented=true}));
     }
-    static void MeasureV4(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool quick, bool small)
+    static void MeasureV4(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool quick, bool small, bool modes)
     {
-        string[] cases=quick ? ["default"] : ["default","one-object","objects512","objects4096","one-light","static-maps",
+        string[] cases=modes ? ["full-all-lights","random-light","half-airlight","both-modes"] : quick ? ["default"] : ["default","one-object","objects512","objects4096","one-light","static-maps",
             "samples128","cube512","equiangular","optical-depth","no-jitter","no-air","air-only","all-off","depth","shadow-cube","inside","1280x720"];
         var results=new List<object>();
         foreach (string name in cases)
@@ -197,14 +253,19 @@ internal static class Program
             int width=small ? 320 : name=="1280x720" ? 1280 : 640;
             int height=small ? 180 : name=="1280x720" ? 720 : 360;
             renderer.Resize(width,height);
+            if (modes)
+            {
+                Set(renderer,"Sampling.RandomLight",name is "random-light" or "both-modes");
+                Set(renderer,"Quality.HalfResolutionAirlight",name is "half-airlight" or "both-modes");
+            }
             if (name=="one-object") Set(renderer,"Shape.Count",0);
             if (name=="objects512") Set(renderer,"Shape.Count",511f/4095);
             if (name=="objects4096") Set(renderer,"Shape.Count",1);
-            if (name=="one-light") foreach (string group in new[] {"Light2","Light3","Light4"}) Set(renderer,group+".Enabled",false);
+            if (name=="one-light") Set(renderer,"Lights.Count",0);
             if (name=="static-maps")
             {
                 Set(renderer,"Shape.Speed",0);
-                foreach (string group in new[] {"Light","Light2","Light3","Light4"}) Set(renderer,group+".Speed",0);
+
             }
             if (name=="samples128") Set(renderer,"Quality.Samples",1);
             if (name=="cube512") Set(renderer,"Quality.ShadowResolution",1);
@@ -213,18 +274,18 @@ internal static class Program
             if (name=="no-jitter") Set(renderer,"Sampling.Jitter",false);
             if (name=="no-air") Set(renderer,"Air.Density",0);
             if (name=="air-only") Set(renderer,"Shape.Enabled",false);
-            if (name=="all-off") foreach (string group in new[] {"Light","Light2","Light3","Light4"}) Set(renderer,group+".Enabled",false);
+            if (name=="all-off") Set(renderer,"Lights.Enabled",false);
             if (name=="depth") Set(renderer,"View.ShowDepth",true);
             if (name=="shadow-cube") Set(renderer,"View.ShowShadows",true);
             if (name=="inside") Set(renderer,"View.CameraDistance",.05f);
             clock.Reset();
-            for (int i=0;i<8;i++) { clock.Advance(); renderer.Render(false); renderer.ReadPixels(false); }
+            for (int i=0;i<8;i++) { clock.Advance(); RenderV4(renderer); renderer.ReadPixels(false); }
             var frames=new List<Dictionary<string,double>>();
             for (int i=0;i<11;i++)
             {
                 using var timer=new Timestamps(device,context);
                 renderer.TransportPassMarker=timer.Marker;
-                clock.Advance(); timer.Begin(); renderer.Render(false); timer.End();
+                clock.Advance(); timer.Begin(); RenderV4(renderer); timer.End();
                 frames.Add(timer.Resolve()); renderer.TransportPassMarker=null;
             }
             var medians=frames.SelectMany(f=>f.Keys).Distinct().ToDictionary(k=>k,k=>Median(frames.Select(f=>f.GetValueOrDefault(k))));
@@ -419,7 +480,7 @@ internal static class Program
         {
             this.device = device; this.context = context;
             disjoint = device.CreateQuery(new(QueryType.TimestampDisjoint));
-            pool = Enumerable.Range(0, 32).Select(_ => device.CreateQuery(new QueryDescription(QueryType.Timestamp))).ToArray();
+            pool = Enumerable.Range(0, 80).Select(_ => device.CreateQuery(new QueryDescription(QueryType.Timestamp))).ToArray();
         }
         internal void Begin() { context.Begin(disjoint); Marker("Total", true); }
         internal void End() { Marker("Total", false); context.End(disjoint); context.Flush(); }

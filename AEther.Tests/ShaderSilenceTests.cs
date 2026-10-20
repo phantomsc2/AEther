@@ -44,7 +44,7 @@ public class ShaderSilenceTests
 
     // AGENTS.md explicitly exempts audio-independent volume prototypes. Keep
     // production scene discovery and its full natural-decay checks intact.
-    static bool IsAudioIndependentPrototype(string name) => name is "MandelVolume" or "MandelLight" or "MandelLightv2" or "MandelLightv3" or "MandelLightv4";
+    static bool IsAudioIndependentPrototype(string name) => name is "MandelVolume" or "MandelLight" or "MandelLightv2" or "MandelLightv3";
 
     [TestCaseSource(nameof(Scenes)), Category("GPU")]
     public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb, bool periodic)
@@ -144,6 +144,9 @@ public class ShaderSilenceTests
 
     public static IEnumerable<string> ArtisticScenes() => Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
         .Select(Path.GetFileNameWithoutExtension).Where(name => name is not ("Spectrum" or "Histogram" or "MandelFluidv4"))
+        // The spectral light ring intentionally responds only to live local T,
+        // not to the global B-only fixture. It remains in the silence regression.
+        .Where(name => name != "MandelLightv4")
         .Where(name => !IsAudioIndependentPrototype(name!))
         .OrderBy(name => name, StringComparer.Ordinal);
 

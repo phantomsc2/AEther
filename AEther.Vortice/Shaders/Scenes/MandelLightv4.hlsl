@@ -1,30 +1,38 @@
 #include "../Common/Inputs.hlsl"
 
-// Audio-independent prototype. Rasterized opaque cubes in an infinite homogeneous
-// atmosphere. Single scattering, hard nearest-depth shadows, no image history.
+// Audio-reactive prototype. Opaque cubes and a static frequency/stereo light ring
+// in infinite homogeneous air. Single scattering, hardware PCF, no image history.
 struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
-struct LightSettings { bool Enabled; float Intensity; float Speed; float Radius; float Orbit; float Phase; float3 Color; };
-struct QualitySettings { float Samples; float ShadowResolution; float ShadowBias; };
-struct SamplingSettings { float OpticalDepthWeight; bool Jitter; };
+struct RingLightSettings { bool Enabled; float Count; float Gain; float Radius; float RingRadius; };
+struct QualitySettings { float Samples; float ShadowResolution; float ShadowBias; bool HardwarePCF; bool HalfResolutionAirlight; };
+struct SamplingSettings { float OpticalDepthWeight; bool Jitter; bool RandomLight; };
 struct FilterSettings { bool Enabled; };
 struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; float Exposure;
     bool ShowDepth; bool ShowShadows; float ShadowLight; };
 cbuffer Parameters : register(b1)
 {
     ShapeSettings Shape = { true, .03101343, .25, .45, .75, .1, float3(.65,.7,.75) };
-    AirSettings Air = { .22, float3(.85,.9,1), float3(.03,.05,.08) };
-    LightSettings Light = { true, .55, .35, .25, .8, 0, float3(1,.8,.55) };
-    LightSettings Light2 = { true, .45, .3, .25, .4, .25, float3(.15,.5,1) };
-    LightSettings Light3 = { true, .3, .25, .25, .6, .5, float3(1,.2,.08) };
-    LightSettings Light4 = { true, .28, .2, .25, .55, .75, float3(.2,1,.5) };
-    QualitySettings Quality = { .24409449, .5, .15 };
-    SamplingSettings Sampling = { .5, true };
+    AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
+    RingLightSettings Lights = { true, .61290323, .66666667, .25, .6 };
+    QualitySettings Quality = { .24409449, 1, .15, true, true };
+    SamplingSettings Sampling = { .5, true, true };
     FilterSettings Filter = { true };
     ViewSettings View = { .55, .15, .5, .4, false, false, 0 };
 };
-cbuffer RasterPassConstants : register(b2) { uint RasterLight; uint RasterFace; uint RasterShadow; uint RasterPadding; };
+cbuffer RasterPassConstants : register(b2) { uint RasterLight; uint RasterFace; uint RasterShadow; float RasterShadowScale; };
+// Uploaded once per frame from the current stereo spectra, with no history or
+// envelope. Matching host capacity is RasterLightTransport.MaximumLights.
+static const int MaxLights=32;
+cbuffer RasterLightConstants : register(b3)
+{
+    float4 RasterLightInfo; // total count, nonzero count, reserved, reserved
+    float4 RasterLightPositions[32]; // xyz position, squared soft radius
+    float4 RasterLightRadiance[32]; // RGB intensity, scalar transient intensity
+    float4 RasterActiveLights[8]; // packed indices of nonzero lights
+};
 Texture2DArray<float> RasterShadows;
+SamplerComparisonState RasterShadowSampler;
 Texture2D<float4> RasterSurface;
 Texture2D<float> RasterDepth;
 Texture2D<float4> RasterAirlight;
@@ -32,20 +40,8 @@ static const float Pi=3.14159265359;
 static const float Near=.025, Far=128;
 uint RasterHash(uint v) { v^=v>>16; v*=0x7feb352d; v^=v>>15; v*=0x846ca68b; return v^(v>>16); }
 float Random(uint v) { return ((RasterHash(v)>>9)+.5)/8388608.0; }
-LightSettings LightAt(int i)
-{
-    if (i==1) return Light2;
-    if (i==2) return Light3;
-    if (i==3) return Light4;
-    return Light;
-}
-float3 LightPosition(int i)
-{
-    LightSettings l=LightAt(i);
-    float a=T*.5*l.Speed-.8+2*Pi*l.Phase;
-    float r=3+11*l.Orbit;
-    return float3(r*cos(a),3*sin(.7*a+.3),r*sin(a));
-}
+int ActiveLight(int i) { return (int)RasterActiveLights[i/4][i%4]; }
+float3 LightPosition(int i) { return RasterLightPositions[i].xyz; }
 void CameraFrame(out float3 origin, out float3 forward, out float3 right, out float3 up)
 {
     float s,c; sincos(T*.25*View.CameraSpeed,s,c);
@@ -90,15 +86,40 @@ float Visibility(int light, float3 p, float3 normal)
     if (max(abs(delta.x),max(abs(delta.y),abs(delta.z)))<Near) return 1;
     int face; float2 uv; CubeAddress(delta,face,uv);
     uint w,h,layers; RasterShadows.GetDimensions(w,h,layers);
+    // Each 90-degree face has a one-texel rendered guard on every side. Even
+    // at cube edges/corners, the full hardware 2x2 footprint contains geometry.
+    float scale=(w-2.0)/w;
+    uv=.5+(uv-.5)*scale;
+    float z=max(abs(delta.x),max(abs(delta.y),abs(delta.z)));
+    if (Quality.HardwarePCF)
+    {
+        float biased=max(Near,z-ShadowBias());
+        float comparison=ProjectDepth(biased)/biased;
+        if (any(normal!=0))
+        {
+            // Projected receiver-plane depth is affine in face UV. A hardware
+            // comparison uses one reference for four texels, so use its minimum
+            // over those centers to prevent slope acne with a tight depth bias.
+            float plane=dot(delta,normal);
+            if (abs(plane)>1e-5)
+            {
+                float3 n=FacePosition(normal,face);
+                float2 gradient=(2*Near*Far/(Far-Near))*float2(-n.x,n.y)/(plane*scale*w);
+                float2 f=frac(uv*w-.5);
+                comparison+=min(-f.x*gradient.x,(1-f.x)*gradient.x)
+                    +min(-f.y*gradient.y,(1-f.y)*gradient.y);
+            }
+        }
+        return RasterShadows.SampleCmpLevelZero(RasterShadowSampler,float3(uv,6*light+face),saturate(comparison));
+    }
     int2 texel=clamp((int2)(uv*w),0,(int)w-1);
     float depth=RasterShadows.Load(int4(texel,6*light+face,0));
     if (depth>=1) return 1;
-    float z=max(abs(delta.x),max(abs(delta.y),abs(delta.z)));
     // Compare against the receiver plane at the actual texel-center ray. This
     // removes sloped-face acne without filtering or a large silhouette offset.
     if (any(normal!=0))
     {
-        float3 ray=CubeDirection(face,(texel+.5)/w);
+        float3 ray=CubeDirection(face,.5+((texel+.5)/w-.5)/scale);
         float denominator=dot(ray,normal);
         if (abs(denominator)>1e-5)
         {
@@ -135,7 +156,11 @@ GeometryOutput RasterGeometryVS(uint vertex : SV_VertexID, uint instance : SV_In
     result.World=center+local; result.Normal=normal;
     result.Albedo=Shape.Albedo*lerp(.65,1,Random(id+6));
     float3 p;
-    if (RasterShadow!=0) p=FacePosition(result.World-LightPosition(RasterLight),RasterFace);
+    if (RasterShadow!=0)
+    {
+        p=FacePosition(result.World-LightPosition(RasterLight),RasterFace);
+        p.xy*=RasterShadowScale;
+    }
     else
     {
         float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
@@ -148,16 +173,16 @@ GeometryOutput RasterGeometryVS(uint vertex : SV_VertexID, uint instance : SV_In
 float4 RasterSurfacePS(GeometryOutput input) : SV_Target
 {
     float3 radiance=0,extinction=AirExtinction();
-    [unroll] for (int i=0;i<4;++i)
+    [loop] for (int slot=0;slot<(int)RasterLightInfo.y;++slot)
     {
-        LightSettings light=LightAt(i); if (!light.Enabled || light.Intensity<=0) continue;
+        int i=ActiveLight(slot);
         float3 delta=LightPosition(i)-input.World;
         float r2=dot(delta,delta),r=sqrt(r2); if (r<1e-6) continue;
-        float radius=.01+.49*light.Radius*light.Radius;
         float diffuse=max(0,dot(input.Normal,delta/r))/Pi;
+        if (diffuse<=0) continue;
         float shadow=Visibility(i,input.World,input.Normal);
         radiance+=input.Albedo*diffuse*shadow*exp(-extinction*r)
-            *(3000*light.Intensity*light.Intensity*light.Color)/(r2+radius*radius);
+            *RasterLightRadiance[i].rgb/(r2+RasterLightPositions[i].w);
     }
     return float4(radiance,1);
 }
@@ -169,93 +194,153 @@ float4 Display(float3 radiance)
 }
 struct Source
 {
-    float3 Position; float3 Intensity; float Radius2;
-    float Center; float Height; float Angle; float Span;
+    float3 Intensity; float Radius2;
+    float Center; float Perpendicular2; float Height; float Angle; float Span; float PdfScale;
 };
-float4 RasterAirlightPS(PSin input) : SV_Target
+Source DescribeLight(int i, float3 origin, float3 direction, bool hit, float end)
 {
-    int2 pixel=(int2)input.Position.xy;
+    Source source;
+    source.Intensity=RasterLightRadiance[i].rgb;
+    source.Radius2=RasterLightPositions[i].w;
+    float3 delta=LightPosition(i)-origin;
+    source.Center=dot(delta,direction);
+    float3 perpendicular=delta-source.Center*direction;
+    source.Perpendicular2=dot(perpendicular,perpendicular);
+    source.Height=sqrt(source.Perpendicular2+source.Radius2);
+    source.Angle=atan(-source.Center/source.Height);
+    source.Span=(hit ? atan((end-source.Center)/source.Height) : .5*Pi)-source.Angle;
+    source.PdfScale=source.Height/max(source.Span,1e-12);
+    return source;
+}
+float SampleDistance(Source source, float u, float optical, float rate, float mass)
+{
+    if (optical>0 && u<optical)
+        return -log(max(1e-7,1-min(u/optical,1-1e-6)*mass))/rate;
+    float v=min((u-optical)/max(1-optical,1e-20),1-1e-6);
+    return source.Center+source.Height*tan(source.Angle+v*source.Span);
+}
+float3 SourceContribution(int i, Source source, float t, float3 p, float3 extinction, out float falloff)
+{
+    float along=t-source.Center;
+    float r2=along*along+source.Perpendicular2;
+    falloff=rcp(r2+source.Radius2);
+    if (r2<1e-12) return 0;
+    float phase=3*(2-source.Perpendicular2/r2)/(16*Pi);
+    return source.Intensity*phase*Visibility(i,p,0)*exp(-extinction*(t+sqrt(r2)))*falloff;
+}
+float4 IntegrateAirlight(int2 pixel)
+{
     float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
-    float2 screen=(2*input.UV-1)*float2(max(1,AspectRatio),-max(1,1/AspectRatio));
+    float2 screen=(2*(pixel+.5)/Resolution-1)*float2(max(1,AspectRatio),-max(1,1/AspectRatio));
     float3 direction=normalize(2*forward+screen.x*right+screen.y*up);
     float z=RasterDepth.Load(int3(pixel,0)); bool hit=z<1;
     float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;
-    // Alpha carries linear camera-space depth for the 3x3 filter (zero = sky).
     float guide=hit ? LinearDepth(z) : 0;
     float3 scatter=AirScatter(),extinction=AirExtinction();
     float3 radiance=0;
-    if (!any(scatter>0)) return float4(0,0,0,guide);
-    // A scalar optical-depth proposal follows the slowest attenuating active
-    // scattering channel. Empty background rays have an infinite endpoint.
+    int count=(int)RasterLightInfo.y;
+    if (count==0 || !any(scatter>0)) return float4(0,0,0,guide);
     float rate=min(scatter.x>0 ? extinction.x : 1e20,min(scatter.y>0 ? extinction.y : 1e20,scatter.z>0 ? extinction.z : 1e20));
     rate=max(rate,1e-12);
     float mass=hit ? OneMinusExp(rate*end) : 1;
     if (mass<=0) return float4(0,0,0,guide);
-    Source sources[4]; int count=0;
-    [unroll] for (int l=0;l<4;++l)
-    {
-        LightSettings light=LightAt(l); if (!light.Enabled || light.Intensity<=0 || !any(light.Color>0)) continue;
-        Source source;
-        source.Position=LightPosition(l); source.Intensity=3000*light.Intensity*light.Intensity*light.Color;
-        float radius=.01+.49*light.Radius*light.Radius; source.Radius2=radius*radius;
-        float3 delta=source.Position-origin;
-        source.Center=dot(delta,direction);
-        float3 perpendicular=delta-source.Center*direction;
-        source.Height=sqrt(dot(perpendicular,perpendicular)+source.Radius2);
-        source.Angle=atan(-source.Center/source.Height);
-        source.Span=(hit ? atan((end-source.Center)/source.Height) : .5*Pi)-source.Angle;
-        sources[l]=source; count++;
-    }
-    if (count==0) return float4(0,0,0,guide);
     int samples=1+(int)round(127*Quality.Samples);
     float optical=saturate(Sampling.OpticalDepthWeight), angular=(1-optical)/count;
     uint seed=RasterHash((uint)pixel.x^RasterHash((uint)pixel.y+1));
+    [branch] if (Sampling.RandomLight)
+    {
+        int offset=Sampling.Jitter ? min((int)(Random(seed^0xa511e9b3)*count),count-1) : 0;
+        [loop] for (int s=0;s<samples;++s)
+        {
+            int i=ActiveLight((s+offset)%count);
+            // Build only the selected light's proposal. A 20-light ring does not
+            // require 20 angular proposals or a large Source array per pixel.
+            Source source=DescribeLight(i,origin,direction,hit,end);
+            float jitter=Sampling.Jitter ? Random(seed^RasterHash((uint)s+1)) : .5;
+            float u=min((s+jitter)/samples,1-1e-6);
+            float t=max(0,SampleDistance(source,u,optical,rate,mass));
+            if (hit) t=min(t,end);
+            float falloff;
+            float3 incoming=SourceContribution(i,source,t,origin+t*direction,extinction,falloff);
+            float pdf=optical*rate*exp(-rate*t)/mass+(1-optical)*source.PdfScale*falloff;
+            // Uniform selection among nonzero lights, compensated in the joint PDF.
+            radiance+=scatter*incoming*(count/(max(pdf,1e-30)*samples));
+        }
+        return float4(radiance,guide);
+    }
+    // The optional all-light reference path stores only one PDF scalar per
+    // active light. Full Source arrays would scale register pressure with count.
+    float pdfScales[MaxLights];
+    [loop] for (int a=0;a<count;++a)
+        pdfScales[a]=DescribeLight(ActiveLight(a),origin,direction,hit,end).PdfScale;
     [loop] for (int s=0;s<samples;++s)
     {
         float jitter=Sampling.Jitter ? Random(seed^RasterHash((uint)s+1)) : .5;
-        float u=min((s+jitter)/samples,1-1e-6),t=0;
+        float u=min((s+jitter)/samples,1-1e-6),t;
         if (optical>0 && u<optical)
             t=-log(max(1e-7,1-min(u/optical,1-1e-6)*mass))/rate;
         else
         {
             float choice=(u-optical)/max(angular,1e-20);
-            [unroll] for (int pick=0;pick<4;++pick)
-            {
-                LightSettings light=LightAt(pick);
-                if (!light.Enabled || light.Intensity<=0 || !any(light.Color>0)) continue;
-                if (choice<1)
-                {
-                    Source source=sources[pick];
-                    t=source.Center+source.Height*tan(source.Angle+min(choice,1-1e-6)*source.Span);
-                    break;
-                }
-                choice-=1;
-            }
+            int pick=min((int)choice,count-1);
+            Source source=DescribeLight(ActiveLight(pick),origin,direction,hit,end);
+            t=source.Center+source.Height*tan(source.Angle+min(choice-pick,1-1e-6)*source.Span);
         }
         t=max(0,t); if (hit) t=min(t,end);
         float pdf=optical*rate*exp(-rate*t)/mass;
-        [unroll] for (int q=0;q<4;++q)
-        {
-            LightSettings light=LightAt(q); if (!light.Enabled || light.Intensity<=0 || !any(light.Color>0)) continue;
-            Source source=sources[q]; float d=t-source.Center;
-            pdf+=angular*source.Height/(max(source.Span,1e-12)*(source.Height*source.Height+d*d));
-        }
         float3 p=origin+t*direction,incoming=0;
-        [unroll] for (int i=0;i<4;++i)
+        [loop] for (int a=0;a<count;++a)
         {
-            LightSettings light=LightAt(i); if (!light.Enabled || light.Intensity<=0 || !any(light.Color>0)) continue;
-            Source source=sources[i]; float3 delta=source.Position-p;
-            float r2=dot(delta,delta),r=sqrt(r2); if (r<1e-6) continue;
-            float mu=dot(delta/r,direction),phase=3*(1+mu*mu)/(16*Pi);
-            incoming+=source.Intensity*phase*Visibility(i,p,0)*exp(-extinction*r)/(r2+source.Radius2);
+            int i=ActiveLight(a);
+            Source source=DescribeLight(i,origin,direction,hit,end);
+            float falloff;
+            incoming+=SourceContribution(i,source,t,p,extinction,falloff);
+            pdf+=angular*pdfScales[a]*falloff;
         }
-        radiance+=scatter*exp(-extinction*t)*incoming/(max(pdf,1e-30)*samples);
+        radiance+=scatter*incoming/(max(pdf,1e-30)*samples);
     }
     return float4(radiance,guide);
+}
+float4 RasterAirlightPS(PSin input) : SV_Target
+{
+    int2 pixel=(int2)input.Position.xy;
+    // One representative full-resolution ray per 2x2 block. Sampling the actual
+    // full-resolution pixel center keeps its guide and integral endpoint aligned.
+    if (Quality.HalfResolutionAirlight) pixel=min(2*pixel+1,(int2)Resolution-1);
+    return IntegrateAirlight(pixel);
+}
+
+float3 ReconstructAirlight(int2 pixel)
+{
+    uint width,height; RasterAirlight.GetDimensions(width,height);
+    float z=RasterDepth.Load(int3(pixel,0));
+    float guide=z<1 ? LinearDepth(z) : 0;
+    float2 grid=(pixel-1)*.5;
+    // With an odd viewport the last representative is clamped to the final
+    // full-resolution pixel, so its final lattice interval is one pixel wide.
+    if (((int)Resolution.x&1)!=0 && pixel.x>=Resolution.x-2) grid.x=pixel.x+(int)width-(int)Resolution.x;
+    if (((int)Resolution.y&1)!=0 && pixel.y>=Resolution.y-2) grid.y=pixel.y+(int)height-(int)Resolution.y;
+    int2 base=(int2)floor(grid); float2 f=frac(grid);
+    float3 sum=0; float weight=0;
+    [unroll] for (int y=0;y<2;++y) [unroll] for (int x=0;x<2;++x)
+    {
+        int2 at=clamp(base+int2(x,y),0,int2(width,height)-1);
+        float4 value=RasterAirlight.Load(int3(at,0));
+        if ((guide==0)!=(value.a==0)) continue;
+        float difference=abs(value.a-guide)/max(.05,.02*guide);
+        float spatial=(x==0 ? 1-f.x : f.x)*(y==0 ? 1-f.y : f.y);
+        float w=spatial*exp2(-2*difference*difference);
+        sum+=w*value.rgb; weight+=w;
+    }
+    // Thin/disoccluded geometry can have no matching coarse ray. Integrate that
+    // pixel instead of leaking background fog or leaving a dark reconstruction hole.
+    [branch] if (weight<1e-5) return IntegrateAirlight(pixel).rgb;
+    return sum/weight;
 }
 
 float3 FilterAirlight(int2 pixel)
 {
+    [branch] if (Quality.HalfResolutionAirlight) return ReconstructAirlight(pixel);
     float4 center=RasterAirlight.Load(int3(pixel,0));
     if (!Filter.Enabled) return center.rgb;
     float3 sum=0; float weight=0;
@@ -278,8 +363,9 @@ float4 PS(PSin input) : SV_Target
     {
         float2 tile=input.UV*float2(3,2); int2 cell=(int2)tile;
         uint w,h,layers; RasterShadows.GetDimensions(w,h,layers);
-        float z=RasterShadows.Load(int4(clamp((int2)(frac(tile)*w),0,(int)w-1),
-            6*(int)round(3*View.ShadowLight)+cell.x+3*cell.y,0));
+        float2 uv=.5+(frac(tile)-.5)*((w-2.0)/w);
+        float z=RasterShadows.Load(int4(clamp((int2)(uv*w),0,(int)w-1),
+            6*(int)round((RasterLightInfo.x-1)*View.ShadowLight)+cell.x+3*cell.y,0));
         return float4((z>=1 ? 0 : exp(-.06*LinearDepth(z))).xxx,1);
     }
     float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);

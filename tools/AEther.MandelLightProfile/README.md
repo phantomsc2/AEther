@@ -6,8 +6,10 @@ For opaque raster cubes and homogeneous atmospheric scattering, add `--v4`:
 dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/current --v4
 ```
 
-This records the four scalar shadow cubemaps, camera surface pass and airlight
-pass separately. Cases cover 1..4096 cubes, one/four lights, static caches, sampling
+This records the spectral ring's scalar shadow cubemaps, camera surface pass and airlight
+pass separately. V4 now receives a deterministic synthetic live stereo-T spectrum
+before each frame; there is no fallback illumination in the production shader.
+Cases cover 1..4096 cubes, one/20 lights, static caches, sampling
 and shadow resolution, pure angular/pure optical/MIS sampling, diagnostics,
 zero air, no objects, lights off and 1280x720. Lights-off output is checked for
 zero RGB after active lighting. PNGs and timings.json use the v3 timing protocol
@@ -20,6 +22,21 @@ It writes `filter.json` with per-pass GPU timings, adapter name and display-RGB
 RMSE against the reference. The copied shader's sample bound is modified in the
 artifact directory only. All scene, geometry and light motion is frozen for the
 comparison. `--small` uses 320x180 instead of 640x360.
+
+`--v4 --shadows` compares point sampling and hardware PCF at 256 and 512 useful
+texels per cube face, with atmosphere and surface-only variants. Camera and time
+sequences match across cases; cubes move so map rebuild costs are included.
+It saves PNGs plus `shadows.json` with the actual adapter and per-pass medians.
+
+`--v4 --modes` explicitly captures full resolution with all lights,
+one-light-per-sample, half-resolution airlight and combined modes at the same
+sample budget and time sequence, regardless of the preset's toggle defaults. It saves four
+PNGs and `timings.json`, including separate integration and reconstruction costs.
+The half-resolution composite timings include full-resolution fallback integrals
+where the depth-aware reconstruction has no compatible coarse sample.
+The `--filter` comparison explicitly disables both speed modes to isolate the
+full-resolution 3x3 filter. Ordinary `--quick` captures use the current preset,
+including its enabled speed modes.
 
 For the Fourier/deep-cubemap prototype, add `--v3`:
 

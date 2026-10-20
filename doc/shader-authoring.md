@@ -169,15 +169,25 @@ in `ShaderSilenceTests` under the prototype exception in `AGENTS.md`.
 
 ## MandelLightv4 prototype
 
-`MandelLightv4` rasterizes opaque instanced cubes into four scalar shadow cubemaps
+`MandelLightv4` rasterizes opaque instanced cubes into scalar shadow cubemaps
 and camera color/depth. A fullscreen pass integrates single scattering through
 infinite homogeneous air, combining equiangular and optical-depth proposals with
-balance-heuristic MIS. Material edges and shadow comparisons are hard; sampling
-jitter is the only stochastic fuzziness.
-An optional depth-aware 3x3 filter denoises HDR airlight before surface composition;
-surface shading and analytical transmission retain their original pixel values.
-This audio-independent prototype remains
-exempt from production silence checks. Restart after building its new host passes.
+balance-heuristic MIS. Material edges are hard; shadow queries default to hardware
+2x2 PCF on 512-pixel faces with rendered guard pixels. Sampling jitter supplies
+the integration noise. A fixed world-space ring defaults to 20 lights (1..32),
+using the RingEmitter polar frequency/stereo mapping. Current `Spectrum0/1.g`
+transient amplitude supplies linear light intensity, with a master gain and no
+history, smoothing or ambient floor. The host uploads sampled light data once per
+frame; zero-intensity lights are skipped.
+The dense default preset enables one-light-per-distance sampling and half-resolution
+airlight with depth-aware reconstruction and full-resolution fallback at unmatched
+depth boundaries. Scattering defaults to (1,1,1) and density to 0.65.
+When half-resolution airlight is disabled, an optional depth-aware 3x3 filter
+denoises HDR airlight before surface composition. Surface shading and analytical
+transmission retain their original pixel values.
+This audio-reactive prototype participates in the GPU silence regression. It is
+excluded from B-only response checks because its lights intentionally use only T.
+Restart after building the host changes.
 See [MandelLightv4](mandellight-v4.md) for controls, sampling and measurements.
 
 ## MandelLightv3 prototype
