@@ -169,16 +169,34 @@ in `ShaderSilenceTests` under the prototype exception in `AGENTS.md`.
 
 ## MandelLightv4 prototype
 
-`MandelLightv4` rasterizes opaque instanced cubes into scalar shadow cubemaps
-and camera color/depth. A fullscreen pass integrates single scattering through
+`MandelLightv4` rasterizes opaque instanced cubes into camera color/depth and
+optional scalar shadow maps. Cone lights use one axis-aligned perspective view
+with a 5..60 degree half-angle; omnidirectional lights use six cube faces. Both
+pack into one depth-array resource and share surface/airlight visibility code.
+`Lights.Shadows` and `TonalLights.Shadows`
+independently enable shadows, both defaulting off. Unshadowed lights use the
+shared LUT path; shadowed lights share the visibility sampler, with capacity for
+both rings (192 lights). Full-size shadow arrays are omitted when neither group
+needs them. A fullscreen pass integrates single scattering through
 infinite homogeneous air, combining equiangular and optical-depth proposals with
 balance-heuristic MIS. Material edges are hard; shadow queries default to hardware
 2x2 PCF on 512-pixel faces with rendered guard pixels. Sampling jitter supplies
-the integration noise. A fixed world-space ring defaults to 20 lights (1..32),
+the integration noise. A fixed world-space ring defaults to 60 lights (1..96),
 using the RingEmitter polar frequency/stereo mapping. Current `Spectrum0/1.g`
-transient amplitude supplies linear light intensity, with a master gain and no
+transient amplitude supplies linear light intensity, with a strobe gain and no
 history, smoothing or ambient floor. The host uploads sampled light data once per
 frame; zero-intensity lights are skipped.
+A second ring uses live `Spectrum0/1.r` structure, shares the count/radius/palette
+and stereo coordinates, and lies horizontally in XZ. Its default intensity is
+75% of the strobe intensity for equal S/T. All unshadowed lights are batched into
+the same surface and airlight draws. A shared scaled RGB tail LUT integrates
+their airlight with no visibility queries. Extinction/radius changes rebuild the
+table in the background; deterministic angular quadrature supplies the correct
+current coefficients until upload. `TonalLights.Enabled/Gain` control this ring
+independently of `Lights.Enabled/Gain`, which control only the transient strobes.
+Strobes default to hard 30-degree inward cones. Their optical and equiangular
+proposals are conditioned on each ray/cone interval, with matching normalized
+PDFs, per-light distance stratification, and ray-local light selection.
 The dense default preset enables one-light-per-distance sampling and half-resolution
 airlight with depth-aware reconstruction and full-resolution fallback at unmatched
 depth boundaries. Scattering defaults to (1,1,1) and density to 0.65.
@@ -186,7 +204,7 @@ When half-resolution airlight is disabled, an optional depth-aware 3x3 filter
 denoises HDR airlight before surface composition. Surface shading and analytical
 transmission retain their original pixel values.
 This audio-reactive prototype participates in the GPU silence regression. It is
-excluded from B-only response checks because its lights intentionally use only T.
+excluded from B-only response checks because its lights intentionally use only S/T.
 Restart after building the host changes.
 See [MandelLightv4](mandellight-v4.md) for controls, sampling and measurements.
 

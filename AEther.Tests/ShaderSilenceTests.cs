@@ -144,7 +144,7 @@ public class ShaderSilenceTests
 
     public static IEnumerable<string> ArtisticScenes() => Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
         .Select(Path.GetFileNameWithoutExtension).Where(name => name is not ("Spectrum" or "Histogram" or "MandelFluidv4"))
-        // The spectral light ring intentionally responds only to live local T,
+        // The spectral light rings intentionally respond only to live local S/T,
         // not to the global B-only fixture. It remains in the silence regression.
         .Where(name => name != "MandelLightv4")
         .Where(name => !IsAudioIndependentPrototype(name!))

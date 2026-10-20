@@ -1,18 +1,19 @@
 # MandelLightv4: raster geometry and infinite homogeneous air
 
 Restart after building, then select **MandelLightv4**. This audio-reactive prototype
-now uses live spectral transients for all illumination. Without live T it renders
+uses live spectral transients for its strobe ring and tonal structure for a
+horizontal ring. Each has an independent shadow toggle, default off. Without live S/T it renders
 black, including after active input; it participates in the GPU silence regression.
 It intentionally does not respond to a B-only/global-background fixture.
 
 The default preset favors dense, strongly scattering air: Air.Density is 0.65,
 Scattering is (1,1,1), and the low absorption remains (0.03,0.05,0.08). Half-resolution
-airlight and one-light-per-sample sampling are enabled, with 32 distance samples,
-hardware PCF and 512-pixel shadow faces. The scene retains 128 cube instances,
-with a static 20-light spectral ring inside the cloud.
+airlight is enabled. Unshadowed lights use the LUT; when shadows are enabled,
+the sampler uses 32 distance samples, hardware PCF and 512-pixel shadow faces. The scene retains 128 cube instances,
+with two static 60-light spectral rings inside the cloud (120 lights by default).
 After reloading, use **Reset defaults** to apply the new preset to an existing session.
 
-A 640x360 RTX 4070 Laptop capture with a synthetic live stereo-T fixture measured
+A historical 640x360 RTX 4070 Laptop capture with a synthetic live stereo-T fixture measured
 approximately 1.54 ms total: 0.99 ms for 20 shadow cubemaps, 0.10 ms surfaces,
 0.27 ms airlight and 0.10 ms reconstruction/composition. All lights were active
 and the cubes were rotating, requiring shadow-map refreshes. Capture and timings
@@ -21,7 +22,7 @@ describe the earlier four-light prototypes unless stated otherwise.
 
 ## Live spectral light ring
 
-Lights.Count selects 1..32 point lights, default 20. Their positions form a fixed
+Lights.Count selects 1..96 lights per ring, default 60. Their positions form a fixed
 world-space ring facing the initial camera, with radius
 `(2+10*Shape.Spread)*Lights.RingRadius`, default 5.7 inside the cube cloud's
 9.5-unit half extent. Camera motion does not move the ring. Positions do not
@@ -51,16 +52,131 @@ other shaders' clamped linear texture sampling at `(f,.5)`, then uploads positio
 RGB intensities and nonzero-light indices in a small constant buffer. This avoids
 reading/interpolating spectrum textures at every airlight distance sample. Silent
 lights are omitted from surface/airlight loops and shadow refreshes. A light that
-becomes active receives a valid shadow map before it is used. Intensity changes
+becomes active with shadows enabled receives a valid shadow map before it is used. Intensity changes
 do not invalidate maps; geometry motion, ring placement/count, geometry edits,
 resolution changes and reloads do.
 
-The random-light mode constructs the angular proposal only for the selected
-nonzero light at each distance sample. The all-light comparison path retains only
-one PDF scalar per active light instead of a full array of ray/light descriptions.
-With 32 samples and all 20 lights active, each ray evaluates each light once or
-twice; expect more selection noise than the earlier four-light scene. There is
-still no temporal accumulation.
+The random-light mode caches only indices and cone intervals for lights that
+intersect each ray, constructing a full proposal only for the selected light.
+Distance samples are stratified separately within each light. With 32 samples
+and 20 intersecting lights, each gets one or two samples; cone misses are omitted.
+There is still no temporal accumulation.
+
+## Shared hard spotlights
+
+Both rings support the same hard angular emission profile within their existing
+surface and airlight passes. The transient strobes default to inward-facing
+spotlights with a **30-degree half-angle** (60-degree full opening). The tonal
+ring remains omnidirectional by default. `Lights.Directional` and
+`TonalLights.Directional` select spot versus full-sphere emission independently.
+Both axes point from each ring position toward the world origin, including when
+the ring radius is zero, where the ring's angular coordinates define the axis.
+
+Each group's `HalfAngle` slider maps to `90*value` degrees, clamped to 5..60;
+the default value 1/3 gives 30 degrees. Wider openings and soft angular
+edges are unsupported. Intensity remains the on-axis intensity: narrowing the
+cone reduces emitted power rather than concentrating the same power.
+
+Host-uploaded unit axes and cosine thresholds share one representation; a negative
+cosine marks omnidirectional emission and bypasses cone calculations. Surface
+lighting rejects points outside the forward cone before querying shadows.
+Shadowed airlight conditions both sampling proposals and their PDFs on the cone
+interval. Lights with empty intervals are excluded from that ray's selection.
+The angular span and shifted exponential normalization use the same entry/exit
+bounds; samples outside other lights' intervals have zero PDF for those lights.
+
+For unshadowed lights, the camera ray is intersected analytically with the convex
+forward cone and clipped to the opaque surface endpoint. The shared LUT evaluates
+the resulting interval with one tail lookup for an infinite exit or two for a
+finite exit; empty intervals require no lookups. The quadrature fallback uses the
+same clipped interval. Point lights bypass clipping. Orientation and aperture
+changes do not rebuild the LUT. With shadows enabled, they invalidate the
+light's cached shadow view without reallocating its depth slice.
+
+Directional lights use one perspective shadow view aligned with the cone axis.
+The full field of view is twice the half-angle, 60 degrees by default. The host
+uploads an orthonormal right/up frame, tangent of the half-angle, and array-slice
+base for each light. Omnidirectional lights retain six fixed 90-degree views.
+Both projection types pack into the same depth texture array, with one slice per
+spotlight and six per point light. Surface lighting and airlight remain combined;
+visibility selects the light's projection. The receiver-plane corrections and
+hardware PCF use that same projection and its one-texel guard.
+
+## Horizontal tonal ring and combined unshadowed fast path
+
+`Lights.Shadows` and `TonalLights.Shadows` independently select shadow transport
+for their rings. Both default to **false**. With a toggle off, its active lights
+share the existing unshadowed surface loop and LUT airlight loop. With it on, they
+use shadowed surface lighting and the same cone-bounded MIS airlight sampler.
+Any combination is supported, including all 192 lights shadowed. Neither toggle
+changes intensity, direction, spectrum input, or the other ring's settings.
+
+Shadow maps are allocated for the configured shadow groups and refreshed only
+for active lights. With both toggles off, a tiny placeholder SRV replaces the
+full-resolution arrays and no shadow-map draws occur. `View.ShowShadows` explicitly
+builds the selected diagnostic map even for inactive lights. It selects from
+strobe maps followed by tonal maps when both are enabled; with neither enabled,
+it previews the strobe positions without enabling light visibility. Spotlights
+show one complete depth view; point lights show their six faces in a 3x2 grid.
+
+The second ring has the same count, radius, angular spacing, soft source radius,
+palette, frequency coordinates and stereo blend as the strobe ring. It lies in
+the world XZ plane at Y=0, sharing the strobe ring's horizontal stereo axis.
+Treble is on its far side along the initial horizontal view direction; bass is
+on its near side. Camera motion does not move either ring.
+
+`TonalLights.Enabled/Gain` independently enable and attenuate this ring.
+`Lights.Enabled/Gain` control only the strobes. Its input is live `Spectrum.r` (S), with no added history,
+envelope, global background, or ambient floor. Its intensity is:
+
+```text
+S = lerp(Spectrum0(f,0.5).r, Spectrum1(f,0.5).r, right)
+tonal_rgb = 0.75 * 3000 * 2^(12*TonalLights.Gain-6) * S * palette(f)
+```
+
+Both gain sliders default to 2/3: strobes have 4x gain, tonal lights 3x including
+their fixed 0.75 factor. This preserves the prior default brightness while making
+the gains independent. Equal slider values and S/T amplitudes give a 75% tonal
+intensity. Existing saved presets may need **Reset defaults** to apply the new settings.
+
+Both rings illuminate the Lambert surfaces in the existing geometry draw. The
+unshadowed loop makes no visibility queries. The fullscreen airlight pass reconstructs
+one camera ray and depth endpoint, sums all active lights with shadows disabled
+using a shared cumulative-integral texture, then adds the sampled shadowed contribution.
+The rings are combined in linear HDR before reconstruction and tone mapping.
+Lights with shadows disabled require no per-light draws or shadow cubemaps. Lights have no distance
+cutoff; optional spot cones restrict their angular support.
+
+The 513x1025 RGBA32F lookup occupies 8.02 MiB and stores a scaled Rayleigh tail
+integral for the current RGB extinction and soft radius. Infinite rays require
+one lookup per unshadowed light; finite intervals require two. Camera motion,
+light positions, spectrum, gain and object changes do not invalidate it. Medium
+coefficient or radius changes trigger a CPU-only background build; GPU upload
+stays on the rendering thread. Up to four recent coefficient sets are cached.
+While the matching table is unavailable, a deterministic 16-point equiangular
+quadrature evaluates the same unshadowed integral. A stale table is never used.
+Rays outside the table's perpendicular-distance domain also use quadrature.
+See [the LUT study](mandellight-lut-study.md) for its derivation and accuracy limits.
+
+Historical production-path RTX 4070 Laptop measurements before directional strobes
+(both rings omnidirectional) at **1280x720**, default half-resolution
+airlight, 128 rotating cubes, stationary camera, median of 41 frames after warmup:
+
+| Active lights | Surface ms | Airlight ms | Composite ms | Total GPU ms |
+| --- | ---: | ---: | ---: | ---: |
+| 20 strobes | 0.294 | 0.726 | 0.183 | 2.257 |
+| 1 tonal | 0.022 | 0.010 | 0.034 | 0.109 |
+| 20 tonal | 0.133 | 0.094 | 0.083 | 0.361 |
+| 32 tonal | 0.318 | 0.225 | 0.183 | 0.794 |
+| 20 strobes + 20 tonal | 0.431 | 0.732 | 0.242 | 2.392 |
+
+The LUT is ready before measurement; builds, compilation and readback are excluded.
+Strobe and combined cases include refreshing all strobe maps. Tonal-only cases
+assert that no shadow-map draws occurred. GPU clocks vary, so the difference
+between total medians should not be read as an exact incremental cost. Captures
+and raw timings are in `artifacts/mandellight-v4/tonal-ring`; reproduce with the
+profiling tool's `--tonal-ring` mode now captures 60-light rings and the 96-light
+capacity case; the table above retains its historical 20/32-light measurements.
 
 ## Rendering
 
@@ -69,8 +185,9 @@ positions, sizes, orientations and albedo variation are calculated by the vertex
 shader. Increasing Count preserves previous instances. There are no Fourier modes,
 surface distance estimates, material interiors or object translucency.
 
-Each active point light rasterizes six perspective depth views into a scalar
-R32 depth array. Only the nearest surface is needed for opaque visibility.
+Each active shadowed cone light rasterizes one perspective depth view; each
+omnidirectional light rasterizes six. Both use a scalar R32 depth array. Only the
+nearest surface is needed for opaque visibility.
 The camera rasterizes the same instances into a linear HDR surface-color target
 and a sampleable scalar depth target. Vertex normals provide Lambert diffuse
 lighting directly; a normal/material G-buffer is unnecessary for this POC.
@@ -96,10 +213,11 @@ for each shadow query, both on surfaces and in airlight. The hardware compares f
 depth texels and bilinearly filters their visibility results. It does not interpolate
 depth and then compare. Disabling the toggle restores a nearest-texel comparison.
 
-Every face also renders a one-texel guard on each side: a 512 face is stored as
+Every shadow view also renders a one-texel guard on each side: a 512 view is stored as
 514x514 with slightly expanded projection coverage. Lookup coordinates address the
-central 90-degree region. Thus the full 2x2 filter footprint remains inside valid
-rendered data even at cube edges and corners, without manual cross-face taps.
+central useful region. Cubes cover 90 degrees per face; spots cover twice their
+half-angle. Thus the full 2x2 filter footprint remains inside rendered data even
+at cube edges/corners and cone edges, without manual cross-face taps.
 
 Surface receiver-plane depth is affine in projected face coordinates. PCF uses a
 conservative reference depth over its four texel centers to prevent slope acne,
@@ -150,30 +268,49 @@ function and light falloff remain useful.
 
 ## Sampling and MIS
 
-With Sampling.RandomLight disabled, all lights share camera sample positions.
-There are two proposal families:
+For each shadowed light, intersect the visible camera ray with its forward cone.
+Full-sphere lights use the full visible interval. Empty intervals are excluded
+from that ray's participating light count M. There are two proposal families:
 
-* **Optical depth:** truncated exponential distances for surface rays, ordinary
-  exponential distances for infinite background rays. Its scalar rate follows the
+* **Optical depth:** shifted exponential distances starting at each cone entry,
+  normalized over that light's interval. Its scalar rate follows the
   slowest attenuating RGB channel that scatters, to preserve a useful tail.
-* **Equiangular:** one proposal per active light, covering the same camera-ray
+* **Equiangular:** one proposal per participating light, covering exactly its cone
   interval. It follows the softened inverse-square illumination peak.
 
-Sampling.OpticalDepthWeight supplies the optical proposal's probability; the
-remaining probability is divided equally among active light proposals. Stratified
-samples select a component and a distance through its inverse CDF. The estimator
-uses balance-heuristic multiple importance sampling through the full mixture PDF:
+Sampling.OpticalDepthWeight supplies the optical proposal's probability w.
+Both proposals are zero outside the light's interval. For interval [a_i,b_i]:
 
 ```text
-q(t) = w * q_optical(t) + (1-w)/light_count * sum q_angular_light(t)
-sample_contribution = full_scattering_integrand(t) / (sample_count * q(t))
+mass_i = 1-exp(-rate*(b_i-a_i))     # 1 if b_i is infinite
+e_i(t) = rate*exp(-rate*(t-a_i))/mass_i
+p_i(t) = w*e_i(t) + (1-w)*angular_i(t)
 ```
 
-Every position evaluates illumination from all active lights. Neither proposal's
-weight is a brightness control. Slider 0 gives pure equiangular sampling; 1 gives
-pure optical-depth sampling; default 0.5 combines both. No third proposal is
-needed for full support. Floating-point inverse-CDF endpoints are clamped just
-inside their domains to avoid infinite/undefined sample coordinates.
+The default random-light mode cycles through the M participating lights with a
+random starting offset. For N>=M, each light's n_i distance samples cover its own
+full CDF in n_i strata; its sum is divided by n_i*p_i(t). This avoids the previous
+coupling between a light's index and a narrow global distance stratum. For N<M,
+a uniform cyclic subset is sampled and weighted by M/(N*p_i(t)).
+
+With Sampling.RandomLight disabled, draw from q(t)=sum_i p_i(t)/M and evaluate the
+full illumination sum at each shared distance, dividing by N*q(t). The PDF sum
+includes only proposals whose clipped intervals contain that distance.
+
+Neither proposal's weight is a brightness control. Slider 0 gives pure equiangular
+sampling; 1 gives pure optical-depth sampling; default 0.5 combines both.
+Inverse-CDF endpoints are clamped inside their domains. Small optical intervals
+use stable exp/log series to avoid cancellation.
+
+At 1280x720, 20 strobes, 128 frozen cubes, default 32 samples and half-resolution
+airlight, a matched before/after capture reduced display-RGB RMSE against a
+1001-sample reference from 18.881 to 1.614 (8-bit channel units), about 91.5%.
+The comparison includes pixels whose reference RGB sum is at least 15. The
+reference retains the same shadow maps and reconstruction and is not an exact
+transport solution. RTX 4070 Laptop median airlight time was 0.608 ms before and
+0.561 ms after; total 1.232 vs 1.164 ms, with cached shadow maps and 41 measured
+frames. Clock variation limits small timing differences. Captures, source
+snapshots and measurements are in `artifacts/mandellight-v4/spotlight-sampling`.
 
 The inner loop shares its ray/light quadratic between the equiangular PDF,
 inverse-square falloff and Rayleigh phase. With `c` the light projection along the
@@ -192,8 +329,8 @@ The PDF and illumination sums are accumulated in one light loop, sharing `r2`
 and `k`. This replaces the repeated 3D distance/normalized-direction calculation.
 Camera and light attenuation are combined as `exp(-sigma_t*(t+sqrt(r2)))` inside
 the light contribution, replacing their separate exponentials. Ray positions,
-MIS weights, four-light evaluation and sample counts retain the same mathematical
-model; only floating-point evaluation order changes.
+The conditioned sampling changes the proposal distribution, not the physical
+scattering integrand or the number of configured distance samples.
 
 At the earlier low-density, full-resolution defaults on RTX 4070 Laptop GPU,
 640x360, a repeat baseline measured
@@ -325,12 +462,20 @@ artifacts.
 | Shape.Albedo | RGB diffuse reflectance |
 | Air.Density | Density multiplier, applied as `0.3*value^2`; default 0.65 |
 | Air.Scattering / Absorption | Constant RGB coefficients; defaults (1,1,1) / (0.03,0.05,0.08) |
-| Lights.Enabled | Enable all ring lights; default on |
-| Lights.Count | 1..32 fixed ring positions; default 20 |
-| Lights.Gain | Live-T intensity multiplier `2^(12*value-6)`; default 4x |
+| Lights.Enabled | Enable transient strobes independently; default on |
+| Lights.Shadows | Enable strobe shadow maps and sampled visibility; default off |
+| Lights.Count | 1..96 fixed positions per ring; default 60 strobes + 60 tonal |
+| Lights.Gain | Strobe-only intensity multiplier `2^(12*value-6)`; default 4x |
 | Lights.Radius | Soft inverse-square radius `0.01+0.49*value^2`; default slider 0.25 |
 | Lights.RingRadius | Ring radius as fraction of cloud half extent; default 0.6 |
-| Quality.Samples | 1..128 distance samples per integrated ray; default 32 |
+| Lights.Directional | Hard strobe cones pointing toward origin; default on |
+| Lights.HalfAngle | Half-angle `90*value` degrees, clamped to 5..60; default 1/3 = 30 degrees |
+| TonalLights.Enabled | Enable horizontal S-driven ring independently; default on |
+| TonalLights.Shadows | Enable tonal shadow maps and sampled visibility; default off |
+| TonalLights.Gain | Independent tonal multiplier `0.75*2^(12*value-6)`; default 2/3 gives 3x |
+| TonalLights.Directional | Hard tonal cones pointing toward origin; default off (full sphere) |
+| TonalLights.HalfAngle | Same half-angle mapping as Lights.HalfAngle; default 1/3 |
+| Quality.Samples | 1..128 shadowed distance samples per integrated ray; default 32; unshadowed LUT is independent |
 | Quality.ShadowResolution | 128 / 256 / 512 useful pixels per cube face; default 512 |
 | Quality.ShadowBias | Depth tolerance 0.0005..0.0205 world units along cube-face depth |
 | Quality.HardwarePCF | Hardware 2x2 comparison filtering; enabled by default |
@@ -348,11 +493,16 @@ scattering. Set both to zero/off for black regardless of enabled lights.
 
 ## Costs and captures
 
-Moving geometry or changing ring placement rebuilds the affected shadow cubemaps.
+Moving geometry or changing ring placement, direction, aperture or projection type
+rebuilds the affected shadow maps. Packing changes also invalidate moved slices.
 With Shape.Speed=0 the maps survive changing audio, camera motion, air/material
 coefficient changes and exposure changes. Camera surfaces render each frame.
-Shadow storage scales with Lights.Count: 20 lights require approximately 121 MiB
-at 512 useful pixels per face including guards, or 30.5 MiB at 256. Camera color, depth and
+Shadow storage scales with Lights.Count and the enabled shadow groups: each
+20-light cone ring requires approximately 20.2 MiB at 512 useful pixels per view
+including guards, or 5.1 MiB at 256. A 20-light omnidirectional ring needs six times
+that storage (approximately 121 MiB or 30.5 MiB). These are allocation counts,
+not performance measurements. With both shadow toggles off, only the tiny
+placeholder shadow texture is allocated. Camera color, depth and
 airlight targets add 20 bytes per pixel at full resolution, or approximately 14
 with half-resolution airlight. There is no per-object loop in the airlight shader. Raster geometry
 work still scales with instances, shadow views, coverage and overdraw. This POC

@@ -9,11 +9,13 @@ using Vortice.DXGI;
 
 // GPU timestamps surround draws, excluding compilation, CPU uploads and readback.
 // Usage: dotnet run --project tools/AEther.MandelLightProfile -- <shader-root> <output-dir>
-internal static class Program
+internal static partial class Program
 {
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Contains("--airlight-lut")) { RunAirlightLutStudy(args); return; }
+        if (args.Contains("--tonal-ring") || args.Contains("--spotlight-sampling")) { RunTonalRingProfile(args); return; }
         string source = Path.GetFullPath(args.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
         string output = Path.GetFullPath(args.ElementAtOrDefault(1) ?? "artifacts/mandellight-profile/current");
         Directory.CreateDirectory(output);
@@ -160,6 +162,7 @@ internal static class Program
         {
             string name=$"{(pcf ? "pcf" : "point")}{resolution}"+(air ? "" : "-no-air");
             renderer.ActiveShader!.Parameters!.Reset();
+            Set(renderer,"Lights.Shadows",true);
             Set(renderer,"View.CameraSpeed",0);
             Set(renderer,"Quality.ShadowResolution",resolution==256 ? .5f : 1f);
             Set(renderer,"Quality.HardwarePCF",pcf);
@@ -205,6 +208,7 @@ internal static class Program
             }
             renderer.ActiveShader!.Parameters!.Reset();
             Set(renderer,"Quality.Samples",mode=="reference" ? 1f : 15f/127);
+            Set(renderer,"Lights.Shadows",true);
             Set(renderer,"Quality.HalfResolutionAirlight",false);
             Set(renderer,"Sampling.RandomLight",false);
             Set(renderer,"Filter.Enabled",mode=="filtered");
@@ -483,6 +487,7 @@ internal static class Program
             pool = Enumerable.Range(0, 80).Select(_ => device.CreateQuery(new QueryDescription(QueryType.Timestamp))).ToArray();
         }
         internal void Begin() { context.Begin(disjoint); Marker("Total", true); }
+        internal void Reset() { stamps.Clear(); }
         internal void End() { Marker("Total", false); context.End(disjoint); context.Flush(); }
         internal void Marker(string name, bool start)
         {

@@ -68,6 +68,7 @@ public sealed partial class Renderer : IDisposable
     // Optional GPU timestamp markers used by the transport profiling tool.
     internal Action<string, bool>? TransportPassMarker { get; set; }
     internal double FourierAggregationMilliseconds => fourierTransport?.LastAggregationMilliseconds ?? 0;
+    internal bool UnshadowedAirlightReady => rasterTransport?.LookupReady == true;
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
@@ -297,6 +298,8 @@ public sealed partial class Renderer : IDisposable
             rasterTransport ??= new(device, context);
             namedSamplers["RasterShadowSampler"] = rasterTransport.ShadowSampler;
             namedBuffers["RasterLightConstants"] = rasterTransport.LightBuffer;
+            namedBuffers["RasterAirlightConstants"] = rasterTransport.AirlightBuffer;
+            namedSamplers["RasterLutSampler"] = rasterTransport.LookupSampler;
             rasterTransport.PassMarker = TransportPassMarker;
             rasterTransport.Prepare(active.Raster, active.Parameters!, Audio, (float)now, width, height,
                 namedBuffers, namedTextures, namedSamplers);

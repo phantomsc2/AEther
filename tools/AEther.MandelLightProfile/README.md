@@ -1,5 +1,41 @@
 # MandelLight GPU profile
 
+For the production combined strobe/tonal path at 1280x720:
+
+```powershell
+dotnet run -c Release --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/tonal-ring --tonal-ring
+```
+
+This captures transient-only, tonal-only (1/60/96 lights), and combined 60+60-light
+cases with live stereo S/T fixtures. This comparison explicitly enables strobe
+shadows and disables tonal shadows; the scene preset defaults both shadows off.
+It waits for the matching unshadowed LUT,
+asserts that tonal-only frames issue no shadow-map draws, and records 41-frame
+GPU medians with rotating cubes. Tables are cached and ready for the measured
+frames. Shader compilation, background generation and readback are excluded.
+
+For the isolated unshadowed airlight LUT study, run from the repository root:
+
+```powershell
+dotnet run -c Release --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/lut-study --airlight-lut
+```
+
+This mode always renders at 1280x720. It compares the existing sampled integral,
+deterministic equiangular quadrature, and two-dimensional cumulative-integral
+textures, both without visibility and with cubemap PCF visibility. It substitutes
+experimental shaders at profiling pass markers; production shaders and transport
+are unchanged. Use `--airlight-lut --cpu-only` to run just the numerical validation.
+
+The output includes `cpu-validation.json`, `gpu-results.json`, and PNG captures.
+CPU validation uses independent adaptive quadrature, including infinite rays,
+short segments, collinear rays, lights behind the camera, and parameter changes.
+GPU references use 1024 samples. Timings include separate airlight and composite
+passes, with full-resolution fallback included in the latter for half-resolution
+airlight. Each measured frame follows an untimed substantial GPU workload to keep
+laptop idle clock changes from distorting comparisons. LUT construction and
+compilation are excluded from per-frame GPU timings and reported separately.
+See [the LUT study](../../doc/mandellight-lut-study.md) for results and limitations.
+
 For opaque raster cubes and homogeneous atmospheric scattering, add `--v4`:
 
 ```powershell
@@ -69,6 +105,14 @@ the MandelLight-specific `--noise` comparison. See the
 [v2 model and controls](../../doc/mandellight-v2.md).
 
 Windows and a D3D11 GPU are required. Run from the repository root:
+
+For a reproducible 720p spotlight-sampler comparison, use
+`--spotlight-sampling` instead of `--tonal-ring`. It captures only the 60-strobe
+case, freezes the cubes and camera, and times 41 frames with cached shadow maps.
+Use separate source roots/output directories to compare sampler revisions.
+The checked report in `doc/mandellight-v4.md` also compares the 32-sample captures
+against a copied shader with a 1001-sample output; that reference is untimed for
+the reported production comparison.
 
 ```powershell
 dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-profile/current

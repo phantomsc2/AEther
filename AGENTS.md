@@ -16,3 +16,8 @@
 - Preserve this invariant with the GPU regression in
   `AEther.Tests/ShaderSilenceTests.cs`. Allow a generous decay period before
   applying strict checks to every RGB channel across multiple final frames.
+
+# Performance measurements
+
+- Run rendering performance timing tests at a minimum resolution of 1280x720
+  (720p). Use 720p or higher for reported performance comparisons.

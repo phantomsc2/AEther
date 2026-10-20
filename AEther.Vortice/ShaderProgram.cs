@@ -26,14 +26,14 @@ internal sealed class ShaderProgram : IDisposable
             if (binding.BindCount != 1) throw new InvalidOperationException($"{file}: resource arrays are not supported ({binding.Name}).");
             var supported = binding.Type switch
             {
-                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants" or "FourierConstants" or "FourierPassConstants" or "RasterPassConstants" or "RasterLightConstants",
-                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler" or "AtmosphereSampler" or "RasterShadowSampler",
+                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants" or "FourierConstants" or "FourierPassConstants" or "RasterPassConstants" or "RasterLightConstants" or "RasterAirlightConstants",
+                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler" or "AtmosphereSampler" or "RasterShadowSampler" or "RasterLutSampler",
                 ShaderInputType.Texture => binding.Name is "PreviousImage" or "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1" or "GlobalHistogram"
                     or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField"
                     or "LightMoments" or "LightAirMoments" or "LightTransport" or "CameraMoments" or "CameraAirMoments" or "CameraTransport" or "CameraImportance" or "AtmosphereOpticalDepth" or "LightRadiance"
                     or "FourierDeep0" or "FourierDeep1" or "FourierDeep2" or "FourierDeep3"
-                    or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight",
+                    or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut",
                 _ => false,
             };
             if (entry == "PS" && binding.Name is "FluidConstants" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler" or "DistanceConstants" or "DistanceSeeds" or "LightConstants")
