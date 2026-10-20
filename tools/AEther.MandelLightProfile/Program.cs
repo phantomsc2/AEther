@@ -49,7 +49,8 @@ internal static class Program
         Console.WriteLine(adapter.Description.Description);
         if (scene=="MandelLightv4")
         {
-            MeasureV4(renderer,device,context,clock,output,args.Contains("--quick"),args.Contains("--small"));
+            if (args.Contains("--filter")) MeasureV4Filter(renderer,device,context,clock,output,args.Contains("--small"));
+            else MeasureV4(renderer,device,context,clock,output,args.Contains("--quick"),args.Contains("--small"));
             return;
         }
         if (scene=="MandelLightv3")
@@ -131,6 +132,60 @@ internal static class Program
         }, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    static void MeasureV4Filter(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool small)
+    {
+        int width=small ? 320 : 640,height=small ? 180 : 360;
+        renderer.Resize(width,height);
+        var captures=new Dictionary<string,byte[]>();
+        var timings=new Dictionary<string,Dictionary<string,double>>();
+        foreach (string mode in new[] {"unfiltered","filtered","reference"})
+        {
+            if (mode=="reference")
+            {
+                string path=Path.Combine(renderer.ShaderDirectory,"Scenes","MandelLightv4.hlsl");
+                string original=File.ReadAllText(path);
+                string reference=original.Replace("int samples=1+(int)round(127*Quality.Samples);","int samples=1+(int)round(511*Quality.Samples);");
+                if (reference==original) throw new InvalidOperationException("Cannot override v4 reference sample count.");
+                File.WriteAllText(path,reference);
+                if (!renderer.ReloadShaders()) throw new InvalidOperationException(renderer.ShaderError);
+            }
+            renderer.ActiveShader!.Parameters!.Reset();
+            Set(renderer,"Quality.Samples",mode=="reference" ? 1f : 15f/127);
+            Set(renderer,"Filter.Enabled",mode=="filtered");
+            Set(renderer,"Shape.Speed",0);
+            Set(renderer,"View.CameraSpeed",0);
+            foreach (string light in new[] {"Light","Light2","Light3","Light4"}) Set(renderer,light+".Speed",0);
+            clock.Reset();
+            for (int i=0;i<8;i++) { clock.Advance(); renderer.Render(false); renderer.ReadPixels(false); }
+            var frames=new List<Dictionary<string,double>>();
+            for (int i=0;i<11;i++)
+            {
+                using var timer=new Timestamps(device,context);
+                renderer.TransportPassMarker=timer.Marker;
+                clock.Advance(); timer.Begin(); renderer.Render(false); timer.End();
+                frames.Add(timer.Resolve()); renderer.TransportPassMarker=null;
+            }
+            timings[mode]=frames.SelectMany(f=>f.Keys).Distinct().ToDictionary(k=>k,k=>Median(frames.Select(f=>f.GetValueOrDefault(k))));
+            captures[mode]=renderer.ReadPixels(false);
+            Save(captures[mode],width,height,Path.Combine(output,mode+".png"));
+            Console.WriteLine(mode+": "+string.Join(", ",timings[mode].Select(p=>$"{p.Key}={p.Value:F3}ms")));
+        }
+        var errors=new Dictionary<string,double>();
+        foreach (string mode in new[] {"unfiltered","filtered"})
+        {
+            double squared=0;
+            for (int i=0;i<captures[mode].Length;i++)
+                if (i%4!=3) squared+=Math.Pow((captures[mode][i]-captures["reference"][i])/255.0,2);
+            errors[mode]=Math.Sqrt(squared/(3*width*height));
+            Console.WriteLine($"{mode}: display-RGB RMSE={errors[mode]:F6}");
+        }
+        File.WriteAllText(Path.Combine(output,"filter.json"),JsonSerializer.Serialize(new
+        {
+            adapter=renderer.AdapterDescription,width,height,samples=16,referenceSamples=512,
+            note="Frozen scene; median of 11 GPU frames after 8 warmups. Display-RGB RMSE includes spatial-filter bias and reference sampling error.",
+            milliseconds=timings,rmse=errors,
+        },new JsonSerializerOptions {WriteIndented=true}));
+    }
     static void MeasureV4(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool quick, bool small)
     {
         string[] cases=quick ? ["default"] : ["default","one-object","objects512","objects4096","one-light","static-maps",

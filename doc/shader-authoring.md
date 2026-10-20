@@ -173,7 +173,10 @@ in `ShaderSilenceTests` under the prototype exception in `AGENTS.md`.
 and camera color/depth. A fullscreen pass integrates single scattering through
 infinite homogeneous air, combining equiangular and optical-depth proposals with
 balance-heuristic MIS. Material edges and shadow comparisons are hard; sampling
-jitter is the only stochastic fuzziness. This audio-independent prototype remains
+jitter is the only stochastic fuzziness.
+An optional depth-aware 3x3 filter denoises HDR airlight before surface composition;
+surface shading and analytical transmission retain their original pixel values.
+This audio-independent prototype remains
 exempt from production silence checks. Restart after building its new host passes.
 See [MandelLightv4](mandellight-v4.md) for controls, sampling and measurements.
 

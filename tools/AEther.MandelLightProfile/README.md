@@ -14,6 +14,13 @@ zero RGB after active lighting. PNGs and timings.json use the v3 timing protocol
 below. --quick captures only default; --small uses 320x180. See the
 [v4 model and controls](../../doc/mandellight-v4.md).
 
+For a frozen filter comparison use `--v4 --filter`. It captures filtered and
+unfiltered 16-sample images plus a copied shader at 512 samples as a reference.
+It writes `filter.json` with per-pass GPU timings, adapter name and display-RGB
+RMSE against the reference. The copied shader's sample bound is modified in the
+artifact directory only. All scene, geometry and light motion is frozen for the
+comparison. `--small` uses 320x180 instead of 640x360.
+
 For the Fourier/deep-cubemap prototype, add `--v3`:
 
 ```powershell

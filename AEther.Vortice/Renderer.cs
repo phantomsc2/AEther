@@ -63,6 +63,7 @@ public sealed partial class Renderer : IDisposable
     public string ShaderDirectory => shaderDirectory;
     public bool HighPrecisionOutput => output.HighPrecision;
     public string OutputDescription => output.Description;
+    public string AdapterDescription { get; } = string.Empty;
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
     // Optional GPU timestamp markers used by the transport profiling tool.
     internal Action<string, bool>? TransportPassMarker { get; set; }
@@ -78,10 +79,13 @@ public sealed partial class Renderer : IDisposable
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
         try
         {
-            D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
-                [FeatureLevel.Level_11_0], out device, out context).CheckError();
-            Own(device); Own(context);
             using var factory = CreateDXGIFactory1<IDXGIFactory2>();
+            CreateGraphicsDevice(factory);
+            Own(device); Own(context);
+            using (var dxgiDevice = device.QueryInterface<IDXGIDevice>())
+            using (var adapter = dxgiDevice.GetAdapter())
+                AdapterDescription = adapter.Description.Description;
+            Debug.WriteLine($"AEther GPU: {AdapterDescription}");
             output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain));
             if (attachSwapChain == null)
                 factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
@@ -120,6 +124,33 @@ public sealed partial class Renderer : IDisposable
     }
 
     public void PostAudio(SampleEvent<double> input, int channelCount) => Audio.Post(input, channelCount);
+
+    void CreateGraphicsDevice(IDXGIFactory2 factory)
+    {
+        // DXGI supplies performance order: no assumption about adapter positions,
+        // vendor IDs, memory sizes or whether the display is wired to the GPU.
+        using var preferred = factory.QueryInterfaceOrNull<IDXGIFactory6>();
+        if (preferred != null)
+        {
+            for (uint i = 0; preferred.EnumAdapterByGpuPreference<IDXGIAdapter1>(i, GpuPreference.HighPerformance,
+                     out var candidate).Success; i++)
+            {
+                using var adapter = candidate;
+                if (adapter == null || (adapter.Description1.Flags & AdapterFlags.Software) != 0) continue;
+                var result = D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport,
+                    [FeatureLevel.Level_11_0], out ID3D11Device candidateDevice, out ID3D11DeviceContext candidateContext);
+                if (result.Success)
+                {
+                    device = candidateDevice; context = candidateContext;
+                    return;
+                }
+                candidateContext?.Dispose(); candidateDevice?.Dispose();
+            }
+        }
+        // Older Windows versions, or no usable adapter in the preferred list.
+        D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
+            [FeatureLevel.Level_11_0], out device, out context).CheckError();
+    }
 
     static string FindShaderDirectory()
     {
@@ -269,6 +300,7 @@ public sealed partial class Renderer : IDisposable
                 namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
             context.RSSetViewport(0, 0, width, height);
+            rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers, namedSamplers);
         }
         if (active.FourierShadow != null)
         {
@@ -344,9 +376,9 @@ public sealed partial class Renderer : IDisposable
         context.OMSetRenderTargets(output.SceneTarget);
         (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         if (active.FourierShadow != null) TransportPassMarker?.Invoke("Fourier camera", true);
-        if (active.Raster != null) TransportPassMarker?.Invoke("Raster airlight", true);
+        if (active.Raster != null) TransportPassMarker?.Invoke("Raster composite", true);
         context.Draw(3, 0);
-        if (active.Raster != null) TransportPassMarker?.Invoke("Raster airlight", false);
+        if (active.Raster != null) TransportPassMarker?.Invoke("Raster composite", false);
         if (active.FourierShadow != null) TransportPassMarker?.Invoke("Fourier camera", false);
         output.Draw(outputPixel, now);
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);

@@ -23,6 +23,9 @@ public class MandelLightRasterTests
         Set(renderer, "Air.Density", 0f);
         byte[] original = Capture();
         Assert.That(Rgb(original).Any(x => x > 20), Is.True);
+        Set(renderer, "Filter.Enabled", false);
+        Assert.That(Capture(), Is.EqualTo(original), "The filter must not change opaque surfaces in vacuum.");
+        Set(renderer, "Filter.Enabled", true);
         Set(renderer, "Shape.Seed", .75f);
         Assert.That(Capture(), Is.Not.EqualTo(original));
         Set(renderer, "Shape.Seed", .25f);
@@ -76,6 +79,7 @@ public class MandelLightRasterTests
         Set(renderer, "View.CameraDistance", .6f);
         Set(renderer, "Quality.Samples", 1f);
         Set(renderer, "Sampling.OpticalDepthWeight", opticalWeight);
+        Set(renderer, "Filter.Enabled", false); // Test the estimator independently of spatial reconstruction.
         renderer.Render(false);
         byte[] pixels = renderer.ReadPixels(false);
         Vector3 forward = Vector3.Normalize(new(-9, -6, 13.5f));
@@ -118,6 +122,45 @@ public class MandelLightRasterTests
         Assert.That(rmse, Is.LessThan(.01), "Proposal changes must preserve the single-scattering integral within sampling error.");
     }
 
+    [Test, Category("GPU")]
+    public void AirlightFilterRejectsDepthBoundariesAndAveragesOnlyItsThreeByThreeNeighborhood()
+    {
+        using var shaders = new ShaderTree(filterProbe: true);
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle, 16, 9, 32, 60,
+            shaderDirectory: shaders.Path, timeProvider: new FixedClock());
+        renderer.SelectScene("MandelLightv4");
+        Set(renderer, "Shape.Enabled", false);
+        Set(renderer, "View.Exposure", .5f);
+        Set(renderer, "Filter.Enabled", false);
+        renderer.Render(false); byte[] raw = renderer.ReadPixels(false);
+        Pixel(raw, 4, 4, new(4.1f, 4.2f, 4.3f));
+        Pixel(raw, 3, 4, new(.1f, .2f, .3f));
+        Set(renderer, "Filter.Enabled", true);
+        renderer.Render(false); byte[] filtered = renderer.ReadPixels(false);
+        Pixel(filtered, 4, 4, new(1.1f, 1.2f, 1.3f));
+        Pixel(filtered, 3, 4, new(.6f, .7f, .8f));
+        Pixel(filtered, 3, 3, new(.35f, .45f, .55f));
+        Pixel(filtered, 2, 4, new(.1f, .2f, .3f));
+        Pixel(filtered, 7, 4, new(.1f, .2f, .3f)); // Sky to foreground: no leakage.
+        Pixel(filtered, 8, 4, new(2f, .5f, .25f));
+        Pixel(filtered, 11, 4, new(2f, .5f, .25f)); // Distinct finite depths: no leakage.
+        Pixel(filtered, 12, 4, new(.25f, 1f, 2f));
+        Set(renderer, "Filter.Enabled", false);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(raw), "Filter toggles must not leave persistent state.");
+
+        static void Pixel(byte[] pixels, int x, int y, Vector3 expected)
+        {
+            for (int c=0;c<3;c++)
+            {
+                double value=1-Math.Exp(-expected[c]);
+                double encoded=value<=.0031308 ? 12.92*value : 1.055*Math.Pow(value,1/2.4)-.055;
+                Assert.That(Math.Abs(pixels[4*(y*16+x)+c]-255*encoded), Is.LessThan(1.5), $"Pixel ({x},{y}), channel {c}.");
+            }
+        }
+    }
+
     static System.Collections.Generic.IEnumerable<byte> Rgb(byte[] pixels) => pixels.Where((_, i) => i % 4 != 3);
     static ShaderParameter Find(Renderer renderer, string path)
     {
@@ -133,7 +176,7 @@ public class MandelLightRasterTests
     {
         readonly string root = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()).TrimEnd(System.IO.Path.DirectorySeparatorChar);
         internal string Path { get; }
-        internal ShaderTree()
+        internal ShaderTree(bool filterProbe = false)
         {
             string source = null!;
             for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null; dir = dir.Parent)
@@ -147,7 +190,19 @@ public class MandelLightRasterTests
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
             foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl" })
                 File.Copy(System.IO.Path.Combine(source, "Common", file), System.IO.Path.Combine(Path, "Common", file));
-            File.Copy(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"), System.IO.Path.Combine(Path, "Scenes", "MandelLightv4.hlsl"));
+            string scene=File.ReadAllText(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"));
+            if (filterProbe)
+                scene=scene.Replace("float4 RasterAirlightPS(", "float4 OriginalRasterAirlightPS(") + """
+
+                    float4 RasterAirlightPS(PSin input) : SV_Target
+                    {
+                        int2 p=(int2)input.Position.xy;
+                        float3 color=p.x<8 ? float3(.1,.2,.3) : p.x<12 ? float3(2,.5,.25) : float3(.25,1,2);
+                        if (all(p==int2(4,4))) color+=4;
+                        return float4(color,p.x<8 ? 0 : p.x<12 ? 20 : 40);
+                    }
+                    """;
+            File.WriteAllText(System.IO.Path.Combine(Path, "Scenes", "MandelLightv4.hlsl"),scene);
         }
         public void Dispose()
         {

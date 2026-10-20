@@ -69,6 +69,13 @@ dithering. The settings timing panel reports the active output format. This impr
 precision while retaining the scenes' existing tone mapping and color range.
 See [renderer notes](doc/vortice-renderer.md) for the pipeline and verification commands.
 
+The renderer requests DXGI's high-performance GPU order and selects the first
+hardware adapter that supports D3D feature level 11.0. Selection uses Windows'
+performance ranking, with no fixed adapter index, vendor ID or model name. Older
+systems fall back to the default hardware adapter. The settings timing panel
+shows the GPU actually used by the D3D device. Restart after rebuilding to change
+the adapter of an existing session.
+
 ## Audio capture
 
 NAudio is pinned to the stable 3.1.0 release. `Loopback` uses

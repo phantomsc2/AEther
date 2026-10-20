@@ -33,7 +33,7 @@ internal sealed class ShaderProgram : IDisposable
                     or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField"
                     or "LightMoments" or "LightAirMoments" or "LightTransport" or "CameraMoments" or "CameraAirMoments" or "CameraTransport" or "CameraImportance" or "AtmosphereOpticalDepth" or "LightRadiance"
                     or "FourierDeep0" or "FourierDeep1" or "FourierDeep2" or "FourierDeep3"
-                    or "RasterShadows" or "RasterSurface" or "RasterDepth",
+                    or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight",
                 _ => false,
             };
             if (entry == "PS" && binding.Name is "FluidConstants" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler" or "DistanceConstants" or "DistanceSeeds" or "LightConstants")

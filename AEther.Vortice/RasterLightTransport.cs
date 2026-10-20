@@ -13,14 +13,21 @@ internal sealed class RasterLightTransport : IDisposable
     internal sealed class Programs : IDisposable
     {
         internal readonly ShaderProgram Surface;
+        internal readonly ShaderProgram Airlight;
         internal readonly ID3D11VertexShader Vertex;
         internal Programs(ID3D11Device device, string source, string file)
         {
             Surface = new(device, source, "RasterSurfacePS", file);
-            try { Vertex = device.CreateVertexShader(Compiler.Compile(source, "RasterGeometryVS", file, "vs_5_0").Span); }
-            catch { Surface.Dispose(); throw; }
+            ShaderProgram? nextAirlight = null;
+            try
+            {
+                nextAirlight = new(device, source, "RasterAirlightPS", file);
+                Vertex = device.CreateVertexShader(Compiler.Compile(source, "RasterGeometryVS", file, "vs_5_0").Span);
+                Airlight = nextAirlight;
+            }
+            catch { nextAirlight?.Dispose(); Surface.Dispose(); throw; }
         }
-        public void Dispose() { Vertex.Dispose(); Surface.Dispose(); }
+        public void Dispose() { Vertex.Dispose(); Airlight.Dispose(); Surface.Dispose(); }
     }
 
     readonly ID3D11Device device;
@@ -30,9 +37,9 @@ internal sealed class RasterLightTransport : IDisposable
     readonly Dictionary<string, ID3D11ShaderResourceView> textures = [];
     readonly ID3D11DepthStencilView?[] shadowTargets = new ID3D11DepthStencilView?[24];
     readonly float[]?[] keys = new float[]?[4];
-    ID3D11Texture2D? shadows, color, depth;
-    ID3D11ShaderResourceView? shadowView, colorView, depthView;
-    ID3D11RenderTargetView? colorTarget;
+    ID3D11Texture2D? shadows, color, depth, airlight;
+    ID3D11ShaderResourceView? shadowView, colorView, depthView, airlightView;
+    ID3D11RenderTargetView? colorTarget, airlightTarget;
     ID3D11DepthStencilView? depthTarget;
     Programs? previousProgram;
     int size, width, height;
@@ -96,6 +103,8 @@ internal sealed class RasterLightTransport : IDisposable
                 BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
             });
             colorTarget = device.CreateRenderTargetView(color); colorView = device.CreateShaderResourceView(color);
+            airlight = device.CreateTexture2D(color.Description);
+            airlightTarget = device.CreateRenderTargetView(airlight); airlightView = device.CreateShaderResourceView(airlight);
             depth = CreateDepth(w, h, 1);
             depthTarget = device.CreateDepthStencilView(depth, new DepthStencilViewDescription
                 { Format = Format.D32_Float, ViewDimension = DepthStencilViewDimension.Texture2D });
@@ -168,6 +177,20 @@ internal sealed class RasterLightTransport : IDisposable
         sceneTextures["RasterShadows"] = shadowView!;
         sceneTextures["RasterSurface"] = colorView!;
         sceneTextures["RasterDepth"] = depthView!;
+        sceneTextures["RasterAirlight"] = airlightView!;
+        textures["RasterDepth"] = depthView!;
+    }
+    internal void IntegrateAirlight(Programs program, ShaderParameters p,
+        IReadOnlyDictionary<string, ID3D11Buffer> buffers, IReadOnlyDictionary<string, ID3D11SamplerState> samplers)
+    {
+        if (Flag(p, "View", "ShowDepth") || Flag(p, "View", "ShowShadows")) return;
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.OMSetRenderTargets(airlightTarget!);
+        program.Airlight.Bind(context, p, buffers, textures, samplers);
+        PassMarker?.Invoke("Raster airlight", true);
+        context.Draw(3, 0);
+        PassMarker?.Invoke("Raster airlight", false);
+        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
     }
     [StructLayout(LayoutKind.Sequential)]
     readonly record struct Selection(uint Light, uint Face, uint Shadow, uint Padding = 0);
@@ -181,6 +204,7 @@ internal sealed class RasterLightTransport : IDisposable
     {
         colorTarget?.Dispose(); colorTarget = null; colorView?.Dispose(); colorView = null; color?.Dispose(); color = null;
         depthTarget?.Dispose(); depthTarget = null; depthView?.Dispose(); depthView = null; depth?.Dispose(); depth = null;
+        airlightTarget?.Dispose(); airlightTarget = null; airlightView?.Dispose(); airlightView = null; airlight?.Dispose(); airlight = null;
         width = height = 0;
     }
     public void Dispose() { ReleaseCamera(); ReleaseShadows(); selection.Dispose(); depthState.Dispose(); }

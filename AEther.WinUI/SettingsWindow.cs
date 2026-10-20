@@ -228,6 +228,7 @@ public sealed class SettingsWindow : ToolWindow
             + $"Draw CPU: {Stat("render.draw_cpu_ms")}\n"
             + $"Present wait: {Stat("render.present_wait_ms")} | {fps}\n"
             + $"Output: {session.Renderer.OutputDescription}\n"
+            + $"GPU: {session.Renderer.AdapterDescription}\n"
             + $"History delay: {audio.PresentationDelay * 1000:F0} ms | Drops: {analyzer.DroppedInputCount} input, {audio.DroppedRows} visual\n"
             + "Capture to draw excludes device buffering and display scanout.";
     }

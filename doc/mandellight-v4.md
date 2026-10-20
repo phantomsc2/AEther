@@ -19,8 +19,9 @@ and a sampleable scalar depth target. Vertex normals provide Lambert diffuse
 lighting directly; a normal/material G-buffer is unnecessary for this POC.
 
 Surface lighting includes light-to-surface air extinction and hard shadow queries.
-A fullscreen pass then samples air scattering up to the visible surface, or all
-the way to infinity for background rays, and composites:
+A fullscreen pass samples air scattering up to the visible surface, or all the
+way to infinity for background rays, into an HDR texture. A second pass optionally
+filters that airlight and composites:
 
 ```text
 pixel_radiance = airlight + exp(-sigma_t * surface_distance) * surface_radiance
@@ -86,6 +87,41 @@ texel's center ray to reduce slope acne. ShadowBias is an additional small depth
 tolerance. Sampling grain, angular shadow aliasing and shadow bias error remain.
 Hard material edges are preserved; all physical haze is surrounding airlight.
 
+## Spatial airlight filter
+
+Filter.Enabled defaults to true. It applies one depth-aware 3x3 weighted average
+to linear HDR airlight before surface composition and tone mapping. Surface color
+and analytical camera transmission are evaluated at the original pixel. The
+existing hash jitter and MIS estimator are unchanged; there is no image history.
+
+The spatial weights are the outer product of `[1,2,1]`. Sky/geometry neighbors
+never mix. Finite depths are weighted by:
+
+```text
+d = abs(neighbor_depth - center_depth) / max(0.05, 0.02*center_depth)
+depth_weight = exp2(-2*d*d)
+```
+
+Weights are renormalized over the neighborhood. Linear camera depth is packed
+into the airlight texture's alpha channel, with zero for sky, so the filter needs
+nine HDR texture reads rather than additional depth texture reads. There is no
+median or color threshold. A one-pixel radius can still soften thin godrays in
+free air, where camera depth supplies no edge information. Disabling Filter.Enabled
+provides an immediate comparison with the unfiltered estimator.
+
+On RTX 4070 Laptop GPU, a frozen 640x360 scene with 16 samples measured 0.949 ms
+unfiltered and 0.964 ms filtered. The composite pass itself increased from about
+0.014 to 0.020 ms. Against an unfiltered 512-sample reference, display-RGB RMSE
+fell from 0.022884 to 0.008818 (2.6x lower). This includes filter bias, reference
+sampling error and 8-bit export quantization; it is one scene comparison rather
+than a universal quality or timing guarantee.
+
+[Unfiltered](../artifacts/mandellight-v4/filter/unfiltered.png),
+[filtered](../artifacts/mandellight-v4/filter/filtered.png),
+[512-sample reference](../artifacts/mandellight-v4/filter/reference.png), and
+[measurements](../artifacts/mandellight-v4/filter/filter.json) are local ignored
+artifacts.
+
 ## Controls
 
 | Control | Meaning |
@@ -104,6 +140,7 @@ Hard material edges are preserved; all physical haze is surrounding airlight.
 | Quality.ShadowBias | Depth tolerance 0.0005..0.0205 world units along cube-face depth |
 | Sampling.OpticalDepthWeight | MIS mixture: 0 angular, 1 optical, default 0.5 |
 | Sampling.Jitter | Stratified sampling noise; disable for midpoint inspection |
+| Filter.Enabled | Depth-aware 3x3 airlight filter; enabled by default |
 | View.ShowDepth | Inspect camera distance |
 | View.ShowShadows / ShadowLight | Inspect six shadow faces, including disabled lights |
 
@@ -116,8 +153,8 @@ scattering. Set both to zero/off for black regardless of enabled lights.
 Moving geometry or lights rebuilds the affected shadow cubemaps. Stationary light
 maps survive camera motion, air/material coefficient changes and exposure changes.
 Camera surfaces render each frame. The light caches contain 6 MiB of depth at
-256 pixels per face for four lights, or 24 MiB at 512. Camera targets add 12 bytes
-per pixel. There is no per-object loop in the airlight shader. Raster geometry
+256 pixels per face for four lights, or 24 MiB at 512. Camera color, depth and
+airlight targets add 20 bytes per pixel. There is no per-object loop in the airlight shader. Raster geometry
 work still scales with instances, shadow views, coverage and overdraw. This POC
 submits all instances to every active cube face and relies on GPU clipping/depth.
 
@@ -140,17 +177,28 @@ First-case GPU clocks varied: a separate default capture took 3.35 ms total.
 Different object counts also change geometry and camera integration intervals, so
 these are exploratory figures, not identical-image scaling measurements.
 
+After changing renderer startup to request DXGI's high-performance adapter, the
+same default capture selected **NVIDIA GeForce RTX 4070 Laptop GPU** and took
+1.80 ms total: about 0.10 ms for all four cubemaps, 0.03 ms for surfaces and
+1.62 ms for airlight. Its local capture/timings are under
+`artifacts/mandellight-v4/high-performance`. The settings timing panel now reports
+the selected GPU; the Arc measurements above describe the earlier default-adapter
+path.
+
 Run from the repository root:
 
 ```powershell
 dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/current --v4
+dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/filter --v4 --filter
 dotnet test AEther.Tests/AEther.Tests.csproj --filter FullyQualifiedName~MandelLightRasterTests
 ```
 
 Use --quick for default only and --small for 320x180 captures. Focused GPU tests
 cover cache invalidation, resize, reload, lights-off behavior and all three
 optical/angular mixture settings against independent numerical quadrature through
-an infinite homogeneous medium. The unoccluded reference does not measure shadow
+an infinite homogeneous medium. A synthetic HDR impulse/depth-boundary regression
+checks the 3x3 weights, foreground/sky rejection, finite-depth rejection and filter
+toggle behavior. The unoccluded reference does not measure shadow
 map accuracy or shadowed sampling convergence.
 
 Local ignored artifacts: [default](../artifacts/mandellight-v4/final/default.png),
