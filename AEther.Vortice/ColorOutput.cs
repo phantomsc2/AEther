@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using SharpGen.Runtime;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -23,6 +24,7 @@ internal sealed partial class ColorOutput : IDisposable
     float whiteScale = 1;
     int width, height;
     public bool HighPrecision { get; }
+    public WaitHandle FrameReady { get; } = null!;
     public ID3D11RenderTargetView? SceneTarget => sceneTarget;
     public string Description => HighPrecision ? "FP16 scRGB" : "8-bit SDR (dithered)";
 
@@ -40,6 +42,7 @@ internal sealed partial class ColorOutput : IDisposable
                 SampleDescription = new(1, 0),
                 SwapEffect = attachSwapChain == null ? SwapEffect.FlipDiscard : SwapEffect.FlipSequential,
                 Scaling = Scaling.Stretch, AlphaMode = AlphaMode.Ignore,
+                Flags = SwapChainFlags.FrameLatencyWaitableObject,
             };
             return attachSwapChain == null
                 ? factory.CreateSwapChainForHwnd(device, window, description)
@@ -71,11 +74,20 @@ internal sealed partial class ColorOutput : IDisposable
             }
             candidate ??= Create(Format.R8G8B8A8_UNorm);
             swapChain = candidate;
+            using (var chain = swapChain.QueryInterface<IDXGISwapChain2>())
+            {
+                chain.MaximumFrameLatency = 1;
+                var handle = chain.FrameLatencyWaitableObject;
+                if (handle == IntPtr.Zero)
+                    throw new InvalidOperationException("The swap chain did not provide a frame latency handle.");
+                FrameReady = new FrameWaitHandle(handle);
+            }
             constants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
             attachSwapChain?.Invoke(swapChain);
         }
         catch
         {
+            FrameReady?.Dispose();
             candidate?.Dispose();
             ReleaseTargets(); constants?.Dispose();
             throw;
@@ -96,7 +108,7 @@ internal sealed partial class ColorOutput : IDisposable
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.PSSetShaderResource(9, null!);
         ReleaseTargets();
-        swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.Unknown, SwapChainFlags.None).CheckError();
+        swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.Unknown, SwapChainFlags.FrameLatencyWaitableObject).CheckError();
         using var back = swapChain.GetBuffer<ID3D11Texture2D>(0);
         backTarget = device.CreateRenderTargetView(back);
         // Never quantize the scene to 8 bits before decoding for scRGB.
@@ -160,7 +172,7 @@ internal sealed partial class ColorOutput : IDisposable
     [LibraryImport("user32.dll")]
     private static partial IntPtr MonitorFromWindow(IntPtr window, uint flags);
 
-    public void Present() => swapChain.Present(1, PresentFlags.None).CheckError();
+    public void Present(uint syncInterval) => swapChain.Present(syncInterval, PresentFlags.None).CheckError();
 
     /// <summary>Display-encoded RGBA8 for PNGs/tests, before monitor-specific white scaling.</summary>
     public byte[] ReadPixels(bool dither)
@@ -224,6 +236,11 @@ internal sealed partial class ColorOutput : IDisposable
     public void Dispose()
     {
         try { attachSwapChain?.Invoke(null); }
-        finally { ReleaseTargets(); constants.Dispose(); swapChain.Dispose(); }
+        finally { ReleaseTargets(); constants.Dispose(); FrameReady.Dispose(); swapChain.Dispose(); }
+    }
+
+    sealed class FrameWaitHandle : WaitHandle
+    {
+        public FrameWaitHandle(IntPtr handle) => SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle: true);
     }
 }

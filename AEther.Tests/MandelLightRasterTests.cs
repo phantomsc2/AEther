@@ -77,8 +77,8 @@ public class MandelLightRasterTests
         Assert.That(packed[0].W,Is.Zero,"Disabling tonal lights must leave strobes enabled.");
     }
 
-    [TestCase(.4f, 1f), TestCase(.65f, .25f), Category("GPU")]
-    public void TonalLookupAgreesWithIndependentInfiniteMediumQuadrature(float density, float radius)
+    [TestCase(.4f), TestCase(.65f), Category("GPU")]
+    public void TonalLookupAgreesWithIndependentInfiniteMediumQuadrature(float density)
     {
         const int width = 64, height = 36;
         using var shaders = new ShaderTree(); using var window = new HiddenWindow();
@@ -86,7 +86,7 @@ public class MandelLightRasterTests
             shaderDirectory: shaders.Path, timeProvider: new FixedClock());
         renderer.SelectScene("MandelLightv4");
         Set(renderer, "View.CameraSpeed", 0); Set(renderer, "View.CameraDistance", .6f);
-        Set(renderer, "Lights.Count", 0); Set(renderer, "Lights.Gain", .5f); Set(renderer, "Lights.Radius", radius);
+        Set(renderer, "Lights.Count", 0); Set(renderer, "Lights.Gain", .5f);
         Set(renderer,"TonalLights.Gain",.5f);
         Set(renderer, "Shape.Enabled", false); Set(renderer, "Air.Density", density);
         Set(renderer, "Quality.HalfResolutionAirlight", false); Set(renderer, "Filter.Enabled", false);
@@ -98,7 +98,7 @@ public class MandelLightRasterTests
         Vector3 up = Vector3.Cross(right, forward), origin = -24 * forward;
         Vector3 light = 5.7f * Vector3.Cross(Vector3.UnitY, right);
         double red = .5 + .5 * Math.Cos(2 * Math.PI * (.85 + .04));
-        double sigma = .3 * density * density * .5, h = .01 + .49 * radius * radius;
+        double sigma = .3 * density * density * .5;
         double squared = 0; int count = 0;
         for (int y = 1; y < height; y += 5)
         for (int x = 1; x < width; x += 7)
@@ -113,7 +113,7 @@ public class MandelLightRasterTests
                 double r2 = dx*dx+dy*dy+dz*dz, r = Math.Sqrt(r2);
                 double mu = (dx*direction.X+dy*direction.Y+dz*direction.Z)/r;
                 double value = sigma * (.75*3000*.0225*red) * 3*(1+mu*mu)/(16*Math.PI)
-                    * Math.Exp(-sigma*(t+r))/(r2+h*h) * 32/((1-u)*(1-u));
+                    * Math.Exp(-sigma*(t+r))/r2 * 32/((1-u)*(1-u));
                 sum += (k==0 ? 1 : k%2==0 ? 2 : 4)*value;
             }
             double mapped = 1-Math.Exp(-sum/(3*steps)*Math.Pow(2,-.6));
@@ -121,7 +121,7 @@ public class MandelLightRasterTests
             squared += Math.Pow(pixels[4*(y*width+x)]/255.0-expected,2); count++;
         }
         double rmse = Math.Sqrt(squared/count);
-        TestContext.Progress.WriteLine($"Tonal LUT: density={density}, radius={radius}, display-RGB RMSE={rmse:F6}");
+        TestContext.Progress.WriteLine($"Tonal LUT: density={density}, display-RGB RMSE={rmse:F6}");
         Assert.That(rmse, Is.LessThan(.005));
     }
 
@@ -131,7 +131,7 @@ public class MandelLightRasterTests
         using var shaders = new ShaderTree(); using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 81, 47, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new FixedClock());
-        renderer.SelectScene("MandelLightv4"); Set(renderer, "Air.Density", .4f); Set(renderer, "Lights.Radius", 1);
+        renderer.SelectScene("MandelLightv4"); Set(renderer, "Air.Density", .4f);
         WaitForTonalLookup(renderer); byte[] original = renderer.ReadPixels(false);
         Set(renderer, "Air.Density", .7f); FeedTonal(renderer); renderer.Render(false);
         Assert.That(renderer.UnshadowedAirlightReady, Is.False, "A previous medium's table must not be sampled.");
@@ -139,7 +139,7 @@ public class MandelLightRasterTests
         Set(renderer, "Air.Density", .4f); FeedTonal(renderer); renderer.Render(false);
         Assert.That(renderer.UnshadowedAirlightReady, Is.True, "Returning to a cached medium must reuse its table.");
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
-        Set(renderer, "Lights.Radius", .25f); FeedTonal(renderer); renderer.Render(false);
+        Set(renderer, "Air.Absorption.x", .15f); FeedTonal(renderer); renderer.Render(false);
         Assert.That(renderer.UnshadowedAirlightReady, Is.False);
         WaitForTonalLookup(renderer); byte[] edited = renderer.ReadPixels(false);
         renderer.Resize(97, 55); FeedTonal(renderer); renderer.Render(false);
@@ -244,7 +244,6 @@ public class MandelLightRasterTests
             Set(renderer, "Air.Absorption." + axis, 0f);
         }
         Set(renderer, "Air.Density", .4f);
-        Set(renderer, "Lights.Radius", 1f);
         Set(renderer, "View.CameraDistance", .6f);
         Set(renderer, "Quality.Samples", 1f);
         Set(renderer, "Sampling.OpticalDepthWeight", opticalWeight);
@@ -289,7 +288,7 @@ public class MandelLightRasterTests
                     double mu = (dx * direction.X + dy * direction.Y + dz * direction.Z) / r;
                     const double sigma = .3 * .4 * .4 * .5;
                     value += sigma * (3000 * .0225 * source.Red) * 3 * (1 + mu * mu) / (16 * Math.PI)
-                        * Math.Exp(-sigma * (t + r)) / (r2 + .25) * (finite ? 24 : 32/((1-u)*(1-u)));
+                        * Math.Exp(-sigma * (t + r)) / r2 * (finite ? 24 : 32/((1-u)*(1-u)));
                 }
                 sum += (k == 0 ? 1 : k % 2 == 0 ? 2 : 4) * value;
             }
@@ -404,6 +403,9 @@ public class MandelLightRasterTests
             foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl" })
                 File.Copy(System.IO.Path.Combine(source, "Common", file), System.IO.Path.Combine(Path, "Common", file));
             string scene=File.ReadAllText(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"));
+            // These fixtures isolate the point/spot paths; the live scene's ring
+            // remains enabled and participates in the scene-wide silence check.
+            scene=scene.Replace("FilamentRingSettings RingLight = { .5 };","FilamentRingSettings RingLight = { 0 };");
             if (finiteAirlight)
                 scene=scene.Replace("float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;", "hit=true; float end=24;");
             if (filterProbe)

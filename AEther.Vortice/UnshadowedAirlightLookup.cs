@@ -11,6 +11,8 @@ internal sealed class UnshadowedAirlightLookup : IDisposable
 {
     internal const int Width = 513, Height = 1025;
     internal const float MaximumDistance = 128;
+    // Coordinate sampling density only: the kernel remains exactly 1/r^2.
+    internal const float DistanceScale = .0001f;
     readonly ID3D11DeviceContext context;
     readonly ID3D11Texture2D texture;
     readonly List<Table> cache = [];
@@ -20,7 +22,7 @@ internal sealed class UnshadowedAirlightLookup : IDisposable
     internal ID3D11SamplerState Sampler { get; }
     internal Vector4 Info { get; private set; }
     internal bool Ready => Info.X != 0;
-    readonly record struct Key(float Radius, Vector3 Extinction);
+    readonly record struct Key(Vector3 Extinction);
     sealed record Table(Key Key, float[] Data);
 
     internal UnshadowedAirlightLookup(ID3D11Device device, ID3D11DeviceContext context)
@@ -49,10 +51,10 @@ internal sealed class UnshadowedAirlightLookup : IDisposable
         catch { texture.Dispose(); throw; }
     }
 
-    internal void Prepare(float radius, Vector3 extinction, bool needed)
+    internal void Prepare(Vector3 extinction, bool needed)
     {
-        var key = new Key(radius, extinction);
-        Info = new(0, MaximumDistance, MathF.Asinh(MaximumDistance / radius), 0);
+        var key = new Key(extinction);
+        Info = new(0, MaximumDistance, MathF.Log(1+MaximumDistance/DistanceScale), DistanceScale);
         if (pending is { IsCompleted: true })
         {
             // Observe failures as well as successes; no GPU objects are touched
@@ -75,16 +77,16 @@ internal sealed class UnshadowedAirlightLookup : IDisposable
                 finally { pin.Free(); }
                 uploaded = key;
             }
-            else if (pending == null) pending = Task.Run(() => new Table(key, Build(radius, extinction)));
+            else if (pending == null) pending = Task.Run(() => new Table(key, Build(extinction)));
         }
         // Never sample a table for different coefficients. The shader uses
         // deterministic angular quadrature until this particular key is ready.
         if (uploaded == key) Info = Info with { X = 1 };
     }
 
-    internal static float[] Build(float radius, Vector3 extinction)
+    internal static float[] Build(Vector3 extinction)
     {
-        double h = radius, warp = Math.Asinh(MaximumDistance / h);
+        double warp = Math.Log(1+MaximumDistance/(double)DistanceScale);
         double[] e = [extinction.X, extinction.Y, extinction.Z];
         var data = new float[Width * Height * 4];
         double[] nodes = [-.8611363115940526, -.3399810435848563, .3399810435848563, .8611363115940526];
@@ -96,13 +98,14 @@ internal sealed class UnshadowedAirlightLookup : IDisposable
         }
         static double U(double b, double height, double angle)
         {
+            if (b==0) return 0; // Analytic b*tail limit; no emitter core.
             double x = height * Math.Tan(angle), r = Math.Sqrt(x * x + b * b);
             return x < 0 ? b * b / (r - x) : x + r;
         }
         Parallel.For(0, Width, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Environment.ProcessorCount) }, column =>
         {
-            double b = h * Math.Sinh(warp * column / (Width - 1));
-            double height = Math.Sqrt(b * b + h * h);
+            double b = DistanceScale * (Math.Exp(warp * column / (Width - 1))-1);
+            double height = b;
             double[] tail = new double[3];
             double[] sum = new double[3];
             for (int row = Height - 2; row >= 0; row--)
@@ -113,11 +116,12 @@ internal sealed class UnshadowedAirlightLookup : IDisposable
                 Array.Clear(sum);
                 for (int j = 0; j < 4; j++)
                 {
-                    double at = angle + .5 * step * (1 + nodes[j]), x = height * Math.Tan(at), r2 = x * x + b * b;
-                    double phase = 3 / (16 * Math.PI) * (r2 == 0 ? 2 : 2 - b * b / r2);
+                    double at = angle + .5 * step * (1 + nodes[j]);
+                    double sine=Math.Sin(at);
+                    double phase = 3 / (16 * Math.PI) * (1+sine*sine);
                     double length = Math.Max(0, U(b, height, at) - start);
                     for (int channel = 0; channel < 3; channel++)
-                        sum[channel] += weights[j] * phase * Math.Exp(-e[channel] * length) / height;
+                        sum[channel] += weights[j] * phase * Math.Exp(-e[channel] * length);
                 }
                 for (int channel = 0; channel < 3; channel++)
                 {

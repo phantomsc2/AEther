@@ -1,5 +1,21 @@
 # MandelLight GPU profile
 
+For a one-source comparison of point, cone and filament ring lights at 1280x720:
+
+```powershell
+dotnet run -c Release --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/light-types/full-720p --light-types
+dotnet run -c Release --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/light-types/half-airlight-720p --light-types --half-airlight
+```
+
+This profiles the current production shader with 128 frozen cubes, one active
+source, no-light baseline, refreshed and cached point/cone maps, and no spatial
+filter. It excludes a constant compute primer, LUT preparation and readback.
+Filament ring shadows are unsupported. Each result contains 39 GPU timestamp frames across
+three alternating-order rounds, source snapshots, p10/p90 totals and PNG captures.
+The [previous measured comparison](../../doc/mandellight-light-costs.md) used the
+infinite line before its replacement by the ring; those line timings do not
+measure the current ring quadrature. New runs use the ring and label it explicitly.
+
 For the production combined strobe/tonal path at 1280x720:
 
 ```powershell

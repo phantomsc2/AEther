@@ -97,6 +97,7 @@ internal static partial class Program
                     renderer.ActiveShader!.Parameters!.Reset();
                     Set(renderer,"Lights.Count",0); Set(renderer,"View.CameraSpeed",0);
                     Set(renderer,"TonalLights.Enabled",false);
+                    Set(renderer,"RingLight.Intensity",0);
                     Set(renderer,"Lights.Directional",false); // Preserve the study's isotropic point-source reference.
                     Set(renderer,"Lights.Shadows",true); // The study overrides visibility, not transport routing.
                     Set(renderer,"Shape.Speed",0); Set(renderer,"Filter.Enabled",false);
@@ -380,11 +381,15 @@ internal static partial class Program
                 .Replace("float4 IntegrateAirlight(int2 pixel)","float4 SampledAirlight(int2 pixel)")
                 .Replace("float3 radiance=UnshadowedAirlight(origin,direction,hit,end,scatter,extinction);","float3 radiance=0;")
                 .Replace("int samples=1+(int)round(127*Quality.Samples);","int samples=StudySamples;")
+                // Retain this historical soft-kernel experiment in its private
+                // shader copy. The production renderer has no source radius.
+                .Replace("source.Height=max(sqrt(source.Perpendicular2),NumericDistance);","source.Height=sqrt(source.Perpendicular2+StudyRadius*StudyRadius);")
+                .Replace("falloff=rcp(max(r2,NumericDistance2));","falloff=rcp(r2+StudyRadius*StudyRadius);")
                 .Replace("float3 delta=p-LightPosition(light);","if (StudyShadows==0) return 1;\n    float3 delta=p-LightPosition(light);");
             string code="""
                 cbuffer StudyConstants : register(b4) {
                     int StudyMode; int StudySamples; int StudyShadows; float StudyBmax;
-                    float StudyBwarp; float StudyScaled; float2 StudyReserved;
+                    float StudyBwarp; float StudyScaled; float StudyRadius; float StudyReserved;
                 };
                 Texture2D<float4> StudyLut : register(t4);
                 SamplerState StudySampler : register(s14);
@@ -402,7 +407,7 @@ internal static partial class Program
         }
         internal void Configure(int mode,int samples,bool shadows,TailTable table,ID3D11ShaderResourceView view)
         {
-            lut=view;context.UpdateSubresource(new StudyConstants(mode,samples,shadows ? 1 : 0,(float)table.Bmax,(float)table.Bwarp,new(table.Scaled ? 1 : 0,0,0)),constants);
+            lut=view;context.UpdateSubresource(new StudyConstants(mode,samples,shadows ? 1 : 0,(float)table.Bmax,(float)table.Bwarp,new(table.Scaled ? 1 : 0,(float)table.H,0)),constants);
         }
         internal void Override(string name,bool start)
         {
@@ -438,11 +443,14 @@ internal static partial class Program
         var map=context.Map(staging,0,MapMode.Read,global::Vortice.Direct3D11.MapFlags.None);
         try
         {
-            byte[] row=new byte[width*8];var result=new float[width*height*3];
+            bool half=desc.Format==Format.R16G16B16A16_Float;
+            int stride=half ? 8 : 16;
+            byte[] row=new byte[width*stride];var result=new float[width*height*3];
             for(int y=0;y<height;y++)
             {
                 Marshal.Copy(map.DataPointer+y*(int)map.RowPitch,row,0,row.Length);
-                for(int x=0;x<width;x++)for(int c=0;c<3;c++)result[3*(y*width+x)+c]=(float)BitConverter.ToHalf(row,8*x+2*c);
+                for(int x=0;x<width;x++)for(int c=0;c<3;c++)result[3*(y*width+x)+c]=half
+                    ? (float)BitConverter.ToHalf(row,stride*x+2*c) : BitConverter.ToSingle(row,stride*x+4*c);
             }
             return result;
         }

@@ -14,6 +14,7 @@ internal static partial class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Contains("--light-types")) { RunLightTypeProfile(args); return; }
         if (args.Contains("--airlight-lut")) { RunAirlightLutStudy(args); return; }
         if (args.Contains("--tonal-ring") || args.Contains("--spotlight-sampling")) { RunTonalRingProfile(args); return; }
         string source = Path.GetFullPath(args.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");

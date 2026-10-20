@@ -16,6 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Exercise the host's scheduler without loading the WinUI application. -->
+    <Compile Include="../AEther.WinUI/RenderWorker.cs" Link="RenderWorker.cs" />
     <ProjectReference Include="..\AEther.NAudio\AEther.NAudio.csproj" />
     <ProjectReference Include="..\AEther\AEther.csproj" />
     <ProjectReference Include="../AEther.Vortice/AEther.Vortice.csproj" />

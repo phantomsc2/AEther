@@ -1,11 +1,12 @@
 #include "../Common/Inputs.hlsl"
 
 // Audio-reactive prototype. Independent shadow toggles for transient and tonal
-// rings. Homogeneous single scattering, hardware PCF, cached LUT, no history.
+// rings plus a live-S filament ring. Homogeneous single scattering, no history.
 struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
-struct RingLightSettings { bool Enabled; float Count; float Gain; float Radius; float RingRadius; bool Directional; float HalfAngle; bool Shadows; };
+struct RingLightSettings { bool Enabled; float Count; float Gain; float RingRadius; bool Directional; float HalfAngle; bool Shadows; };
 struct TonalLightSettings { bool Enabled; float Gain; bool Directional; float HalfAngle; bool Shadows; };
+struct FilamentRingSettings { float Intensity; };
 struct QualitySettings { float Samples; float ShadowResolution; float ShadowBias; bool HardwarePCF; bool HalfResolutionAirlight; };
 struct SamplingSettings { float OpticalDepthWeight; bool Jitter; bool RandomLight; };
 struct FilterSettings { bool Enabled; };
@@ -15,8 +16,9 @@ cbuffer Parameters : register(b1)
 {
     ShapeSettings Shape = { true, .03101343, .25, .45, .75, .1, float3(.65,.7,.75) };
     AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
-    RingLightSettings Lights = { true, .62105263, .66666667, .25, .6, true, .33333333, false };
+    RingLightSettings Lights = { true, .62105263, .66666667, .6, true, .33333333, false };
     TonalLightSettings TonalLights = { true, .66666667, false, .33333333, false };
+    FilamentRingSettings RingLight = { .5 };
     QualitySettings Quality = { .24409449, 1, .15, true, true };
     SamplingSettings Sampling = { .5, true, true };
     FilterSettings Filter = { true };
@@ -29,7 +31,7 @@ static const int MaxLights=96;
 cbuffer RasterLightConstants : register(b3)
 {
     float4 RasterLightInfo; // strobe count/active count, tonal count/active count
-    float4 RasterLightPositions[MaxLights]; // xyz position, squared soft radius
+    float4 RasterLightPositions[MaxLights]; // xyz position, w reserved
     float4 RasterLightRadiance[MaxLights]; // RGB intensity, scalar transient intensity
     float4 RasterActiveLights[MaxLights/4]; // packed indices of nonzero lights
     float4 RasterTonalPositions[MaxLights];
@@ -39,10 +41,12 @@ cbuffer RasterLightConstants : register(b3)
     float4 RasterTonalCones[MaxLights];
     float4 RasterShadowRight[2*MaxLights]; // xyz spot right, w tan(half-angle); 1 for cubes
     float4 RasterShadowUp[2*MaxLights]; // xyz spot up, w first depth-array slice
+    float4 RasterRingRadiance; // independent live-S filament intensity, RGB
+    float4 RasterRingGeometry; // xyz unit normal, w radius; center is world origin
 };
 cbuffer RasterAirlightConstants : register(b5)
 {
-    float4 RasterLookupInfo; // ready, maximum perpendicular distance, asinh warp, reserved
+    float4 RasterLookupInfo; // ready, maximum perpendicular distance, log warp, coordinate scale
 };
 Texture2DArray<float> RasterShadows;
 SamplerComparisonState RasterShadowSampler;
@@ -53,6 +57,14 @@ Texture2D<float4> RasterAirlightLut;
 SamplerState RasterLutSampler;
 static const float Pi=3.14159265359;
 static const float Near=.025, Far=128;
+// Numerical denominator guards only, far below world-coordinate precision.
+// No world-space source radius or smoothing is applied to either light kernel.
+static const float NumericDistance2=1e-30,NumericDistance=1e-15,HdrMaximum=3.402823466e38;
+float3 StoreRadiance(float3 value) { return min(max(value,0),HdrMaximum); }
+float3 SingularRadiance(float3 intensity)
+{
+    return float3(intensity.x>0,intensity.y>0,intensity.z>0)*HdrMaximum;
+}
 uint RasterHash(uint v) { v^=v>>16; v*=0x7feb352d; v^=v>>15; v*=0x846ca68b; return v^(v>>16); }
 float Random(uint v) { return ((RasterHash(v)>>9)+.5)/8388608.0; }
 int ActiveStrobeLight(int i) { return (int)RasterActiveLights[i/4][i%4]; }
@@ -245,6 +257,33 @@ float Visibility(int light, float3 p, float3 normal)
 }
 float3 AirScatter() { return .3*Air.Density*Air.Density*Air.Scattering; }
 float3 AirExtinction() { return .3*Air.Density*Air.Density*(Air.Scattering+Air.Absorption); }
+// Ring geometry is exact; illumination is the infinite line tangent at its
+// closest point (pi/r, nearest-point phase/BRDF and source transmittance).
+float3 RingPlanar(float3 p)
+{
+    return p-RasterRingGeometry.xyz*dot(p,RasterRingGeometry.xyz);
+}
+float3 RingOffset(float3 p)
+{
+    float z=dot(p,RasterRingGeometry.xyz);
+    float3 v=RingPlanar(p);
+    float rho=length(v);
+    // On the axis every ring point is equally close. Choose world +Y
+    // consistently; the uploaded normal is horizontal. No radius softening.
+    float3 radial=rho>0 ? v/max(rho,NumericDistance) : float3(0,1,0);
+    return (rho-RasterRingGeometry.w)*radial+z*RasterRingGeometry.xyz;
+}
+float3 RingTangent(float3 p)
+{
+    float3 v=RingPlanar(p);
+    float rho=length(v);
+    return cross(RasterRingGeometry.xyz,rho>0 ? v/max(rho,NumericDistance) : float3(0,1,0));
+}
+float FilamentPhase(float3 q, float3 direction)
+{
+    float mu=dot(q,direction)*rsqrt(max(dot(q,q),NumericDistance2));
+    return 3*(1+mu*mu)/(16*Pi);
+}
 struct GeometryOutput
 {
     float4 Position : SV_POSITION;
@@ -291,28 +330,184 @@ float4 RasterSurfacePS(GeometryOutput input) : SV_Target
     {
         int i=ActiveLight(slot);
         float3 delta=LightPosition(i)-input.World;
-        float r2=dot(delta,delta),r=sqrt(r2); if (r<1e-6) continue;
+        float r2=dot(delta,delta),r=sqrt(r2);
+        if (r2==0) { radiance+=SingularRadiance(input.Albedo*LightRadiance(i).rgb); continue; }
         if (!InsideCone(-delta,LightCone(i))) continue;
-        float diffuse=max(0,dot(input.Normal,delta/r))/Pi;
+        float diffuse=max(0,dot(input.Normal,delta/max(r,NumericDistance)))/Pi;
         if (diffuse<=0) continue;
         float shadow=Visibility(i,input.World,input.Normal);
         radiance+=input.Albedo*diffuse*shadow*exp(-extinction*r)
-            *LightRadiance(i).rgb/(r2+LightData(i).w);
+            *LightRadiance(i).rgb/max(r2,NumericDistance2);
     }
     // All unshadowed surface lights share the existing geometry draw.
     [loop] for (int tonalSlot=0;tonalSlot<UnshadowedCount();++tonalSlot)
     {
         int i=ActiveUnshadowedLight(tonalSlot);
         float3 delta=LightPosition(i)-input.World;
-        float r2=dot(delta,delta),r=sqrt(r2); if (r<1e-6) continue;
+        float r2=dot(delta,delta),r=sqrt(r2);
+        if (r2==0) { radiance+=SingularRadiance(input.Albedo*LightRadiance(i).rgb); continue; }
         if (!InsideCone(-delta,LightCone(i))) continue;
-        float diffuse=max(0,dot(input.Normal,delta/r))/Pi;
+        float diffuse=max(0,dot(input.Normal,delta/max(r,NumericDistance)))/Pi;
         radiance+=input.Albedo*diffuse*exp(-extinction*r)
-            *LightRadiance(i).rgb/(r2+LightData(i).w);
+            *LightRadiance(i).rgb/max(r2,NumericDistance2);
     }
-    return float4(radiance,1);
+    [branch] if (any(RasterRingRadiance.rgb>0))
+    {
+        float3 q=RingOffset(input.World);
+        float r2=dot(q,q),r=sqrt(r2);
+        if (r2==0) radiance+=SingularRadiance(input.Albedo*RasterRingRadiance.rgb);
+        else
+        {
+            // Local infinite 1D source: pi/r, with a nearest-point BRDF.
+            float diffuse=max(0,dot(input.Normal,-q))/max(r,NumericDistance)/Pi;
+            radiance+=input.Albedo*diffuse*RasterRingRadiance.rgb
+                *exp(-extinction*r)*(Pi/max(r,NumericDistance));
+        }
+    }
+    // Preserve finite values in the RGBA32F render target. This is a
+    // storage-format bound, not a source-size or distance-falloff clamp.
+    return float4(StoreRadiance(radiance),1);
 }
 float OneMinusExp(float x) { return x<.001 ? x*(1-x*.5+x*x/6) : 1-exp(-x); }
+float NegativeLogOneMinus(float x) { return x<.001 ? x*(1+x*(.5+x/3)) : -log(max(1e-7,1-x)); }
+// Positive nodes/weights of Gauss-Legendre quadrature; each node is mirrored.
+static const float4 FilamentNodes=float4(.1834346425,.5255324099,.7966664774,.9602898565);
+static const float4 FilamentWeights=float4(.3626837834,.3137066459,.2223810345,.1012285363);
+float FilamentAsinh(float x)
+{
+    float a=abs(x);
+    if (a<.001) return x*(1-x*x/6);
+    // Keep tiny distances and very long optical tails within float range.
+    if (a>1e10) return sign(x)*(log(a)+.69314718056);
+    return sign(x)*log(a+sqrt(1+a*a));
+}
+float3 RingSegmentIntegral(float3 origin, float3 direction, float begin, float end, float3 extinction)
+{
+    if (end<=begin) return 0;
+    // Each interval has monotonic distance to the ring. Center its transform
+    // at the nearer endpoint, so both close encounters receive their own nodes.
+    float3 q0=RingOffset(origin+begin*direction),q1=RingOffset(origin+end*direction);
+    float center=dot(q0,q0)<=dot(q1,q1) ? begin : end;
+    float3 p=origin+center*direction,q=RingOffset(p);
+    float b=length(q);
+    if (b==0) return SingularRadiance(1);
+    float tangentDot=dot(direction,RingTangent(p));
+    float k=sqrt(max(0,1-tangentDot*tangentDot));
+    // Curvature supplies a useful width even for a ray tangent to the ring,
+    // where a straight-line transform would have k=0. This shapes nodes only;
+    // every evaluation uses the actual ring distance and the full Jacobian.
+    float speed=max(k,sqrt(b/max(RasterRingGeometry.w,NumericDistance)));
+    float scale=max(b/max(speed,NumericDistance),NumericDistance);
+    float u0=FilamentAsinh((begin-center)/scale),u1=FilamentAsinh((end-center)/scale);
+    int panels=min(32,max(1,(int)ceil((u1-u0)/2)));
+    float step=(u1-u0)/panels;
+    float3 sum=0;
+    [loop] for (int panel=0;panel<panels;++panel)
+    {
+        float middle=u0+(panel+.5)*step;
+        [unroll] for (int node=0;node<4;++node)
+        [unroll] for (int side=-1;side<=1;side+=2)
+        {
+            float u=middle+side*.5*step*FilamentNodes[node];
+            float t=clamp(center+scale*sinh(u),begin,end);
+            float3 q=RingOffset(origin+t*direction);
+            float r=length(q);
+            float jacobian=scale*cosh(u)/max(r,NumericDistance);
+            sum+=FilamentWeights[node]*jacobian*FilamentPhase(q,direction)*exp(-extinction*(t+r));
+        }
+    }
+    return sum*(.5*step);
+}
+// Half the derivative of squared distance to the ring. Its derivative changes
+// sign only when rho^3=R*K, K=|planarOrigin x planarDirection|^2. These analytic
+// breakpoints bracket ALL stationary points, including two separate minima.
+float RingDistanceSlope(float3 origin, float3 direction, float3 planarOrigin, float3 planarDirection,
+    float t, float axis, float a, float area2, float side)
+{
+    float3 v=planarOrigin+t*planarDirection;
+    float rho=length(v);
+    float radialSlope=dot(v,planarDirection)/max(rho,NumericDistance);
+    // One-sided limits at a ray crossing the ring axis; distance has a cusp.
+    if (area2==0 && t==axis) radialSlope=side*sqrt(a);
+    return dot(origin+t*direction,direction)-RasterRingGeometry.w*radialSlope;
+}
+float RingStationaryPoint(float3 origin, float3 direction, float3 planarOrigin, float3 planarDirection,
+    float begin, float end, float axis, float a, float area2, float beginSlope)
+{
+    float t=.5*(begin+end);
+    [loop] for (int iteration=0;iteration<24;++iteration)
+    {
+        float slope=RingDistanceSlope(origin,direction,planarOrigin,planarDirection,t,axis,a,area2,1);
+        if (slope==0) break;
+        if ((slope>0)==(beginSlope>0)) begin=t; else end=t;
+        float3 v=planarOrigin+t*planarDirection;
+        float rho2=max(dot(v,v),NumericDistance2);
+        float derivative=dot(direction,direction)-RasterRingGeometry.w*(area2/rho2)*rsqrt(rho2);
+        float next=derivative!=0 ? t-slope/derivative : t;
+        if (!(next>begin && next<end) || next==t) next=.5*(begin+end);
+        if (next==begin || next==end) break;
+        t=next;
+    }
+    return t;
+}
+bool RayCrossesRing(float3 origin, float3 direction, float end)
+{
+    float z=dot(origin,RasterRingGeometry.xyz),dz=dot(direction,RasterRingGeometry.xyz);
+    float radius2=RasterRingGeometry.w*RasterRingGeometry.w;
+    if (dz!=0)
+    {
+        float t=-z/dz;
+        float3 v=RingPlanar(origin+t*direction);
+        return t>=0 && t<=end && dot(v,v)==radius2;
+    }
+    if (z!=0) return false;
+    // Coplanar rays: stable circle intersections, including a tangent contact.
+    float a=dot(direction,direction),b=dot(origin,direction),c=dot(origin,origin)-radius2;
+    float discriminant=b*b-a*c;
+    if (discriminant<0) return false;
+    float q=-b-(b>=0 ? 1 : -1)*sqrt(discriminant);
+    float t0=q/a,t1=q!=0 ? c/q : -b/a;
+    return (t0>=0 && t0<=end) || (t1>=0 && t1<=end);
+}
+float3 RingAirlight(float3 origin, float3 direction, bool hit, float end, float3 scatter, float3 extinction)
+{
+    if (!any(RasterRingRadiance.rgb>0) || !any(scatter>0)) return 0;
+    // Preserve the mathematical singularity even beyond the numerical tail.
+    if (RayCrossesRing(origin,direction,hit ? end : 1e30))
+        return SingularRadiance(RasterRingRadiance.rgb*scatter);
+    float rate=min(scatter.x>0 ? extinction.x : 1e20,min(scatter.y>0 ? extinction.y : 1e20,scatter.z>0 ? extinction.z : 1e20));
+    rate=max(rate,1e-12);
+    float rayEnd=hit ? min(end,20/rate) : 20/rate;
+    float3 planarOrigin=RingPlanar(origin),planarDirection=RingPlanar(direction);
+    float a=dot(planarDirection,planarDirection);
+    float axis=a>0 ? -dot(planarOrigin,planarDirection)/a : 0;
+    float3 closest=planarOrigin+axis*planarDirection;
+    float3 area=cross(planarOrigin,planarDirection);
+    float area2=dot(area,area);
+    float criticalRho=pow(max(RasterRingGeometry.w*area2/dot(direction,direction),0),1.0/3.0);
+    float span=a>0 ? sqrt(max(0,(criticalRho*criticalRho-dot(closest,closest))/a)) : 0;
+    float3 cuts=clamp(float3(axis-span,axis,axis+span),0,rayEnd);
+    float3 integral=0;
+    [loop] for (int interval=0;interval<4;++interval)
+    {
+        float lo=interval==0 ? 0 : interval==1 ? cuts.x : interval==2 ? cuts.y : cuts.z;
+        float hi=interval==0 ? cuts.x : interval==1 ? cuts.y : interval==2 ? cuts.z : rayEnd;
+        if (hi<=lo) continue;
+        float g0=RingDistanceSlope(origin,direction,planarOrigin,planarDirection,lo,axis,a,area2,1);
+        float g1=RingDistanceSlope(origin,direction,planarOrigin,planarDirection,hi,axis,a,area2,-1);
+        if ((g0<0 && g1>0) || (g0>0 && g1<0))
+        {
+            float stationary=RingStationaryPoint(origin,direction,planarOrigin,planarDirection,lo,hi,axis,a,area2,g0);
+            integral+=RingSegmentIntegral(origin,direction,lo,stationary,extinction)
+                +RingSegmentIntegral(origin,direction,stationary,hi,extinction);
+        }
+        else integral+=RingSegmentIntegral(origin,direction,lo,hi,extinction);
+    }
+    float3 result=RasterRingRadiance.rgb*scatter*(Pi*integral);
+    // An exact singular interval can overflow before storage saturation. Do
+    // not let 0*infinity introduce NaN in a channel with zero scattering.
+    return StoreRadiance(float3(scatter.x>0 ? result.x : 0,scatter.y>0 ? result.y : 0,scatter.z>0 ? result.z : 0));
+}
 float4 Display(float3 radiance)
 {
     float3 mapped=1-exp(-max(0,radiance)*exp2(6*(View.Exposure-.5)));
@@ -320,7 +515,7 @@ float4 Display(float3 radiance)
 }
 struct Source
 {
-    float3 Intensity; float Radius2;
+    float3 Intensity;
     float Center; float Perpendicular2; float Height; float Angle; float Span; float PdfScale;
     float Begin; float End;
 };
@@ -328,27 +523,29 @@ Source DescribeLight(int i, float3 origin, float3 direction, float begin, float 
 {
     Source source;
     source.Intensity=LightRadiance(i).rgb;
-    source.Radius2=LightData(i).w;
     float3 delta=LightPosition(i)-origin;
     source.Center=dot(delta,direction);
     float3 perpendicular=delta-source.Center*direction;
     source.Perpendicular2=dot(perpendicular,perpendicular);
-    source.Height=sqrt(source.Perpendicular2+source.Radius2);
+    source.Height=max(sqrt(source.Perpendicular2),NumericDistance);
     source.Begin=begin; source.End=end;
     float x=begin-source.Center,y=end-source.Center;
     source.Angle=atan2(x,source.Height);
     source.Span=end<1e30 ? atan2(source.Height*(end-begin),source.Height*source.Height+x*y)
         : atan2(source.Height,x);
-    source.PdfScale=source.Height/max(source.Span,1e-12);
+    source.PdfScale=source.Height/max(source.Span,1e-30);
     return source;
 }
 float SampleDistance(Source source, float u, float optical, float rate, float mass)
 {
+    // Sub-precision angular spans cannot be inverted reliably. Use the exact
+    // optical proposal/PDF instead; this changes sampling, never illumination.
+    if (source.Span<1e-5) optical=1;
     if (optical>0 && u<optical)
     {
         float x=min(u/optical,1-1e-6)*mass;
         // Stable -log(1-x) for optically thin clipped intervals.
-        float distance=x<.001 ? x*(1+x*(.5+x/3)) : -log(max(1e-7,1-x));
+        float distance=NegativeLogOneMinus(x);
         return clamp(source.Begin+distance/rate,source.Begin,source.End);
     }
     float v=min((u-optical)/max(1-optical,1e-20),1-1e-6);
@@ -361,6 +558,7 @@ float OpticalMass(Source source, float rate)
 float DistancePdf(Source source, float t, float optical, float rate, float mass)
 {
     if (t<source.Begin || t>source.End) return 0;
+    if (source.Span<1e-5) optical=1;
     float x=t-source.Center;
     return optical*rate*exp(-rate*(t-source.Begin))/max(mass,1e-30)
         +(1-optical)*source.PdfScale/(x*x+source.Height*source.Height);
@@ -369,20 +567,47 @@ float3 SourceContribution(int i, Source source, float t, float3 p, float3 extinc
 {
     float along=t-source.Center;
     float r2=along*along+source.Perpendicular2;
-    falloff=rcp(r2+source.Radius2);
-    if (r2<1e-12 || !InsideCone(p-LightPosition(i),LightCone(i))) return 0;
-    float phase=3*(2-source.Perpendicular2/r2)/(16*Pi);
+    falloff=rcp(max(r2,NumericDistance2));
+    if (!InsideCone(p-LightPosition(i),LightCone(i))) return 0;
+    float phase=3*(2-source.Perpendicular2/max(r2,NumericDistance2))/(16*Pi);
     return source.Intensity*phase*Visibility(i,p,0)*exp(-extinction*(t+sqrt(r2)))*falloff;
 }
 
 float3 TonalTail(float c, float b2, float height, float t, float q, float4 layout, float3 extinction)
 {
-    float angle=atan((t-c)/height);
-    float v=.5+.5*sign(angle)*(1-sqrt(max(0,1-2*abs(angle)/Pi)));
+    float x=t-c;
+    // atan2(b,abs(x)) computes the angular distance from an endpoint without
+    // subtracting two nearly equal pi/2 values for a nearly collinear ray.
+    float endpoint=atan2(height,abs(x));
+    float v=.5+.5*sign(x)*(1-sqrt(2*endpoint/Pi));
     float2 uv=float2(q,v)*layout.xy+layout.zw;
     float3 tail=RasterAirlightLut.SampleLevel(RasterLutSampler,uv,0).rgb;
-    float x=t-c;
-    return tail*exp(-extinction*(t+sqrt(x*x+b2)));
+    // The table stores b*tail. Factoring 1/b out preserves the true singularity
+    // and gives the b=0 table column a finite limit, with no soft source radius.
+    return tail*exp(-extinction*(t+sqrt(x*x+b2)))/height;
+}
+float3 CollinearPointIntegral(float c, float begin, float stop, float3 extinction)
+{
+    const float phase=3/(8*Pi);
+    if (c>stop)
+    {
+        // Before the source, camera+light distance is the constant c.
+        float mass=rcp(max(c-stop,NumericDistance))-rcp(max(c-begin,NumericDistance));
+        return phase*mass*exp(-extinction*c);
+    }
+    // After the source, substitute u=1/(t-c), exactly cancelling 1/r^2.
+    float lo=stop<1e30 ? rcp(max(stop-c,NumericDistance)) : 0;
+    float hi=rcp(max(begin-c,NumericDistance));
+    float3 sum=0;
+    [unroll] for (int panel=0;panel<2;++panel)
+    [unroll] for (int node=0;node<4;++node)
+    [unroll] for (int side=-1;side<=1;side+=2)
+    {
+        float u=lerp(lo,hi,(panel+.5+.5*side*FilamentNodes[node])*.5);
+        float r=rcp(max(u,1e-30)),t=c+r;
+        sum+=FilamentWeights[node]*exp(-extinction*(t+r));
+    }
+    return phase*sum*((hi-lo)*.25);
 }
 
 float3 UnshadowedAirlight(float3 origin, float3 direction, bool hit, float end, float3 scatter, float3 extinction)
@@ -401,12 +626,18 @@ float3 UnshadowedAirlight(float3 origin, float3 direction, bool hit, float end, 
         if (!ClipCone(-delta,direction,LightCone(i),begin,stop)) continue;
         float c=dot(delta,direction);
         float3 perpendicular=delta-c*direction;
-        float b2=dot(perpendicular,perpendicular),b=sqrt(b2),h=sqrt(LightData(i).w);
-        float H=sqrt(b2+h*h);
+        float b2=dot(perpendicular,perpendicular),b=sqrt(b2),H=max(b,NumericDistance);
         float3 integral=0;
-        [branch] if (RasterLookupInfo.x>0 && b<=RasterLookupInfo.y)
+        [branch] if (b==0 && c>=begin && c<=stop)
         {
-            float q=log(b/h+sqrt(1+b2/(h*h)))/RasterLookupInfo.z;
+            radiance+=SingularRadiance(scatter*LightRadiance(i).rgb);
+            continue;
+        }
+        [branch] if (b==0 || (c<begin && b<1e-5*(begin-c)) || (stop<1e30 && c>stop && b<1e-5*(c-stop)))
+            integral=CollinearPointIntegral(c,begin,stop,extinction);
+        else if (RasterLookupInfo.x>0 && b<=RasterLookupInfo.y)
+        {
+            float q=log(1+b/RasterLookupInfo.w)/RasterLookupInfo.z;
             integral=TonalTail(c,b2,H,begin,q,layout,extinction);
             if (stop<1e30) integral=max(0,integral-TonalTail(c,b2,H,stop,q,layout,extinction));
         }
@@ -419,8 +650,7 @@ float3 UnshadowedAirlight(float3 origin, float3 direction, bool hit, float end, 
             {
                 float t=clamp(c+H*tan(a+(j+.5)*span/16),begin,stop);
                 float x=t-c,r2=x*x+b2;
-                if (r2<1e-12) continue;
-                float phase=3*(2-b2/r2)/(16*Pi);
+                float phase=3*(2-b2/max(r2,NumericDistance2))/(16*Pi);
                 integral+=phase*exp(-extinction*(t+sqrt(r2)));
             }
             integral*=span/(16*H);
@@ -439,8 +669,10 @@ float4 IntegrateAirlight(int2 pixel)
     float guide=hit ? LinearDepth(z) : 0;
     float3 scatter=AirScatter(),extinction=AirExtinction();
     float3 radiance=UnshadowedAirlight(origin,direction,hit,end,scatter,extinction);
+    [branch] if (any(RasterRingRadiance.rgb>0))
+        radiance+=RingAirlight(origin,direction,hit,end,scatter,extinction);
     int count=ShadowCount();
-    if (count==0 || !any(scatter>0)) return float4(radiance,guide);
+    if (count==0 || !any(scatter>0)) return float4(StoreRadiance(radiance),guide);
     float rate=min(scatter.x>0 ? extinction.x : 1e20,min(scatter.y>0 ? extinction.y : 1e20,scatter.z>0 ? extinction.z : 1e20));
     rate=max(rate,1e-12);
     // Compact the lights whose cones intersect this visible ray. Both distance
@@ -454,7 +686,7 @@ float4 IntegrateAirlight(int2 pixel)
         if (!ClipCone(origin-LightPosition(i),direction,LightCone(i),begin,stop)) continue;
         rayLights[rayCount]=i; rayBounds[rayCount]=float2(begin,stop); ++rayCount;
     }
-    if (rayCount==0) return float4(radiance,guide);
+    if (rayCount==0) return float4(StoreRadiance(radiance),guide);
     int samples=1+(int)round(127*Quality.Samples);
     float optical=saturate(Sampling.OpticalDepthWeight);
     uint seed=RasterHash((uint)pixel.x^RasterHash((uint)pixel.y+1));
@@ -479,7 +711,7 @@ float4 IntegrateAirlight(int2 pixel)
             float pdf=DistancePdf(source,t,optical,rate,mass);
             radiance+=scatter*incoming*(weight/max(pdf,1e-30));
         }
-        return float4(radiance,guide);
+        return float4(StoreRadiance(radiance),guide);
     }
     // All-light estimator: draw from the uniform mixture of each light's
     // conditional distance PDF. Every term is zero outside its own interval.
@@ -503,7 +735,7 @@ float4 IntegrateAirlight(int2 pixel)
         }
         radiance+=scatter*incoming*(rayCount/(max(pdf,1e-30)*samples));
     }
-    return float4(radiance,guide);
+    return float4(StoreRadiance(radiance),guide);
 }
 float4 RasterAirlightPS(PSin input) : SV_Target
 {

@@ -38,6 +38,7 @@ internal static partial class Program
         {
             renderer.ActiveShader!.Parameters!.Reset();Set(renderer,"View.CameraSpeed",0);
             Set(renderer,"Lights.Shadows",true);Set(renderer,"TonalLights.Shadows",false);
+            Set(renderer,"RingLight.Intensity",0); // Isolate the two measured point-light rings.
             Set(renderer,"Lights.Count",(item.Count-1)/(float)(RasterLightTransport.MaximumLights-1));clock.Reset();
             if(samplingStudy)Set(renderer,"Shape.Speed",0);
             void Render()

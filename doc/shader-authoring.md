@@ -190,13 +190,27 @@ A second ring uses live `Spectrum0/1.r` structure, shares the count/radius/palet
 and stereo coordinates, and lies horizontally in XZ. Its default intensity is
 75% of the strobe intensity for equal S/T. All unshadowed lights are batched into
 the same surface and airlight draws. A shared scaled RGB tail LUT integrates
-their airlight with no visibility queries. Extinction/radius changes rebuild the
+their airlight with no visibility queries. Extinction changes rebuild the
 table in the background; deterministic angular quadrature supplies the correct
 current coefficients until upload. `TonalLights.Enabled/Gain` control this ring
 independently of `Lights.Enabled/Gain`, which control only the transient strobes.
 Strobes default to hard 30-degree inward cones. Their optical and equiangular
 proposals are conditioned on each ray/cone interval, with matching normalized
 PDFs, per-light distance stratification, and ray-local light selection.
+An independent circular filament at the origin has one `RingLight.Intensity`
+control, default 0.5. Live mean tonal S supplies its energy, preserving silence.
+It matches the point-light rings' radius and is orthogonal to both planes.
+It uses local-line `pi/r` falloff, nearest-point Lambert/phase shading,
+and deterministic hyperbolic camera-ray quadrature without shadows or a LUT.
+Analytic slope breakpoints bracket the ring-distance extrema; safeguarded root
+solving splits the ray into monotonic-distance intervals, each with transformed
+Gauss quadrature. The source directions and extinction use the nearest ring point
+rather than integration around the emitter. Quadrature has a 20-optical-depth
+numerical tail limit. The ring shares the existing surface and airlight draws.
+Point lights use `1/r^2` and the filament uses `pi/r`, with no source radii or spatial
+regularization. The point LUT stores `b*tail` and factors out `1/b` during lookup.
+Only floating-point denominator/degeneracy safeguards remain; exact singularities
+use finite float32 saturation. Both surface and airlight targets are RGBA32F.
 The dense default preset enables one-light-per-distance sampling and half-resolution
 airlight with depth-aware reconstruction and full-resolution fallback at unmatched
 depth boundaries. Scattering defaults to (1,1,1) and density to 0.65.

@@ -19,6 +19,8 @@ internal sealed class RasterLightTransport : IDisposable
     const int TonalConeOffset = StrobeConeOffset + MaximumLights;
     const int ShadowRightOffset = TonalConeOffset + MaximumLights;
     const int ShadowUpOffset = ShadowRightOffset + 2 * MaximumLights;
+    const int RingRadianceOffset = ShadowUpOffset + 2 * MaximumLights;
+    const int RingGeometryOffset = RingRadianceOffset + 1;
     internal sealed class Programs : IDisposable
     {
         internal readonly ShaderProgram Surface;
@@ -45,8 +47,8 @@ internal sealed class RasterLightTransport : IDisposable
     readonly ID3D11Buffer lights;
     readonly ID3D11Buffer airlightConstants;
     readonly UnshadowedAirlightLookup lookup;
-    // Header, position/radius^2, RGB radiance, then packed active-light indices.
-    readonly Vector4[] lightData = new Vector4[ShadowUpOffset + 2 * MaximumLights];
+    // Header, positions (w reserved), RGB radiance, then packed active indices.
+    readonly Vector4[] lightData = new Vector4[RingGeometryOffset + 1];
     readonly ID3D11DepthStencilState depthState;
     readonly ID3D11SamplerState shadowSampler;
     readonly Dictionary<string, ID3D11SamplerState> rasterSamplers = [];
@@ -113,7 +115,6 @@ internal sealed class RasterLightTransport : IDisposable
     unsafe int UpdateLights(ShaderParameters p, AudioHistory audio, int count)
     {
         Array.Clear(lightData);
-        float radius = .01f + .49f * MathF.Pow(Read(p, "Lights", "Radius"), 2);
         float ringRadius = (2 + 10 * Read(p, "Shape", "Spread")) * Read(p, "Lights", "RingRadius");
         float gain = Flag(p, "Lights", "Enabled") ? 3000 * MathF.Pow(2, 12 * Read(p, "Lights", "Gain") - 6) : 0;
         float tonalGain = Flag(p, "TonalLights", "Enabled") ? .75f * 3000 * MathF.Pow(2, 12 * Read(p, "TonalLights", "Gain") - 6) : 0;
@@ -145,7 +146,7 @@ internal sealed class RasterLightTransport : IDisposable
             float transient = MathF.Min(1e20f, left + (rightT - left) * stereo);
             Vector3 color = new(Palette(.04f), Palette(.38f), Palette(.62f));
             float Palette(float phase) => .5f + .5f * MathF.Cos(2 * MathF.PI * (frequency * .85f + phase));
-            lightData[1 + i] = new(ringRadius * (x * right + y * up), radius * radius);
+            lightData[1 + i] = new(ringRadius * (x * right + y * up), 0);
             lightData[StrobeConeOffset + i] = new(-(x * right + y * up), strobeCone);
             lightData[1 + MaximumLights + i] = new(color * (gain * transient), gain * transient);
             if (gain * transient > 0)
@@ -157,7 +158,7 @@ internal sealed class RasterLightTransport : IDisposable
             float leftS = SpectrumAt(audio.Spectrum[0], audio.Bands, frequency, 0);
             float rightS = SpectrumAt(audio.Spectrum[1], audio.Bands, frequency, 0);
             float tone = MathF.Min(1e20f, leftS + (rightS - leftS) * stereo);
-            lightData[TonalPositionOffset + i] = new(ringRadius * (x * right + y * horizontal), radius * radius);
+            lightData[TonalPositionOffset + i] = new(ringRadius * (x * right + y * horizontal), 0);
             lightData[TonalConeOffset + i] = new(-(x * right + y * horizontal), tonalCone);
             lightData[TonalRadianceOffset + i] = new(color * (tonalGain * tone), tonalGain * tone);
             if (tonalGain * tone > 0)
@@ -168,6 +169,21 @@ internal sealed class RasterLightTransport : IDisposable
             }
         }
         lightData[0] = new(count, active, count, tonalActive);
+        // The filament ring has the same radius as the point-light rings. Their
+        // shared horizontal axis is its normal: its plane is orthogonal to both.
+        lightData[RingGeometryOffset]=new(right,ringRadius);
+        // Independent white ring light: live mean tonal S, no envelope/history.
+        // A zero intensity slider disables it exactly, including CPU spectrum work.
+        float ringIntensity=Read(p,"RingLight","Intensity");
+        if (ringIntensity>0 && ringRadius>0)
+        {
+            double structure=0;
+            for (int channel=0;channel<2;channel++)
+                for (int band=0;band<audio.Bands;band++)
+                    structure+=Math.Clamp(audio.Spectrum[channel][4*band],0,1e20f);
+            float radiance=3000*ringIntensity*ringIntensity*(float)(structure/(2*audio.Bands));
+            lightData[RingRadianceOffset]=new(radiance,radiance,radiance,0);
+        }
         bool strobeShadows=Flag(p,"Lights","Shadows"),tonalShadows=Flag(p,"TonalLights","Shadows");
         bool preview=Flag(p,"View","ShowShadows");
         int slices=0;
@@ -243,7 +259,7 @@ internal sealed class RasterLightTransport : IDisposable
             color = device.CreateTexture2D(new Texture2DDescription
             {
                 Width = (uint)w, Height = (uint)h, ArraySize = 1, MipLevels = 1,
-                Format = Format.R16G16B16A16_Float, SampleDescription = new(1, 0), Usage = ResourceUsage.Default,
+                Format = Format.R32G32B32A32_Float, SampleDescription = new(1, 0), Usage = ResourceUsage.Default,
                 BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
             });
             colorTarget = device.CreateRenderTargetView(color); colorView = device.CreateShaderResourceView(color);
@@ -267,7 +283,7 @@ internal sealed class RasterLightTransport : IDisposable
             airlight = device.CreateTexture2D(new Texture2DDescription
             {
                 Width = (uint)w, Height = (uint)h, ArraySize = 1, MipLevels = 1,
-                Format = Format.R16G16B16A16_Float, SampleDescription = new(1, 0), Usage = ResourceUsage.Default,
+                Format = Format.R32G32B32A32_Float, SampleDescription = new(1, 0), Usage = ResourceUsage.Default,
                 BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
             });
             airlightTarget = device.CreateRenderTargetView(airlight); airlightView = device.CreateShaderResourceView(airlight);
@@ -295,9 +311,8 @@ internal sealed class RasterLightTransport : IDisposable
         float mediumScale = .3f * density * density;
         var scatter = mediumScale * ReadVector(p, "Air", "Scattering");
         var extinction = scatter + mediumScale * ReadVector(p, "Air", "Absorption");
-        float radius = .01f + .49f * MathF.Pow(Read(p, "Lights", "Radius"), 2);
         bool unshadowed=(!strobeShadows && lightData[0].Y>0)||(!tonalShadows && lightData[0].W>0);
-        lookup.Prepare(radius, extinction, unshadowed && (scatter.X > 0 || scatter.Y > 0 || scatter.Z > 0));
+        lookup.Prepare(extinction, unshadowed && (scatter.X > 0 || scatter.Y > 0 || scatter.Z > 0));
         context.UpdateSubresource(lookup.Info, airlightConstants);
         if (width != w || height != h) AllocateCamera(w, h);
         bool half = Flag(p, "Quality", "HalfResolutionAirlight");

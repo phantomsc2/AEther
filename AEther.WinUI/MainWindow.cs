@@ -2,7 +2,6 @@ using AEther.NAudio;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.System;
 
@@ -22,7 +21,7 @@ public sealed class MainWindow : Window
     Session? session;
     RenderWorker? renderWorker;
     FileSystemWatcher? watcher;
-    bool loaded, closing, shutdownComplete, fullscreen;
+    bool loaded, closing, shutdownComplete, fullscreen, visible = true;
     RectInt32 windowBounds;
 
     public MainWindow(Func<SampleSource>? createSource = null, string? shaderDirectory = null)
@@ -87,7 +86,8 @@ public sealed class MainWindow : Window
         // A Tick already queued before Stop can still arrive during window teardown.
         timingTimer.Tick += (_, _) => { if (!closing && settings.IsVisible) settings.SetTiming(session); };
         timingTimer.Start();
-        CompositionTarget.Rendering += Render;
+        VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
+        AppWindow.Changed += (_, _) => UpdateRendering();
         AppWindow.Closing += OnClosing;
     }
 
@@ -143,7 +143,6 @@ public sealed class MainWindow : Window
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
-                renderWorker = new(() => next.Renderer.Render(), error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)));
                 shaders.Attach(next.Renderer);
                 watcher = new(next.Renderer.ShaderDirectory, "*.hlsl")
                 {
@@ -156,9 +155,21 @@ public sealed class MainWindow : Window
                 watcher.Deleted += ShaderChanged;
                 watcher.EnableRaisingEvents = true;
                 settings.SetStatus("Running. Space: settings · F6: shaders · F11: fullscreen\nF5: restart · R: level · I: intensity · [ / ]: slice");
+                // Present(1) on a composition chain can inherit the 60 Hz primary
+                // display even when this window is on a 165 Hz secondary display.
+                // The compositor clock supplies pacing; Present(0) submits the latest
+                // frame for composition without adding that separate vsync gate.
+                bool compositorPacing = CompositorClock.IsSupported;
+                renderWorker = new(next.Renderer.FrameReady,
+                    () => next.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u),
+                    error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)),
+                    waitForTick: compositorPacing ? CompositorClock.Wait : null,
+                    waited: milliseconds => next.Analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
+                UpdateRendering();
             }
             catch
             {
+                renderWorker?.Dispose(); renderWorker = null;
                 session = null;
                 shaders.Attach(null);
                 if (next != null) await next.DisposeAsync();
@@ -236,10 +247,10 @@ public sealed class MainWindow : Window
         }
     }
 
-    void Render(object? sender, object e)
+    void UpdateRendering()
     {
-        if (closing || session == null || AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized }) return;
-        renderWorker?.RequestFrame();
+        renderWorker?.SetEnabled(!closing && visible && session != null
+            && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized });
     }
 
     void RenderFailed(Exception error)
@@ -270,7 +281,7 @@ public sealed class MainWindow : Window
     {
         if (closing) return;
         closing = true;
-        CompositionTarget.Rendering -= Render;
+        UpdateRendering();
         timingTimer.Stop();
         await sessionGate.WaitAsync();
         try { await StopSessionAsync(); }

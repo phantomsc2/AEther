@@ -226,6 +226,7 @@ public sealed class SettingsWindow : ToolWindow
             + $"Capture queue: {Stat("capture.queue_ms")}\n"
             + $"Analysis CPU: {Stat("analysis.total_ms")}\n"
             + $"Draw CPU: {Stat("render.draw_cpu_ms")}\n"
+            + $"Frame pacing wait: {Stat("render.pacing_wait_ms")}\n"
             + $"Present wait: {Stat("render.present_wait_ms")} | {fps}\n"
             + $"Output: {session.Renderer.OutputDescription}\n"
             + $"GPU: {session.Renderer.AdapterDescription}\n"

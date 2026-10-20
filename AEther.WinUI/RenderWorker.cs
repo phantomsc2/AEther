@@ -1,52 +1,69 @@
+#nullable enable
+
+using System;
+using System.Diagnostics;
+using System.Threading;
+
 namespace AEther.WinUI;
 
-/// <summary>Consumes at most one queued composition frame on a dedicated thread.</summary>
+/// <summary>Draws on a dedicated thread paced by the swap chain, independently of XAML.</summary>
 internal sealed class RenderWorker : IDisposable
 {
-    readonly AutoResetEvent frame = new(false);
+    readonly ManualResetEvent enabled = new(false);
+    readonly ManualResetEvent stopped = new(false);
+    readonly WaitHandle frameReady;
     readonly Action render;
     readonly Action<Exception> failed;
+    readonly Func<WaitHandle, bool>? waitForTick;
+    readonly Action<double>? waited;
     readonly Thread thread;
-    volatile bool stopping;
+    int disposed;
 
-    public RenderWorker(Action render, Action<Exception> failed)
+    public RenderWorker(WaitHandle frameReady, Action render, Action<Exception> failed,
+        Func<WaitHandle, bool>? waitForTick = null, Action<double>? waited = null)
     {
+        this.frameReady = frameReady;
         this.render = render;
         this.failed = failed;
+        this.waitForTick = waitForTick;
+        this.waited = waited;
         thread = new Thread(Run) { IsBackground = true, Name = "AEther render" };
         thread.Start();
     }
 
-    public void RequestFrame()
+    public void SetEnabled(bool value)
     {
-        if (!stopping)
-        {
-            try { frame.Set(); }
-            catch (ObjectDisposedException) { }
-        }
+        if (value) enabled.Set();
+        else enabled.Reset();
     }
 
     void Run()
     {
-        while (true)
+        try
         {
-            frame.WaitOne();
-            if (stopping) return;
-            try { render(); }
-            catch (Exception error)
+            WaitHandle[] active = [stopped, enabled];
+            WaitHandle[] ready = [stopped, frameReady];
+            while (WaitHandle.WaitAny(active) == 1)
             {
-                stopping = true;
-                failed(error);
-                return;
+                var start = Stopwatch.GetTimestamp();
+                if (WaitHandle.WaitAny(ready) == 0) return;
+                if (waitForTick != null && !waitForTick(stopped)) return;
+                // Keep a consumed frame signal if minimized while waiting for DXGI.
+                // Resume can then draw without needing another presentation first.
+                if (WaitHandle.WaitAny(active) == 0) return;
+                waited?.Invoke(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+                render();
             }
         }
+        catch (Exception error) { failed(error); }
     }
 
     public void Dispose()
     {
-        stopping = true;
-        frame.Set();
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        stopped.Set();
         if (Thread.CurrentThread != thread) thread.Join();
-        frame.Dispose();
+        enabled.Dispose();
+        stopped.Dispose();
     }
 }

@@ -25,14 +25,44 @@ uses FlipSequential, opaque alpha and an inverse composition-scale transform. Pi
 dimensions and the transform follow layout and DPI changes. The HWND presentation
 path remains available for renderer probes.
 
-`CompositionTarget.Rendering` signals a dedicated render thread. An auto-reset event
-coalesces queued frame requests while vsynced Present blocks, so the worker draws at
-most one pending frame after the current present. Resize, shader reload, readback and
+The dedicated render thread waits on DXGI's frame-latency waitable object before each
+frame, including the first. On Windows 11 it also waits for the compositor clock and
+uses `Present(0)` with no tearing flags, submitting the latest frame for desktop
+composition. This avoids both the XAML `CompositionTarget.Rendering` gate and the
+composition swap chain's `Present(1)` gate, which followed the 60 Hz primary display
+even with the window on the 165 Hz secondary display in the mixed-monitor probe.
+The compositor heartbeat can follow the fastest active display, so rendering on a
+slower display may submit more frames than that display scans out. Windows 10 keeps
+the DXGI wait plus `Present(1)` fallback. See Microsoft's
+[compositor-clock guidance](https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock).
+The swap chain allows one queued frame; its waitable flag is preserved on resize.
+Both waits are interruptible for shutdown, and the handle is closed after the worker
+stops. Timing shows frame-pacing wait separately from draw CPU and Present wait;
+the FPS value measures render submissions, not physical scanout.
+Resize, shader reload, readback and
 frame rendering are serialized around the D3D immediate context. Minimizing pauses
-frame requests, and restore consumes recent audio from the bounded mailbox. Settings
+rendering, and restore consumes recent audio from the bounded mailbox. Settings
 edits rebuild the complete session.
 Closing a tool window hides it; closing the render window awaits audio/analysis
 shutdown, detaches the swap chain, releases graphics resources and closes both tools.
+
+### Mixed-refresh verification, 2026-10-20
+
+The local WinUI probe used Spectrum at 1280x720, FP16 scRGB, an RTX 4070 Laptop
+render device, and two Intel Arc-connected displays: a 2560x1440 primary at
+approximately 60 Hz and a 3200x2000 secondary at 165 Hz. Quiet-input presentation comparisons
+on the secondary measured 60.0 render submissions/s with `Present(1)` for either
+one or two queued frames. `Present(0)` with either that display's vblank or the
+compositor clock measured 165.1 submissions/s. Unpaced `Present(0)` exceeded the
+display rate, so it is not used by itself.
+
+The updated production worker, with continuous synthetic 48 kHz stereo audio and
+1000 Hz analysis, measured 165.0 submissions/s at 1280x720: 5.22 ms mean pacing
+wait, 0.76 ms draw CPU and 0.08 ms Present. Minimizing paused rendering; after
+restore and resize to 1366x768 it measured 163.7 submissions/s. These are short
+local Release runs after warmup, not GPU execution timings or a measurement of
+physical scanout. The one-frame-queue comparison used quiet input; it establishes
+the presentation ceiling rather than a controlled audio-processing speedup.
 
 ## Audio handoff
 

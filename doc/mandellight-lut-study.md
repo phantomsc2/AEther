@@ -1,5 +1,10 @@
 # MandelLight v4 cumulative airlight LUT study
 
+Historical soft-kernel experiment: the current production renderer uses exact
+inverse-square point lights with no source radius and a distance-scaled tail LUT.
+This study retains its original soft kernels in a private experimental shader
+copy so its original results remain reproducible; it does not soften production lights.
+
 Measured 2026-10-20 on NVIDIA GeForce RTX 4070 Laptop GPU, at **1280x720**.
 
 The unshadowed LUT is useful. Replacing every integration bin with LUT endpoint

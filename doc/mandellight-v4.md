@@ -1,5 +1,9 @@
 # MandelLightv4: raster geometry and infinite homogeneous air
 
+Historical 720p point/cone/line costs, including shadow refresh versus caching, are
+in [the light-type GPU comparison](mandellight-light-costs.md). Older measurements
+below retain their original scene versions and light counts.
+
 Restart after building, then select **MandelLightv4**. This audio-reactive prototype
 uses live spectral transients for its strobe ring and tonal structure for a
 horizontal ring. Each has an independent shadow toggle, default off. Without live S/T it renders
@@ -10,7 +14,8 @@ The default preset favors dense, strongly scattering air: Air.Density is 0.65,
 Scattering is (1,1,1), and the low absorption remains (0.03,0.05,0.08). Half-resolution
 airlight is enabled. Unshadowed lights use the LUT; when shadows are enabled,
 the sampler uses 32 distance samples, hardware PCF and 512-pixel shadow faces. The scene retains 128 cube instances,
-with two static 60-light spectral rings inside the cloud (120 lights by default).
+with two static 60-light spectral rings inside the cloud (120 ring lights by default)
+and one unshadowed filament ring centered at the origin, orthogonal to both.
 After reloading, use **Reset defaults** to apply the new preset to an existing session.
 
 A historical 640x360 RTX 4070 Laptop capture with a synthetic live stereo-T fixture measured
@@ -119,7 +124,7 @@ strobe maps followed by tonal maps when both are enabled; with neither enabled,
 it previews the strobe positions without enabling light visibility. Spotlights
 show one complete depth view; point lights show their six faces in a 3x2 grid.
 
-The second ring has the same count, radius, angular spacing, soft source radius,
+The second ring has the same count, ring radius and angular spacing,
 palette, frequency coordinates and stereo blend as the strobe ring. It lies in
 the world XZ plane at Y=0, sharing the strobe ring's horizontal stereo axis.
 Treble is on its far side along the initial horizontal view direction; bass is
@@ -148,10 +153,14 @@ Lights with shadows disabled require no per-light draws or shadow cubemaps. Ligh
 cutoff; optional spot cones restrict their angular support.
 
 The 513x1025 RGBA32F lookup occupies 8.02 MiB and stores a scaled Rayleigh tail
-integral for the current RGB extinction and soft radius. Infinite rays require
+integral for the current RGB extinction, with no source radius. It stores `b*tail`
+and factors `1/b` back out during evaluation, preserving the point singularity.
+The first perpendicular-distance column stores the finite b=0 limit. Its
+`log(1+b/0.0001)` coordinate controls table sampling density only and never changes
+the falloff kernel. Infinite rays require
 one lookup per unshadowed light; finite intervals require two. Camera motion,
 light positions, spectrum, gain and object changes do not invalidate it. Medium
-coefficient or radius changes trigger a CPU-only background build; GPU upload
+coefficient changes trigger a CPU-only background build; GPU upload
 stays on the rendering thread. Up to four recent coefficient sets are cached.
 While the matching table is unavailable, a deterministic 16-point equiangular
 quadrature evaluates the same unshadowed integral. A stale table is never used.
@@ -178,6 +187,63 @@ and raw timings are in `artifacts/mandellight-v4/tonal-ring`; reproduce with the
 profiling tool's `--tonal-ring` mode now captures 60-light rings and the 96-light
 capacity case; the table above retains its historical 20/32-light measurements.
 
+## Filament ring emitter
+
+`RingLight.Intensity` replaces `LineLight.Intensity` and controls a white circular
+filament centered at the origin. It defaults to 0.5; zero disables it exactly.
+The radius follows `(2+10*Shape.Spread)*Lights.RingRadius`, matching both point-light
+rings (5.7 by default). Its normal is their shared horizontal stereo axis, so its
+vertical plane is orthogonal to both existing ring planes. A zero radius disables
+the collapsed filament. Intensity is independent of both point-light rings' gain,
+enabled and shadow settings. Live mean
+tonal S across both channels and all spectrum bins supplies its energy, with no
+history, smoothing, B contribution or ambient floor, preserving black in silence:
+
+```text
+ring_rgb = 3000 * RingLight.Intensity^2 * mean_live_S
+z = dot(x,n)                  # n = unit ring normal, R = ring radius
+v = x-z*n
+rho = length(v)
+q = (rho-R)*normalize(v)+z*n  # x minus closest ring point
+r = length(q)
+incoming_rgb = ring_rgb * pi/r * exp(-sigma_t*r)
+```
+
+The closest-point geometry is analytic. On the ring axis, where the nearest point
+is nonunique, world +Y selects a consistent ring point. Lighting treats that point's
+tangent as an infinite line: `integral ds/(r*r+s*s) = pi/r`. Surface lighting uses
+nearest-point Lambert shading; airlight uses nearest-point Rayleigh phase and
+source attenuation. This is a local-line approximation, not exact distributed-ring
+illumination: it retains `1/r` distant falloff and does not integrate directions
+around the ring. The previously discussed exact scalar ring field is not used.
+There is no core radius, spatial smoothing, tessellation or rasterized emitter.
+
+Airlight uses deterministic 8-point Gauss-Legendre quadrature, with no LUT, shadows,
+random sampling, extra draw or persistent state. Along a unit camera ray write
+`rho(t)=length(v+t*w)`, where v and w are its planar origin/direction. Half the
+derivative of squared ring distance is
+
+```text
+g(t) = dot(origin+t*direction,direction) - R*dot(v+t*w,w)/rho(t)
+K = length(cross(v,w))^2
+g'(t) = 1 - R*K/rho(t)^3
+```
+
+Analytic breakpoints `rho^3=R*K`, plus the closest approach to the ring axis,
+bracket every stationary point. Safeguarded Newton/bisection (up to 24 iterations)
+finds the roots. Splitting at these points makes distance monotonic on each
+integration interval and covers both close encounters without overlap or MIS.
+Each interval uses `t=c+h*sinh(u)`, centered at its nearer endpoint. Its scale
+uses the local tangent and a curvature width for grazing rays. Every node evaluates
+the actual ring distance and full Jacobian; the transform does not exactly cancel
+the curved kernel. Panels are at most 2 units wide in u, capped at 32 per interval.
+
+Rays stop at the nearer of the opaque surface and 20 camera optical depths in the
+slowest scattering channel. This is a numerical tail limit, not a world-space
+light range. Exact visible ring crossings are handled as singular before tail
+truncation. The existing half-resolution reconstruction and full-resolution fallback
+apply. Point/spot profiling fixtures explicitly disable this independent emitter.
+
 ## Rendering
 
 The scene draws 1..4096 procedural cube instances with 36 vertices each. Seeded
@@ -202,8 +268,14 @@ pixel_radiance = airlight + exp(-sigma_t * surface_distance) * surface_radiance
 ```
 
 This is single scattering with a normalized Rayleigh phase function. There is no
-ambient/environment source or multiple scattering. Lights.Radius regularizes the
-inverse-square falloff; it does not turn the light into an area emitter.
+ambient/environment source or multiple scattering. Point lights use exactly
+`1/r^2`; the filament ring uses local-line `pi/r`. `Lights.Radius` has been removed. Only tiny
+floating-point denominator guards remain (1e-15 distance / 1e-30 squared distance),
+along with sampling fallbacks for sub-precision angular spans and collinear rays.
+Exact visible singularities become the largest representable finite HDR value.
+Surface and airlight targets use RGBA32F, avoiding the old half-float highlight
+ceiling. The finite-value bound follows float32 storage, with no adjustable or
+scene-scale intensity clamp. Silence still produces exactly zero.
 
 ## Shadow filtering
 
@@ -276,7 +348,7 @@ from that ray's participating light count M. There are two proposal families:
   normalized over that light's interval. Its scalar rate follows the
   slowest attenuating RGB channel that scatters, to preserve a useful tail.
 * **Equiangular:** one proposal per participating light, covering exactly its cone
-  interval. It follows the softened inverse-square illumination peak.
+  interval. It follows the inverse-square illumination peak.
 
 Sampling.OpticalDepthWeight supplies the optical proposal's probability w.
 Both proposals are zero outside the light's interval. For interval [a_i,b_i]:
@@ -314,13 +386,12 @@ snapshots and measurements are in `artifacts/mandellight-v4/spotlight-sampling`.
 
 The inner loop shares its ray/light quadratic between the equiangular PDF,
 inverse-square falloff and Rayleigh phase. With `c` the light projection along the
-camera ray, `b2` its squared perpendicular distance, `a2` the softened radius
-squared, and `t` the sample distance:
+camera ray, `b2` its squared perpendicular distance and `t` the sample distance:
 
 ```text
 x = t-c
 r2 = x*x+b2
-k = 1/(r2+a2)
+k = 1/r2
 angular_pdf = height/span * k
 phase = 3/(16*pi) * (2-b2/r2)
 ```
@@ -466,7 +537,6 @@ artifacts.
 | Lights.Shadows | Enable strobe shadow maps and sampled visibility; default off |
 | Lights.Count | 1..96 fixed positions per ring; default 60 strobes + 60 tonal |
 | Lights.Gain | Strobe-only intensity multiplier `2^(12*value-6)`; default 4x |
-| Lights.Radius | Soft inverse-square radius `0.01+0.49*value^2`; default slider 0.25 |
 | Lights.RingRadius | Ring radius as fraction of cloud half extent; default 0.6 |
 | Lights.Directional | Hard strobe cones pointing toward origin; default on |
 | Lights.HalfAngle | Half-angle `90*value` degrees, clamped to 5..60; default 1/3 = 30 degrees |
@@ -475,6 +545,7 @@ artifacts.
 | TonalLights.Gain | Independent tonal multiplier `0.75*2^(12*value-6)`; default 2/3 gives 3x |
 | TonalLights.Directional | Hard tonal cones pointing toward origin; default off (full sphere) |
 | TonalLights.HalfAngle | Same half-angle mapping as Lights.HalfAngle; default 1/3 |
+| RingLight.Intensity | Independent live-S white filament ring at origin, orthogonal to both point-light rings; `3000*value^2` gain, default 0.5; zero disables |
 | Quality.Samples | 1..128 shadowed distance samples per integrated ray; default 32; unshadowed LUT is independent |
 | Quality.ShadowResolution | 128 / 256 / 512 useful pixels per cube face; default 512 |
 | Quality.ShadowBias | Depth tolerance 0.0005..0.0205 world units along cube-face depth |
@@ -503,7 +574,7 @@ including guards, or 5.1 MiB at 256. A 20-light omnidirectional ring needs six t
 that storage (approximately 121 MiB or 30.5 MiB). These are allocation counts,
 not performance measurements. With both shadow toggles off, only the tiny
 placeholder shadow texture is allocated. Camera color, depth and
-airlight targets add 20 bytes per pixel at full resolution, or approximately 14
+airlight targets add 36 bytes per pixel at full resolution, or approximately 24
 with half-resolution airlight. There is no per-object loop in the airlight shader. Raster geometry
 work still scales with instances, shadow views, coverage and overdraw. This POC
 submits all instances to every active cube face and relies on GPU clipping/depth.

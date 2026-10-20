@@ -63,6 +63,8 @@ public sealed partial class Renderer : IDisposable
     public string ShaderDirectory => shaderDirectory;
     public bool HighPrecisionOutput => output.HighPrecision;
     public string OutputDescription => output.Description;
+    /// <summary>Wait before each live frame, including the first. Owned by the renderer.</summary>
+    public WaitHandle FrameReady => output.FrameReady;
     public string AdapterDescription { get; } = string.Empty;
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
     // Optional GPU timestamp markers used by the transport profiling tool.
@@ -227,12 +229,13 @@ public sealed partial class Renderer : IDisposable
         feedback?.Dispose(); feedback = null;
     }
 
-    public void Render(bool present = true)
+    public void Render(bool present = true, uint syncInterval = 1)
     {
-        lock (graphicsGate) RenderCore(present);
+        if (syncInterval > 4) throw new ArgumentOutOfRangeException(nameof(syncInterval));
+        lock (graphicsGate) RenderCore(present, syncInterval);
     }
 
-    unsafe void RenderCore(bool present)
+    unsafe void RenderCore(bool present, uint syncInterval)
     {
         if (output.SceneTarget == null) return;
         var frameStart = Stopwatch.GetTimestamp();
@@ -390,7 +393,7 @@ public sealed partial class Renderer : IDisposable
         if (Audio.LatestCaptureTimestamp != 0)
             Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
         var presentStart = Stopwatch.GetTimestamp();
-        if (present) output.Present();
+        if (present) output.Present(syncInterval);
         if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
     }
 

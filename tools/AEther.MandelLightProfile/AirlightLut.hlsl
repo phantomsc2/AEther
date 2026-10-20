@@ -53,7 +53,7 @@ float4 IntegrateAirlight(int2 pixel)
             radiance+=scatter*source.Intensity*sum*(source.Span/(source.Height*StudySamples));
             continue;
         }
-        float b=sqrt(source.Perpendicular2),h=sqrt(source.Radius2);
+        float b=sqrt(source.Perpendicular2),h=StudyRadius;
         float lutX=log(b/h+sqrt(1+b*b/(h*h)))/StudyBwarp;
         float3 previous=StudyTail(source,0,source.Angle,false,extinction,lutX),total=0;
         if (StudyMode==1) total=max(0,previous-StudyTail(source,end,source.Angle+source.Span,!hit,extinction,lutX));
