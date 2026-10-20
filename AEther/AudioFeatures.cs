@@ -18,6 +18,9 @@ namespace AEther
         readonly double SampleRate;
         double MusicalTime;
 
+        // MusicalTime is an integral of observed energy and survives missing input.
+        public void Reset() { Array.Clear(Low); Array.Clear(Upper); }
+
         public AudioFeatureExtractor(SampleFormat format)
         {
             if (format.SampleRate <= 0 || format.ChannelCount <= 0)

@@ -8,6 +8,8 @@ namespace AEther
     {
         public int Length => Buffer.Length;
 
+        public void Reset() { Buffer.Reset(); Array.Clear(Real); Array.Clear(Imaginary); nonzero = 0; }
+
         readonly Vector<double>[] Real, Imaginary, CoefficientReal, CoefficientImaginary, Window;
         readonly int WindowSize;
         readonly double Normalization;

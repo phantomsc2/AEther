@@ -3,7 +3,7 @@ using System;
 
 namespace AEther.NAudio
 {
-    public abstract class Input : SampleSource
+    public abstract class Input : SampleSource, ITimedSampleSource
     {
 
         public override SampleFormat Format { get; }
@@ -16,6 +16,7 @@ namespace AEther.NAudio
         /// when feeding an analyzer to avoid processing packets twice.
         /// </summary>
         public event CaptureDataAvailableHandler? PacketAvailable;
+        public event TimedSampleDataHandler? TimedDataAvailable;
 
         protected readonly IWaveIn? Device;
         protected readonly WasapiRecorder? WasapiDevice;
@@ -60,6 +61,14 @@ namespace AEther.NAudio
         private void Wasapi_DataAvailable(ReadOnlySpan<byte> buffer,
             global::NAudio.CoreAudioApi.AudioClientBufferFlags flags, long devicePosition, long qpcPosition)
         {
+            var packetFlags = AudioPacketFlags.None;
+            if (flags.HasFlag(global::NAudio.CoreAudioApi.AudioClientBufferFlags.Silent)) packetFlags |= AudioPacketFlags.Silent;
+            if (flags.HasFlag(global::NAudio.CoreAudioApi.AudioClientBufferFlags.DataDiscontinuity)) packetFlags |= AudioPacketFlags.Discontinuity;
+            if (flags.HasFlag(global::NAudio.CoreAudioApi.AudioClientBufferFlags.TimestampError)) packetFlags |= AudioPacketFlags.TimestampError;
+            var valid = !packetFlags.HasFlag(AudioPacketFlags.TimestampError);
+            TimedDataAvailable?.Invoke(this, buffer, new(
+                valid ? AudioClock.ConvertTimestamp(qpcPosition, 10_000_000) : null,
+                valid ? devicePosition : null, valid ? AudioTimestampQuality.Device : AudioTimestampQuality.Estimated, packetFlags));
             PacketAvailable?.Invoke(buffer, flags, devicePosition, qpcPosition);
             DataAvailable?.Invoke(this, buffer);
         }
@@ -71,6 +80,7 @@ namespace AEther.NAudio
         private void Device_DataAvailable(object? sender, WaveInEventArgs evt)
         {
             var data = evt.Buffer.AsSpan(0, evt.BytesRecorded);
+            TimedDataAvailable?.Invoke(this, data, new(Quality: AudioTimestampQuality.Estimated));
             DataAvailable?.Invoke(this, data);
         }
 

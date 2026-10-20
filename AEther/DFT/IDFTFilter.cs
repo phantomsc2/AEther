@@ -9,6 +9,8 @@ namespace AEther
 
         int Length { get; }
 
+        void Reset();
+
         Complex GetOutput();
 
         void Process(double newSample);

@@ -176,6 +176,7 @@ public sealed class SettingsWindow : ToolWindow
     (double Minimum, double Maximum) NumericBounds(string name) => name switch
     {
         nameof(AnalyzerOptions.BufferCapacity) => (1, 64),
+        nameof(AnalyzerOptions.MaxInputAgeMilliseconds) => (1, 1000),
         nameof(AnalyzerOptions.MinFrequency) => (1, Options.MaxFrequency - 1),
         nameof(AnalyzerOptions.MaxFrequency) => (Options.MinFrequency + 1, 22050),
         nameof(AnalyzerOptions.FrequencyResolution) => (1, 96),
@@ -224,6 +225,9 @@ public sealed class SettingsWindow : ToolWindow
             + $"Analysis: {rate:F1} Hz ({1000 / rate:F2} ms/block)\n"
             + $"Capture to draw: {Stat("render.capture_to_submission_ms")}\n"
             + $"Capture queue: {Stat("capture.queue_ms")}\n"
+            + $"Source to draw: {Stat("render.source_to_submission_ms")}\n"
+            + $"Presented audio age: {Stat("render.presented_audio_age_ms")}\n"
+            + $"Timestamp quality: {analyzer.LastTimestampQuality}\n"
             + $"Analysis CPU: {Stat("analysis.total_ms")}\n"
             + $"Draw CPU: {Stat("render.draw_cpu_ms")}\n"
             + $"Frame pacing wait: {Stat("render.pacing_wait_ms")}\n"
@@ -231,6 +235,7 @@ public sealed class SettingsWindow : ToolWindow
             + $"Output: {session.Renderer.OutputDescription}\n"
             + $"GPU: {session.Renderer.AdapterDescription}\n"
             + $"History delay: {audio.PresentationDelay * 1000:F0} ms | Drops: {analyzer.DroppedInputCount} input, {audio.DroppedRows} visual\n"
-            + "Capture to draw excludes device buffering and display scanout.";
+            + $"Lost audio: {analyzer.DroppedAudioMilliseconds:F1} ms | Discontinuities: {analyzer.DiscontinuityCount}\n"
+            + "Timings end at CPU submission; speaker/display delay is not calibrated.";
     }
 }

@@ -1,4 +1,8 @@
+#nullable enable
 using AEther.Vortice;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Vortice.DXGI;
 
 namespace AEther.WinUI;
@@ -9,6 +13,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
     public Analyzer Analyzer { get; }
     public Renderer Renderer { get; }
     Task? stopTask;
+    int stopping;
     public event EventHandler<Exception?>? CaptureStopped;
 
     public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options,
@@ -23,19 +28,32 @@ public sealed class Session : IDisposable, IAsyncDisposable
             Renderer.Audio.Profile = Analyzer.Profile;
         }
         catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
-        source.DataAvailable += OnAudio;
+        if (source is ITimedSampleSource timed) timed.TimedDataAvailable += OnTimedAudio;
+        else source.DataAvailable += OnAudio;
         source.Stopped += OnStopped;
         Analyzer.SamplesAnalyzed += OnAnalysis;
     }
 
-    void OnAudio(object? sender, ReadOnlySpan<byte> data) => Analyzer.PostSampleSpan(data);
+    void OnAudio(object? sender, ReadOnlySpan<byte> data) => Analyzer.PostSampleSpan(data,
+        new AudioPacketTiming(Quality: AudioTimestampQuality.Estimated));
+    void OnTimedAudio(object? sender, ReadOnlySpan<byte> data, AudioPacketTiming timing) => Analyzer.PostSampleSpan(data, timing);
     void OnAnalysis(object? sender, SampleEvent<double> data) => Renderer.PostAudio(data, source.Format.ChannelCount);
     void OnStopped(object? sender, Exception? error) => CaptureStopped?.Invoke(this, error);
-    public void Start() { Analyzer.Start(); source.Start(); }
+    public void Start() { _ = ObserveAnalysisAsync(); Analyzer.Start(); source.Start(); }
+    async Task ObserveAnalysisAsync()
+    {
+        try { await Analyzer.Completion.ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            if (Volatile.Read(ref stopping) == 0) CaptureStopped?.Invoke(this, error);
+        }
+    }
     public Task StopAsync() => stopTask ??= StopCoreAsync();
     async Task StopCoreAsync()
     {
-        source.DataAvailable -= OnAudio;
+        Interlocked.Exchange(ref stopping, 1);
+        if (source is ITimedSampleSource timed) timed.TimedDataAvailable -= OnTimedAudio;
+        else source.DataAvailable -= OnAudio;
         source.Stopped -= OnStopped;
         try
         {

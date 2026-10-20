@@ -66,8 +66,8 @@ namespace AEther.Tests
                 analyzer.Stop();
                 await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             }
-            Assert.That(rows, Is.EqualTo(new long[] { 0, 1, 6 }));
-            Assert.That(support, Is.EqualTo(new[] { 1, 2, 1 }), "Both histories restart at a dropped-row gap.");
+            Assert.That(rows, Is.EqualTo(new long[] { 4, 5, 6 }), "Overflow keeps the newest queued audio.");
+            Assert.That(support, Is.EqualTo(new[] { 1, 2, 3 }), "Fits start fresh after the dropped prefix.");
         }
 
         [Test]

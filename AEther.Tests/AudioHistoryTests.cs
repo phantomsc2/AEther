@@ -68,7 +68,8 @@ public class AudioHistoryTests
     [Test]
     public void FractalDepthDemandFollowsMovementSpeedFromZeroToTen()
     {
-        var history = new AudioHistory(1, 100);
+        var clock = new HistoryClock();
+        var history = new AudioHistory(1, 100, timeProvider: clock);
         Assert.That(history.FractalDepth, Is.Zero);
         for (var row = 1; row <= 200; row++)
         {
@@ -76,12 +77,14 @@ public class AudioHistoryTests
             history.Advance(.01);
             Assert.That(history.FractalDepth, Is.InRange(0f, 10f));
             Assert.That(history.FractalDepth,
-                Is.EqualTo(10 * Math.Clamp(history.MusicalVelocity / .3, 0, 1)).Within(1e-6));
+                Is.EqualTo(10 * Math.Clamp(history.MusicalVelocity / .5, 0, 1)).Within(1e-6));
         }
         Assert.That(history.FractalDepth, Is.EqualTo(10).Within(.001));
+        clock.Milliseconds += 1600;
         history.Advance(1.6);
         Assert.That(history.FractalDepth,
-            Is.EqualTo(10 * Math.Clamp(history.MusicalVelocity / .3, 0, 1)).Within(.001));
+            Is.EqualTo(10 * Math.Clamp(history.MusicalVelocity / .5, 0, 1)).Within(.001));
+        clock.Milliseconds += 20000;
         history.Advance(20);
         Assert.That(history.FractalDepth, Is.EqualTo(0).Within(.001));
     }
@@ -121,7 +124,7 @@ public class AudioHistoryTests
         history.Advance(.01);
         Assert.That(history.NewestAge, Is.LessThan(.03));
         Assert.That(history.AvailableSpan, Is.LessThan(.03));
-        Assert.That(history.History[0].AsSpan(0, 4).ToArray(), Is.All.Zero);
+        Assert.That(history.History[0][0], Is.EqualTo(.5f), "A pause ages old history rather than erasing it.");
         Assert.That(history.History[0][5], Is.EqualTo(.5f));
         Assert.That(history.MusicalTime, Is.GreaterThan(musicalTime));
     }
@@ -129,8 +132,9 @@ public class AudioHistoryTests
     [Test]
     public void MusicalTravelDependsOnAudioRatherThanRenderTiming()
     {
-        var batched = new AudioHistory(1, 100);
-        var individual = new AudioHistory(1, 100);
+        var clock = new HistoryClock();
+        var batched = new AudioHistory(1, 100, timeProvider: clock);
+        var individual = new AudioHistory(1, 100, timeProvider: clock);
         for (var row = 0; row < 40; row++)
         {
             var input = new SampleEvent<double>(new[] { .1, .2, .1, .4 }, 4, DateTime.Now)
@@ -145,9 +149,11 @@ public class AudioHistoryTests
         var coasting = batched.MusicalTime;
         var velocity = batched.MusicalVelocity;
         batched.Post(new(new double[4], 4, DateTime.Now) { AnalysisRow = 40 }, 1);
+        clock.Milliseconds = 1000;
         batched.Advance(1);
         Assert.That(batched.MusicalTime, Is.GreaterThan(coasting));
         Assert.That(batched.MusicalVelocity, Is.InRange(.5 * velocity, .6 * velocity));
+        clock.Milliseconds += 7000;
         batched.Advance(7);
         Assert.That(batched.MusicalVelocity, Is.LessThan(.01 * velocity));
         Assert.That(batched.MusicalTime - coasting, Is.LessThan(1.6 * velocity));
@@ -199,18 +205,18 @@ public class AudioHistoryTests
     }
 
     [Test]
-    public void SpectrumTakesComponentMaximaOnlySincePreviousFrame()
+    public void SpectrumAveragesRowsAndRetainsTheAggregateBetweenPackets()
     {
         var history = new AudioHistory(1, 100);
         history.Post(new(new[] { .8, .1, .6, .2 }, 4, DateTime.Now), 1);
         history.Post(new(new[] { .2, .9, .3, .7 }, 4, DateTime.Now) { AnalysisRow = 1 }, 1);
         history.Advance(0);
-        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .8f, .9f, .6f, .7f }));
+        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .5f, .5f, .45f, .45f }).Within(1e-7));
         history.Post(new(new[] { .1, .2, .3, .4 }, 4, DateTime.Now) { AnalysisRow = 2 }, 1);
         history.Advance(0);
         Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .1f, .2f, .3f, .4f }));
         history.Advance(0);
-        Assert.That(history.Spectrum[0], Is.All.Zero);
+        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .1f, .2f, .3f, .4f }));
     }
 
     [Test]
@@ -227,7 +233,7 @@ public class AudioHistoryTests
     }
 
     [Test]
-    public void BacklogIsBoundedAndNewestPacketWins()
+    public void BacklogIsBoundedAndDuplicateRowsDoNotReplayAttacks()
     {
         var history = new AudioHistory(4, 100);
         var samples = new double[16];
@@ -238,7 +244,7 @@ public class AudioHistoryTests
         }
         history.Advance(0);
         Assert.That(history.DroppedRows, Is.GreaterThan(0));
-        Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
+        Assert.That(history.Spectrum[0], Is.All.EqualTo(.1f));
     }
 
     [Test]

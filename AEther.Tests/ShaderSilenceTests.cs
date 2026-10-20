@@ -49,10 +49,11 @@ public class ShaderSilenceTests
     [TestCaseSource(nameof(Scenes)), Category("GPU")]
     public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb, bool periodic)
     {
+        using var shaders = new SceneShaders(scene);
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: ShaderDirectory, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock);
         renderer.SelectScene(scene);
         if (IsFluidScene(scene))
         {
@@ -139,6 +140,34 @@ public class ShaderSilenceTests
                 if (i % 4 != 3 && pixels[i] != 0) { nonblack++; maximum = Math.Max(maximum, pixels[i]); }
             Assert.That(nonblack, Is.Zero,
                 $"{scene}: {stage}: {nonblack} nonzero RGB channels, peak {maximum}/255. Expected exact black.");
+        }
+    }
+
+    // Compile only the scene under test. Discovery and all decay/RGB assertions stay unchanged;
+    // recompiling every unrelated scene for each gain/boundary case dominated this regression.
+    sealed class SceneShaders : IDisposable
+    {
+        readonly string temporaryRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
+        public string Path { get; }
+        public SceneShaders(string scene)
+        {
+            Path = System.IO.Path.Combine(temporaryRoot, "AEther-silence-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
+            var common = System.IO.Path.Combine(ShaderDirectory, "Common");
+            foreach (var source in Directory.EnumerateFiles(common, "*", SearchOption.AllDirectories))
+            {
+                var target = System.IO.Path.Combine(Path, "Common", System.IO.Path.GetRelativePath(common, source));
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target)!);
+                File.Copy(source, target);
+            }
+            File.Copy(System.IO.Path.Combine(ShaderDirectory, "Scenes", scene + ".hlsl"),
+                System.IO.Path.Combine(Path, "Scenes", scene + ".hlsl"));
+        }
+        public void Dispose()
+        {
+            if (!System.IO.Path.GetFullPath(Path).StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Silence fixture cleanup escaped the temporary directory.");
+            Directory.Delete(Path, true);
         }
     }
 

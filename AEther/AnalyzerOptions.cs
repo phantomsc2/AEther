@@ -12,6 +12,10 @@ namespace AEther
         [Category("Pipeline")]
         public int BufferCapacity { get; set; } = 4;
 
+        [Category("Pipeline")]
+        [Description("Maximum age of completed live analysis ticks. Preserve the samples needed by a fresh tick. Offline input is unaffected.")]
+        public double MaxInputAgeMilliseconds { get; set; } = 50;
+
         [Category("Domain")]
         public double MinFrequency { get; set; } = 30;
 
@@ -74,6 +78,8 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(format));
             if (BufferCapacity <= 0)
                 throw new ArgumentOutOfRangeException(nameof(BufferCapacity), "Use a positive, bounded input capacity.");
+            if (!double.IsFinite(MaxInputAgeMilliseconds) || MaxInputAgeMilliseconds <= 0 || MaxInputAgeMilliseconds > 1000)
+                throw new ArgumentOutOfRangeException(nameof(MaxInputAgeMilliseconds));
             if (!double.IsFinite(InputGainDb) || InputGainDb < -60 || InputGainDb > 60)
                 throw new ArgumentOutOfRangeException(nameof(InputGainDb), "Input gain must be between -60 and +60 dB.");
             if (TimeResolution <= 0 || TimeResolution > format.SampleRate)

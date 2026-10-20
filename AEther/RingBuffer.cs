@@ -32,6 +32,8 @@ namespace AEther
             return oldValue;
         }
 
+        public void Reset() { Array.Clear(Data); Position = 0; }
+
         public Memory<T> GetMemory(int length)
         {
             var count = Math.Min(Data.Length - Position, length);

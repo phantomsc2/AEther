@@ -1,5 +1,74 @@
 # Latency and profiling
 
+## Current source-timed pipeline (2026-10-20)
+
+The WinUI session prefers the core `ITimedSampleSource` capability. Its borrowed-span callback
+adds `AudioPacketTiming`: first-frame position, first-sample monotonic timestamp, quality,
+and silent/discontinuity/timestamp-error flags. Existing byte callbacks and NAudio's raw
+native packet callback remain available; subscribe to one ingestion path to avoid duplicates.
+WASAPI QPC positions are expressed in 100 ns units and are converted once into `Stopwatch`
+ticks. Wall-clock `DateTime` values do not drive synchronization.
+
+Analysis retains its sample-count cadence (`sampleRate / floor(sampleRate / TimeResolution)`).
+Rows carry their completed source interval `[SampleStartTimestamp, SampleEndTimestamp)`,
+timestamp quality and discontinuity generation; `SampleIndex` still identifies the batch start.
+Packets can contain many rows, and a row can cross packet boundaries. Arrival/completion times
+are separate from represented sample time. Invalid timestamps extrapolate from contiguous
+sample history; absent history uses callback time minus packet duration and is marked estimated.
+After an untimestamped capture pause, a new arrival anchor is established rather than keeping
+resumed packets permanently beyond the live age budget. Trustworthy device timestamps also
+identify short source-time gaps even if the device frame counter resumes consecutively.
+
+Capture does not wait for analysis or graphics. Queue overflow drops the **oldest** queued
+packet. `BufferCapacity` bounds packet count; `MaxInputAgeMilliseconds` defaults to 50 ms and
+also trims old prefixes of oversized live packets between batches. Offline byte-only ingestion
+does not use this wall-time age limit. Age is tested at completed analysis boundaries: samples
+needed by a fresh tick are retained even when its duration exceeds the age budget. Offline ingestion
+remains sample-count based. Known missing samples and stream discontinuities reset
+DFT rings/state, statistical fits and waveform filters; they are not concatenated or silently
+invented as zeros. Explicitly silent packets override their buffer contents with zeros.
+
+The renderer follows the newest completed source interval at or before its presentation target.
+The default added presentation delay is **zero**. Explicit delay applies to all audio fields.
+Live spectrum and global fields use a duration-weighted arithmetic mean over the same audio
+interval; missing intervals contribute zero and partial intersections receive fractional weight.
+Individual historical rows retain their original values. The global transient remains signed;
+support counts/ranks describe the last contributing row rather than an averaged statistical fit.
+
+No new packet does not mean a silent frame. The last aggregate can survive up to 50 ms of source
+age, then live values clear and history continues aging. A discontinuity cancels retention.
+The live handoff holds at most 100 ms of rows plus any explicitly requested presentation reserve;
+shader history duration is independent. After stalls only the latest 50 ms can excite current
+envelopes/motion. Stale rows cannot create a new flash merely because they were dequeued now.
+Untimed offline/fixture rows retain a separate bounded history-seeding path; use explicit source
+timestamps and an injected `TimeProvider` for synchronization tests.
+
+F9 records CSV stage timings and metadata. The status panel reports source quality, discarded
+audio duration, discontinuities and visual drops. Useful stages are:
+
+| Stage | Meaning |
+| --- | --- |
+| `capture.packet_ms` | Packet's represented audio duration |
+| `capture.queue_ms` | Callback arrival to analyzer dequeue |
+| `capture.dropped_audio_ms` | Discarded/missing audio duration per loss operation |
+| `analysis.source_age_ms` | Completed source boundary to publication |
+| `analysis.total_ms` | Batch CPU/wait time including synchronous subscribers |
+| `render.presented_audio_age_ms` | Frame preparation time minus selected source cursor |
+| `render.source_to_submission_ms` | Latest consumed source boundary to CPU draw submission |
+| `render.capture_to_submission_ms` | Callback arrival to CPU draw submission; excludes earlier packet age |
+
+Timing scopes are nested; do not add them all together. Mean/p95 describe the latest 256 values;
+saved profiles retain individual measurements. Metadata records timestamp quality and discontinuities.
+Neither CPU submission nor `Present` completion establishes visible-pixel or speaker arrival time.
+The DFT window's frequency-dependent response is unchanged. Physical audio/display calibration and
+GPU history-upload optimization are separate work. Rendering performance comparisons must use 720p
+or higher; low-resolution GPU silence tests are correctness checks, not timing benchmarks.
+
+## Historical profiling notes
+
+The following observations describe earlier implementations and recordings. Their buffering,
+locking, defaults and stage interpretations are superseded by the current description above.
+
 Press F9 while running to start recording; play representative music for 15–30 seconds, then press F9 again. CSV and a percentile summary are saved under `profiles` beside the executable. Restarting the session resets the recording. Capture is bounded to 200,000 stage records.
 
 The window's **Analysis age max** is the maximum estimated first-sample age at analysis publication over the last second. Capture timestamps are inferred by subtracting packet duration from callback time. This includes packet accumulation, worker queueing, batch assembly and analysis; it is not an audio-device timestamp or audio-to-photon measurement. **Frame interval** includes presentation pacing, rather than measuring GPU execution.

@@ -9,7 +9,7 @@ namespace AEther.Tests;
 public class GlobalHistoryTests
 {
     [Test]
-    public void LatestGlobalPacketIsOwnedSignedAndIndependentOfSpectrumMaxima()
+    public void GlobalAndLocalFieldsShareTheFrameIntervalAndRetainSignedHistory()
     {
         var clock = new Clock();
         var history = new AudioHistory(1, 100, timeProvider: clock);
@@ -21,14 +21,16 @@ public class GlobalHistoryTests
             { AnalysisRow = 2, GlobalEvidence = last }, 1);
         Array.Clear(samples);
         history.Advance(0);
-        Assert.That(history.GlobalEvidence, Is.EqualTo(last));
-        Assert.That(history.GlobalSTBR, Is.EqualTo(new Vector4(.1f, -.1f, .2f, .05f)));
-        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .8f, .9f, .6f, .7f }));
+        var aggregate = history.GlobalEvidence;
+        Assert.That(aggregate.Background, Is.EqualTo((.5 + .2) / 3).Within(1e-12));
+        Assert.That(aggregate.Transient, Is.EqualTo((.7 - .1) / 3).Within(1e-12));
+        Assert.That(Vector4.Distance(history.GlobalSTBR, new Vector4(.4f / 3, .6f / 3, .7f / 3, .25f / 3)), Is.LessThan(1e-7));
+        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { 1f / 3, 1f / 3, .9f / 3, .9f / 3 }).Within(1e-7));
         Assert.That(history.GlobalHistory.Take(4), Is.EqualTo(new[] { .3f, .7f, .5f, .2f }));
         Assert.That(history.GlobalHistory.Skip(4).Take(4), Is.All.Zero);
         Assert.That(history.GlobalHistory.Skip(8).Take(4), Is.EqualTo(new[] { .1f, -.1f, .2f, .05f }));
         history.Advance(0);
-        Assert.That(history.GlobalEvidence, Is.EqualTo(last), "Live global metadata survives frames without new rows.");
+        Assert.That(history.GlobalEvidence, Is.EqualTo(aggregate), "Frame aggregates survive frames without new rows.");
         clock.Milliseconds = 200;
         history.Advance(.2);
         Assert.That(history.GlobalSTBR, Is.EqualTo(Vector4.Zero));
@@ -36,8 +38,8 @@ public class GlobalHistoryTests
         // Resume without consumed sample rows: both histories must clear the pause.
         history.Post(new(new double[4], 4, DateTime.UnixEpoch) { AnalysisRow = 3 }, 1);
         history.Advance(0);
-        Assert.That(history.GlobalHistory, Is.All.Zero);
-        Assert.That(history.History[0], Is.All.Zero);
+        Assert.That(history.GlobalHistory[2], Is.EqualTo(.5f), "A pause retains correctly aged history.");
+        Assert.That(history.GlobalSTBR, Is.EqualTo(Vector4.Zero));
     }
 
     [Test]
@@ -51,7 +53,7 @@ public class GlobalHistoryTests
             Assert.That(history.GlobalHistory[4 * slot + 2], Is.EqualTo(history.History[0][4 * slot + 2]));
         Post(5 * history.Rows);
         Assert.That(history.GlobalHistory.Count(x => x != 0), Is.EqualTo(1));
-        Assert.That(history.GlobalSTBR.Z, Is.EqualTo(5 * history.Rows));
+        Assert.That(history.GlobalSTBR.Z, Is.LessThan(5 * history.Rows), "The gap contributes zero to the frame mean.");
 
         void Post(int row)
         {

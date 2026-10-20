@@ -3,22 +3,24 @@ using System.Numerics;
 
 namespace AEther.Vortice;
 
-/// <summary>Owned, bounded handoff. Only the render thread touches history or graphics resources.</summary>
+/// <summary>Owned handoff. History, aggregates and envelopes are touched only by the render thread.</summary>
 public sealed class AudioHistory
 {
-    readonly Channel<(long Row, long Capture, long Completed, double Arrival, float[] Samples, GlobalEvidence Global)> pending;
-
+    const double Retention = .05, HandoffSeconds = .1;
+    sealed record Row(long Index, long Capture, long Completed, double Start, double End,
+        double Arrival, float[] Samples, GlobalEvidence Global, long Generation, bool Live);
+    readonly Channel<Row> pending, offline;
+    readonly Queue<Row> scheduled = new(), recent = new();
     readonly TimeProvider timeProvider;
     readonly long started;
     readonly double rate;
-    readonly float[] peak;
-    long latestRow = -1;
-    double lastAudio = double.NegativeInfinity;
-    double anchorTime, position;
-    double movementImpulse;
-    long anchorRow, newestRow = -1;
-    long firstRow;
-    bool anchored;
+    readonly int handoffRows;
+    readonly double[] sum;
+    long newestRow = -1, firstRow, generation = -1;
+    double position, newestEnd, newestArrival, cursor, stateTime;
+    bool haveCursor, haveState, live;
+    long dropped;
+
     public PipelineProfile? Profile { get; set; }
     public double PresentationDelay { get; }
     public int Bands { get; }
@@ -26,32 +28,28 @@ public sealed class AudioHistory
     public double Seconds { get; }
     public float[][] History { get; }
     public float[][] Spectrum { get; }
-    /// <summary>Newest complete packet; signed T is retained. Expires with live audio.</summary>
+    /// <summary>Duration-weighted frame fields. Support metadata comes from the latest contributing row.</summary>
     public GlobalEvidence GlobalEvidence { get; private set; }
     public Vector4 GlobalSTBR => PackGlobal(GlobalEvidence);
-    /// <summary>Width-one RGBA history in (structure, signed transient, background, interaction RMS) order.</summary>
     public float[] GlobalHistory { get; }
-    /// <summary>Bounded tone/transient/noise envelopes, advanced in audio-row time.</summary>
     public Vector3 Components { get; private set; }
     public float FractalEnergy { get; private set; }
     public double MusicalTime { get; private set; }
     public double MusicalVelocity { get; private set; }
-    // Depth travel follows the same smoothed drive as motion. The renderer
-    // maps this 0..10 demand to depths 3..configured maximum, independently of AA.
-    public float FractalDepth => (float)(10 * Math.Clamp(MusicalVelocity / 0.5, 0, 1));
+    public float FractalDepth => (float)(10 * Math.Clamp(MusicalVelocity / .5, 0, 1));
     public float Flash { get; private set; }
     public float Energy { get; private set; }
     public double Now => timeProvider.GetElapsedTime(started).TotalSeconds;
+    double HostNow => AudioClock.Seconds(AudioClock.Now(timeProvider));
     public float Shift => (float)(((position % Rows + Rows) % Rows + .5) / Rows);
     public float TimeScale => (float)(Seconds * rate / Rows);
-    // Limit sampling to retained row centers, including during startup or a backlog.
     public float AvailableSpan => (float)(Math.Max(0, position - Math.Max(firstRow, newestRow - Rows + 1)) / Rows);
     public float NewestAge => (float)(Math.Max(0, position - newestRow) / Rows);
     public long DroppedRows => Interlocked.Read(ref dropped);
     public long LatestCaptureTimestamp { get; private set; }
-    long dropped;
+    public long? LatestSourceTimestamp { get; private set; }
 
-    public AudioHistory(int bands, double analysisRate, double seconds = 1, double presentationDelay = .02,
+    public AudioHistory(int bands, double analysisRate, double seconds = 1, double presentationDelay = 0,
         TimeProvider? timeProvider = null)
     {
         this.timeProvider = timeProvider ?? TimeProvider.System;
@@ -59,34 +57,44 @@ public sealed class AudioHistory
         if (bands <= 0 || analysisRate <= 0 || !double.IsFinite(analysisRate)
             || seconds <= 0 || !double.IsFinite(seconds)
             || presentationDelay < 0 || !double.IsFinite(presentationDelay)) throw new ArgumentOutOfRangeException();
-        Bands = bands; rate = analysisRate; Seconds = seconds;
-        PresentationDelay = presentationDelay;
-        // History duration and presentation delay both consume ring capacity.
+        Bands = bands; rate = analysisRate; Seconds = seconds; PresentationDelay = presentationDelay;
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
         GlobalHistory = new float[4 * Rows];
-        peak = new float[8 * bands];
-        pending = Channel.CreateBounded<(long, long, long, double, float[], GlobalEvidence)>(new BoundedChannelOptions(Math.Min(4096, Rows * 2))
-        {
-            SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
-            AllowSynchronousContinuations = false,
-        }, _ => Interlocked.Increment(ref dropped));
+        sum = new double[8 * bands];
+        handoffRows = Math.Max(2, (int)Math.Ceiling((HandoffSeconds + presentationDelay) * rate));
+        pending = Mailbox(handoffRows);
+        // Legacy/offline fixtures can seed an entire history without pretending it is live capture.
+        offline = Mailbox(Math.Min(32768, Rows * 2));
     }
+
+    Channel<Row> Mailbox(int capacity) => Channel.CreateBounded<Row>(new BoundedChannelOptions(capacity)
+    {
+        SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
+        AllowSynchronousContinuations = false,
+    }, _ => Interlocked.Increment(ref dropped));
 
     public void Post(SampleEvent<double> input, int channelCount)
     {
         if (input.SampleCount != Bands * Splitter.OutputStride || channelCount < 1)
             throw new ArgumentException("Analysis dimensions do not match the renderer.");
+        bool timed = input.SampleEndTimestamp.HasValue;
+        if (timed != input.SampleStartTimestamp.HasValue
+            || timed && input.SampleEndTimestamp <= input.SampleStartTimestamp)
+            throw new ArgumentException("A timed row must have a positive source interval.");
         var owned = new float[Bands * 8];
         for (var c = 0; c < 2; c++)
         {
             var src = input.GetChannel(Math.Min(c, channelCount - 1)).Span;
             for (var i = 0; i < src.Length; i++)
-                owned[c * Bands * 4 + i] = double.IsFinite(src[i])
-                    ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
+                owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
         }
-        pending.Writer.TryWrite((input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp, Now, owned, input.GlobalEvidence));
+        var row = new Row(input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp,
+            timed ? AudioClock.Seconds(input.SampleStartTimestamp!.Value) : input.AnalysisRow / rate,
+            timed ? AudioClock.Seconds(input.SampleEndTimestamp!.Value) : (input.AnalysisRow + 1) / rate,
+            HostNow, owned, input.GlobalEvidence, input.DiscontinuityGeneration, timed);
+        (timed ? pending : offline).Writer.TryWrite(row);
     }
 
     static Vector4 PackGlobal(GlobalEvidence value)
@@ -98,142 +106,189 @@ public sealed class AudioHistory
 
     public void Advance(double dt)
     {
-        Flash *= (float)Math.Exp(-dt / .045);
-        Array.Clear(peak);
-
-        var now = Now;
-        while (pending.Reader.TryRead(out var packet))
+        long hostTicks = AudioClock.Now(timeProvider);
+        double host = AudioClock.Seconds(hostTicks);
+        double target = AudioClock.Seconds(hostTicks - (long)Math.Round(PresentationDelay * System.Diagnostics.Stopwatch.Frequency));
+        // Bounded work even if a producer is concurrently filling the mailbox.
+        for (var i = 0; i < handoffRows && pending.Reader.TryRead(out var row); i++)
         {
-            // Loopback can stop producing samples while a player is paused.
-            // Wall time continues, but sample-based row numbers do not. Detect
-            // that gap using packet arrival (not render timing or frame dt).
-            if (anchored && anchorRow + (packet.Arrival - anchorTime - PresentationDelay) * rate
-                > packet.Row + .15 * rate)
+            if (generation >= 0 && row.Generation != generation)
             {
-                foreach (var history in History) Array.Clear(history);
-                Array.Clear(GlobalHistory);
-                GlobalEvidence = default;
-                firstRow = packet.Row;
-                latestRow = newestRow = packet.Row - 1;
-                anchored = false;
-                Flash = 0;
+                ClearLive(); recent.Clear(); haveCursor = false; Flash = 0;
             }
-            if (!anchored)
+            if (scheduled.Count > 0 && scheduled.Last().Generation != row.Generation)
             {
-                anchorTime = packet.Arrival;
-                anchorRow = packet.Row;
-                anchored = true;
+                Interlocked.Add(ref dropped, scheduled.Count);
+                scheduled.Clear();
             }
-            else if (packet.Row > newestRow)
-            {
-                // Analysis can acquire a lasting delay after capture drops or a
-                // queue backlog. Do not keep presenting ahead of every new row:
-                // that unwritten interval becomes a permanent hole at the core
-                // of scenes that project history outward. Restore the delay
-                // reserve at arrival; between packets wall time still advances
-                // normally so stopped capture eventually goes completely dark.
-                var arrivalRow = anchorRow + (packet.Arrival - anchorTime) * rate;
-                if (arrivalRow > packet.Row)
-                    anchorTime += (arrivalRow - packet.Row) / rate;
-            }
-            var row = packet.Row;
-            LatestCaptureTimestamp = packet.Capture;
-            newestRow = Math.Max(newestRow, row);
-            // Skipped analysis rows remain empty, including after ring wrap.
-            for (var clear = Math.Max(latestRow + 1, row - Rows + 1); clear <= row; clear++)
-            {
-                Array.Clear(GlobalHistory, (int)((clear % Rows + Rows) % Rows) * 4, 4);
-                for (var c = 0; c < 2; c++)
-                {
-                    Array.Clear(History[c], (int)((clear % Rows + Rows) % Rows) * Bands * 4, Bands * 4);
-                }
-            }
-            latestRow = Math.Max(latestRow, row);
-            if (row < latestRow - Rows + 1) continue;
-            if (packet.Capture != 0) Profile?.Elapsed("render.capture_to_consume_ms", packet.Capture);
-            if (packet.Completed != 0) Profile?.Elapsed("render.analysis_to_consume_ms", packet.Completed);
-            var offset = (int)((row % Rows + Rows) % Rows) * Bands * 4;
-            var global = PackGlobal(packet.Global);
-            global.CopyTo(GlobalHistory.AsSpan(offset / Bands, 4));
-            if (row == latestRow) GlobalEvidence = packet.Global;
-            for (var c = 0; c < 2; c++)
-            {
-                packet.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
-            }
-            for (var i = 0; i < peak.Length; i++) peak[i] = Math.Max(peak[i], packet.Samples[i]);
-            var power = 0.0;
-            var transientPower = 0.0;
-            double tonePower = 0, noisePower = 0;
-            for (var i = 0; i < Bands * 8; i += 4)
-            {
-                // Alpha is raw linear magnitude; RGB are independent robust evidence fields.
-                var magnitude = (double)packet.Samples[i + 3];
-                power += magnitude * magnitude;
-                var transient = (double)packet.Samples[i + 1];
-                transientPower += transient * transient;
-                tonePower += (double)packet.Samples[i] * packet.Samples[i];
-                noisePower += (double)packet.Samples[i + 2] * packet.Samples[i + 2];
-                Flash = Math.Max(Flash, packet.Samples[i + 1]);
-            }
-            Energy = (float)Math.Sqrt(power / (2 * Bands));
-            static float Bounded(double power, int count)
-            {
-                double rms = Math.Sqrt(power / count);
-                return (float)(rms / (.2 + rms));
-            }
-            var demand = new Vector3(Bounded(tonePower, 2 * Bands), Bounded(transientPower, 2 * Bands), Bounded(noisePower, 2 * Bands));
-            Components += (demand - Components) * new Vector3((float)(1 - Math.Exp(-1 / (.06 * rate))),
-                (float)(1 - Math.Exp(-1 / (.12 * rate))), (float)(1 - Math.Exp(-1 / (.15 * rate))));
-            var energyDemand = Energy / (.06f + Energy);
-            FractalEnergy += (energyDemand - FractalEnergy) * (float)(1 - Math.Exp(-1 / (.12 * rate)));
-            // Accumulate drive by sample duration so frame rate does not change
-            // how much force a passage supplies to the slice's momentum.
-            movementImpulse += (3 * Energy + 6 * power / (2 * Bands)
-                + 4 * Math.Sqrt(transientPower / (2 * Bands))) / rate;
-            lastAudio = now;
-
+            scheduled.Enqueue(row);
+            while (scheduled.Count > handoffRows) { scheduled.Dequeue(); Interlocked.Increment(ref dropped); }
         }
-        if (dt > 0)
+        while (scheduled.TryPeek(out var row) && row.End <= target)
         {
-            // EMA velocity: attack ten times faster than decay, with a long
-            // coast when the music eases off.
-            // Integrate both velocity and position analytically for this frame.
-            var target = movementImpulse / dt;
-            var inertia = target > MusicalVelocity ? .16 : 1.6;
-            var response = 1 - Math.Exp(-dt / inertia);
-            MusicalTime += target * dt + (MusicalVelocity - target) * inertia * response;
-            MusicalVelocity += (target - MusicalVelocity) * response;
-            movementImpulse = 0;
+            scheduled.Dequeue();
+            Consume(row, host);
         }
-        // Maximum over exactly the events drained since the previous frame.
+        for (var i = 0; i < Math.Min(32768, Rows * 2) && offline.Reader.TryRead(out var row); i++)
+            Consume(row, host);
+
+        if (newestRow < 0) return;
+        double end = live ? Math.Min(target, newestEnd) : newestEnd - PresentationDelay;
+        double age = live ? target - newestEnd : host - newestArrival;
+        if (!haveCursor || end > cursor)
+        {
+            double start = haveCursor ? cursor : recent.TryPeek(out var first) ? first.Start : end;
+            if (live) start = Math.Max(start, end - Retention);
+            Aggregate(start, end);
+            cursor = end;
+            haveCursor = true;
+        }
+        if (age > Retention)
+        {
+            ClearLive();
+            var silenceEnd = live ? target : newestEnd + age;
+            if (haveState && silenceEnd > stateTime)
+            {
+                DriveZero(silenceEnd - stateTime);
+                stateTime = silenceEnd;
+            }
+        }
+        position = newestRow + (end - newestEnd) * rate;
+        if (age > Retention) position = newestRow + age * rate;
+        if (live)
+        {
+            Profile?.Record("render.presented_audio_age_ms", Math.Max(0, host - end) * 1000);
+            Profile?.Record("render.source_age_ms", (host - newestEnd) * 1000);
+        }
+    }
+
+    void Consume(Row row, double host)
+    {
+        bool changed = generation != row.Generation;
+        if (changed)
+        {
+            generation = row.Generation;
+            recent.Clear();
+            haveCursor = false;
+            ClearLive();
+            Flash = 0;
+        }
+        if (newestRow >= 0 && (row.Index <= newestRow || row.End <= newestEnd))
+        {
+            if (!changed) { Interlocked.Increment(ref dropped); return; }
+            foreach (var history in History) Array.Clear(history);
+            Array.Clear(GlobalHistory);
+            newestRow = row.Index - 1;
+            firstRow = row.Index;
+            haveState = false;
+        }
+        long previous = newestRow;
+        for (long clear = Math.Max(newestRow + 1, row.Index - Rows + 1); clear <= row.Index; clear++)
+        {
+            int slot = (int)((clear % Rows + Rows) % Rows);
+            Array.Clear(GlobalHistory, slot * 4, 4);
+            foreach (var history in History) Array.Clear(history, slot * Bands * 4, Bands * 4);
+        }
+        int offset = (int)((row.Index % Rows + Rows) % Rows) * Bands * 4;
+        for (var c = 0; c < 2; c++) row.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
+        PackGlobal(row.Global).CopyTo(GlobalHistory.AsSpan(offset / Bands, 4));
+        newestRow = row.Index; newestEnd = row.End; newestArrival = row.Arrival; live = row.Live;
+        LatestCaptureTimestamp = row.Capture;
+        LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;
+        recent.Enqueue(row);
+        double keepFrom = row.End - (row.Live ? Retention : Rows / rate);
+        while (recent.TryPeek(out var old) && old.End <= keepFrom) recent.Dequeue();
+        while (recent.Count > (row.Live ? handoffRows : Rows)) recent.Dequeue();
+        if (previous >= 0 && row.Index != previous + 1) { ClearLive(); Flash = 0; }
+        // Untimed replay rows have a logical sample clock, independent of time spent paused in the host.
+        if (!row.Live && haveState && stateTime > row.Start) stateTime = row.Start;
+        if (haveState && row.Start > stateTime) DriveZero(row.Start - stateTime);
+        double duration = row.End - Math.Max(row.Start, haveState ? stateTime : row.Start);
+        if (duration > 0)
+        {
+            if (!row.Live || host - PresentationDelay - row.End <= Retention) Drive(row.Samples, duration);
+            else DriveZero(duration);
+        }
+        stateTime = Math.Max(haveState ? stateTime : row.End, row.End);
+        haveState = true;
+        if (row.Capture != 0) Profile?.Elapsed("render.capture_to_consume_ms", row.Capture);
+        if (row.Completed != 0) Profile?.Elapsed("render.analysis_to_consume_ms", row.Completed);
+    }
+
+    void Aggregate(double start, double end)
+    {
+        Array.Clear(sum);
+        double width = end - start;
+        if (width <= 0) return;
+        double background = 0, transient = 0, structure = 0, residual = 0;
+        GlobalEvidence support = default;
+        foreach (var row in recent)
+        {
+            double weight = Math.Max(0, Math.Min(end, row.End) - Math.Max(start, row.Start)) / width;
+            if (weight == 0) continue;
+            for (var i = 0; i < sum.Length; i++) sum[i] += weight * row.Samples[i];
+            static double Finite(double v) => double.IsFinite(v) ? v : 0;
+            background += weight * Finite(row.Global.Background);
+            transient += weight * Finite(row.Global.Transient);
+            structure += weight * Finite(row.Global.Structure);
+            residual += weight * Finite(row.Global.InteractionRms);
+            support = row.Global;
+        }
         for (var c = 0; c < 2; c++)
+            for (var i = 0; i < Bands * 4; i++) Spectrum[c][i] = (float)Math.Clamp(sum[c * Bands * 4 + i], 0, float.MaxValue);
+        GlobalEvidence = support with { Background = background, Transient = transient, Structure = structure, InteractionRms = residual };
+        double power = 0;
+        for (var i = 3; i < sum.Length; i += 4) power += sum[i] * sum[i];
+        Energy = (float)Math.Sqrt(power / (2 * Bands));
+    }
+
+    void ClearLive()
+    {
+        foreach (var spectrum in Spectrum) Array.Clear(spectrum);
+        GlobalEvidence = default;
+        Energy = 0;
+    }
+
+    void Drive(float[] samples, double duration)
+    {
+        double power = 0, transientPower = 0, tonePower = 0, noisePower = 0, transientMean = 0;
+        for (var i = 0; i < samples.Length; i += 4)
         {
-            peak.AsSpan(c * Bands * 4, Bands * 4).CopyTo(Spectrum[c]);
+            power += (double)samples[i + 3] * samples[i + 3];
+            transientPower += (double)samples[i + 1] * samples[i + 1];
+            tonePower += (double)samples[i] * samples[i];
+            noisePower += (double)samples[i + 2] * samples[i + 2];
+            transientMean += samples[i + 1];
         }
-        if (anchored)
+        static float Bounded(double power, int count)
         {
-            var desired = anchorRow + (now - anchorTime - PresentationDelay) * rate;
-            // If a burst exceeds the delay reserve, move forward enough to retain the visible window.
-            var minimum = Math.Min(newestRow, Math.Max(0, newestRow - Rows + 1 + Seconds * rate));
-            if (desired < minimum)
-            {
-                // Move the clock anchor with a backlog jump, so presentation
-                // continues immediately instead of waiting for wall time to catch up.
-                anchorTime -= (minimum - desired) / rate;
-                desired = minimum;
-            }
-            // Presentation keeps advancing even when capture emits no packets.
-            // NewestAge masks the unwritten interval instead of wrapping old rows.
-            position = Math.Max(desired, minimum);
-            if (desired > newestRow) Profile?.Record("render.presentation_stall_ms", (desired - newestRow) * 1000 / rate);
+            double rms = Math.Sqrt(power / count);
+            return (float)(rms / (.2 + rms));
         }
-        if (now - lastAudio > .15)
-        {
-            foreach (var spectrum in Spectrum) Array.Clear(spectrum);
-            Energy = 0;
-            GlobalEvidence = default;
-            Components *= (float)Math.Exp(-dt / .35);
-            FractalEnergy *= (float)Math.Exp(-dt / .35);
-        }
+        var demand = new Vector3(Bounded(tonePower, 2 * Bands), Bounded(transientPower, 2 * Bands), Bounded(noisePower, 2 * Bands));
+        Components += (demand - Components) * new Vector3((float)(1 - Math.Exp(-duration / .06)),
+            (float)(1 - Math.Exp(-duration / .12)), (float)(1 - Math.Exp(-duration / .15)));
+        double energy = Math.Sqrt(power / (2 * Bands));
+        double energyDemand = energy / (.06 + energy);
+        FractalEnergy += (float)((energyDemand - FractalEnergy) * (1 - Math.Exp(-duration / .12)));
+        double flash = transientMean / (2 * Bands);
+        Flash += (float)((flash - Flash) * (1 - Math.Exp(-duration / (flash > Flash ? .005 : .045))));
+        Move(3 * energy + 6 * power / (2 * Bands) + 4 * Math.Sqrt(transientPower / (2 * Bands)), duration);
+    }
+
+    void DriveZero(double duration)
+    {
+        Components *= (float)Math.Exp(-duration / .35);
+        FractalEnergy *= (float)Math.Exp(-duration / .35);
+        Flash *= (float)Math.Exp(-duration / .045);
+        Move(0, duration);
+    }
+
+    void Move(double target, double duration)
+    {
+        double inertia = target > MusicalVelocity ? .16 : 1.6;
+        double response = 1 - Math.Exp(-duration / inertia);
+        MusicalTime += target * duration + (MusicalVelocity - target) * inertia * response;
+        MusicalVelocity += (target - MusicalVelocity) * response;
     }
 }

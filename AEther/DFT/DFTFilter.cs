@@ -37,6 +37,8 @@ namespace AEther
             return State / Buffer.Length;
         }
 
+        public void Reset() { Buffer.Reset(); State = Complex.Zero; nonzero = 0; }
+
         public void Process(double newSample)
         {
             var oldSample = Buffer.Add(newSample);

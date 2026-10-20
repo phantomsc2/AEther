@@ -29,6 +29,7 @@ namespace AEther
         };
 
         readonly IDFTFilter[] Filters;
+        public void Reset() { foreach (var filter in Filters) filter.Reset(); }
         public DFTProcessor(Domain domain, double sampleRate, bool useSIMD,
             DFTWindow windowFunction = DFTWindow.Blackman)
         {

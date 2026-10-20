@@ -8,6 +8,8 @@ namespace AEther
         readonly double Release;
         double Envelope;
 
+        public void Reset() => Envelope = 0;
+
         public TransientDetector(int sampleRate)
         {
             if (sampleRate <= 0)

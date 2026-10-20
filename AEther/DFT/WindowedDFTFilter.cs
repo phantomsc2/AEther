@@ -48,6 +48,8 @@ namespace AEther
             return result / (Buffer.Length * Window[Window.Length / 2]);
         }
 
+        public void Reset() { Buffer.Reset(); Array.Clear(States); nonzero = 0; }
+
         public void Process(double newSample)
         {
             var oldSample = Buffer.Add(newSample);

@@ -392,6 +392,8 @@ public sealed partial class Renderer : IDisposable
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
         if (Audio.LatestCaptureTimestamp != 0)
             Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
+        if (Audio.LatestSourceTimestamp.HasValue)
+            Audio.Profile?.Elapsed("render.source_to_submission_ms", Audio.LatestSourceTimestamp.Value);
         var presentStart = Stopwatch.GetTimestamp();
         if (present) output.Present(syncInterval);
         if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
