@@ -33,6 +33,7 @@ public class ShaderSilenceTests
 
     public static IEnumerable<TestCaseData> Scenes() =>
         Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
+            .Where(path => !IsAudioIndependentPrototype(Path.GetFileNameWithoutExtension(path)))
             .OrderBy(path => path, StringComparer.Ordinal)
             .SelectMany(path => new[] { 0.0, 60.0 }.SelectMany(gainDb =>
                 (IsFluidScene(Path.GetFileNameWithoutExtension(path)) ? new[] { false, true } : new[] { false })
@@ -40,6 +41,10 @@ public class ShaderSilenceTests
 
     static bool IsFluidScene(string name) => name is "MandelFluid" or "MandelFluidv2" or "MandelFluidv3"
         or "FluidFlight" or "PlaneFlight" or "FractalEdge" or "MandelFluidv4";
+
+    // AGENTS.md explicitly exempts audio-independent volume prototypes. Keep
+    // production scene discovery and its full natural-decay checks intact.
+    static bool IsAudioIndependentPrototype(string name) => name is "MandelVolume" or "MandelLight" or "MandelLightv2" or "MandelLightv3" or "MandelLightv4";
 
     [TestCaseSource(nameof(Scenes)), Category("GPU")]
     public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb, bool periodic)
@@ -139,6 +144,7 @@ public class ShaderSilenceTests
 
     public static IEnumerable<string> ArtisticScenes() => Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
         .Select(Path.GetFileNameWithoutExtension).Where(name => name is not ("Spectrum" or "Histogram" or "MandelFluidv4"))
+        .Where(name => !IsAudioIndependentPrototype(name!))
         .OrderBy(name => name, StringComparer.Ordinal);
 
     [TestCaseSource(nameof(ArtisticScenes)), Category("GPU")]

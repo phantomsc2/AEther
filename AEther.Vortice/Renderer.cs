@@ -31,7 +31,9 @@ public sealed partial class Renderer : IDisposable
 
     MandelFluidSimulation? fluid;
     MandelbenchDistanceField? distanceField;
-    EpipolarShadowMap? epipolarShadow;
+    MomentLightTransport? lightTransport;
+    FourierLightTransport? fourierTransport;
+    RasterLightTransport? rasterTransport;
     ImageFeedback? feedback;
     string? previousScene;
     internal MandelFluidSimulation Fluid => fluid!;
@@ -62,6 +64,9 @@ public sealed partial class Renderer : IDisposable
     public bool HighPrecisionOutput => output.HighPrecision;
     public string OutputDescription => output.Description;
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
+    // Optional GPU timestamp markers used by the transport profiling tool.
+    internal Action<string, bool>? TransportPassMarker { get; set; }
+    internal double FourierAggregationMilliseconds => fourierTransport?.LastAggregationMilliseconds ?? 0;
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
@@ -256,25 +261,43 @@ public sealed partial class Renderer : IDisposable
 
 
         var active = ActiveShader!;
+        if (active.Raster != null)
+        {
+            rasterTransport ??= new(device, context);
+            rasterTransport.PassMarker = TransportPassMarker;
+            rasterTransport.Prepare(active.Raster, active.Parameters!, (float)now, width, height,
+                namedBuffers, namedTextures, namedSamplers);
+            context.VSSetShader(vertex);
+            context.RSSetViewport(0, 0, width, height);
+        }
+        if (active.FourierShadow != null)
+        {
+            fourierTransport ??= new(device, context);
+            fourierTransport.PassMarker = TransportPassMarker;
+            fourierTransport.Prepare(active.FourierShadow, active.Parameters!, (float)now,
+                namedBuffers, namedBuffers, namedTextures);
+            context.RSSetViewport(0, 0, width, height);
+        }
         if (active.Atmosphere != null)
         {
-            epipolarShadow ??= new(device, context);
-            epipolarShadow.PrecalculateAtmosphere(active.Atmosphere, active.Parameters!, namedBuffers);
+            lightTransport ??= new(device, context);
+            lightTransport.PassMarker = TransportPassMarker;
+            lightTransport.PrecalculateAtmosphere(active.Atmosphere, active.Parameters!, namedBuffers);
             bool atmosphereOnly = ReadBoolean("View.ShowAtmosphereLookup");
-            if (active.StaticSurface != null)
+            if (active.CameraTransport != null)
             {
-                epipolarShadow.PrecalculateSurface(active.StaticSurface, active.Parameters!, namedBuffers, width, height, !atmosphereOnly, (float)now);
-                namedTextures["SurfaceCache"] = epipolarShadow.SurfaceCache;
+                lightTransport.PrecalculateCamera(active.CameraTransport, active.Parameters!, namedBuffers, width, height, !atmosphereOnly, (float)now);
+                lightTransport.BindCamera(namedTextures);
             }
             if (active.Lighting != null)
             {
-                epipolarShadow.IntegrateLights(active.Shadow!, active.Lighting, active.Parameters!, namedBuffers,
+                lightTransport.IntegrateLights(active.LightTransport!, active.Lighting, active.Parameters!, namedBuffers,
                     width, height, (float)now, atmosphereOnly);
-                namedTextures["LightRadiance"] = epipolarShadow.Radiance;
+                namedTextures["LightRadiance"] = lightTransport.Radiance;
             }
-            namedTextures["EpipolarShadow"] = epipolarShadow.View;
-            namedTextures["AtmosphereOpticalDepth"] = epipolarShadow.Atmosphere;
-            namedSamplers["AtmosphereSampler"] = epipolarShadow.Sampler;
+            lightTransport.BindPreview(namedTextures);
+            namedTextures["AtmosphereOpticalDepth"] = lightTransport.Atmosphere;
+            namedSamplers["AtmosphereSampler"] = lightTransport.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
@@ -320,7 +343,11 @@ public sealed partial class Renderer : IDisposable
         }
         context.OMSetRenderTargets(output.SceneTarget);
         (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
+        if (active.FourierShadow != null) TransportPassMarker?.Invoke("Fourier camera", true);
+        if (active.Raster != null) TransportPassMarker?.Invoke("Raster airlight", true);
         context.Draw(3, 0);
+        if (active.Raster != null) TransportPassMarker?.Invoke("Raster airlight", false);
+        if (active.FourierShadow != null) TransportPassMarker?.Invoke("Fourier camera", false);
         output.Draw(outputPixel, now);
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
         if (Audio.LatestCaptureTimestamp != 0)
@@ -354,7 +381,9 @@ public sealed partial class Renderer : IDisposable
 
         fluid?.Dispose();
         distanceField?.Dispose();
-        epipolarShadow?.Dispose();
+        lightTransport?.Dispose();
+        fourierTransport?.Dispose();
+        rasterTransport?.Dispose();
         feedback?.Dispose();
         ReleaseGeometryTargets(); geometryDepthState?.Dispose();
         geometryNoDepthState?.Dispose(); geometryAdditiveState?.Dispose();

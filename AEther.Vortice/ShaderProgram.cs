@@ -26,11 +26,14 @@ internal sealed class ShaderProgram : IDisposable
             if (binding.BindCount != 1) throw new InvalidOperationException($"{file}: resource arrays are not supported ({binding.Name}).");
             var supported = binding.Type switch
             {
-                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants",
+                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants" or "FourierConstants" or "FourierPassConstants" or "RasterPassConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler" or "AtmosphereSampler",
                 ShaderInputType.Texture => binding.Name is "PreviousImage" or "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1" or "GlobalHistogram"
-                    or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField" or "EpipolarShadow" or "AtmosphereOpticalDepth" or "SurfaceCache" or "LightRadiance",
+                    or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField"
+                    or "LightMoments" or "LightAirMoments" or "LightTransport" or "CameraMoments" or "CameraAirMoments" or "CameraTransport" or "CameraImportance" or "AtmosphereOpticalDepth" or "LightRadiance"
+                    or "FourierDeep0" or "FourierDeep1" or "FourierDeep2" or "FourierDeep3"
+                    or "RasterShadows" or "RasterSurface" or "RasterDepth",
                 _ => false,
             };
             if (entry == "PS" && binding.Name is "FluidConstants" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler" or "DistanceConstants" or "DistanceSeeds" or "LightConstants")
@@ -111,24 +114,30 @@ public sealed class ShaderScene : IDisposable
     internal ShaderProgram? Composite { get; }
     internal MandelFluidSimulation.Programs? Fluid { get; }
     internal MandelbenchDistanceField.Programs? Distance { get; }
-    internal ShaderProgram? Shadow { get; }
+    internal ShaderProgram? LightTransport { get; }
     internal ShaderProgram? Atmosphere { get; }
-    internal ShaderProgram? StaticSurface { get; }
+    internal ShaderProgram? CameraTransport { get; }
     internal ShaderProgram? Lighting { get; }
+    internal ShaderProgram? FourierShadow { get; }
+    internal RasterLightTransport.Programs? Raster { get; }
     internal ShaderScene(ID3D11Device device, string name, string source, string root)
     {
         Name = name;
         Program = new(device, source, "PS", name + ".hlsl");
         try
         {
+            if (Program.Uses("RasterSurface"))
+                Raster = new(device, source, name + ".hlsl");
+            if (Program.Uses("FourierDeep0"))
+                FourierShadow = new(device, source, "FourierShadowPS", name + ".hlsl");
             if (Program.Uses("LightRadiance"))
                 Lighting = new(device, source, "LightPS", name + ".hlsl");
-            if (Program.Uses("EpipolarShadow") || Lighting?.Uses("EpipolarShadow") == true)
-                Shadow = new(device, source, "ShadowPS", name + ".hlsl");
-            if (Program.Uses("AtmosphereOpticalDepth") || Shadow?.Uses("AtmosphereOpticalDepth") == true || Lighting?.Uses("AtmosphereOpticalDepth") == true)
+            if (Program.Uses("LightTransport") || Lighting?.Uses("LightTransport") == true)
+                LightTransport = new(device, source, "LightTransportPS", name + ".hlsl");
+            if (Program.Uses("AtmosphereOpticalDepth") || LightTransport?.Uses("AtmosphereOpticalDepth") == true || Lighting?.Uses("AtmosphereOpticalDepth") == true)
                 Atmosphere = new(device, source, "AtmospherePS", name + ".hlsl");
-            if (Program.Uses("SurfaceCache") || Lighting?.Uses("SurfaceCache") == true)
-                StaticSurface = new(device, source, "SurfacePS", name + ".hlsl");
+            if (Program.Uses("CameraTransport") || Lighting?.Uses("CameraTransport") == true)
+                CameraTransport = new(device, source, "CameraTransportPS", name + ".hlsl");
             if (Program.Uses("PreviousImage"))
                 Composite = new(device, source, "FeedbackDisplayPS", name + ".hlsl");
             var geometry = System.Text.RegularExpressions.Regex.Match(source,
@@ -162,5 +171,5 @@ public sealed class ShaderScene : IDisposable
         }
         catch { Dispose(); throw; }
     }
-    public void Dispose() { Program.Dispose(); Lighting?.Dispose(); Shadow?.Dispose(); Atmosphere?.Dispose(); StaticSurface?.Dispose(); Fluid?.Dispose(); Distance?.Dispose(); GeometryVertex?.Dispose(); Composite?.Dispose(); }
+    public void Dispose() { Program.Dispose(); Raster?.Dispose(); Lighting?.Dispose(); FourierShadow?.Dispose(); LightTransport?.Dispose(); Atmosphere?.Dispose(); CameraTransport?.Dispose(); Fluid?.Dispose(); Distance?.Dispose(); GeometryVertex?.Dispose(); Composite?.Dispose(); }
 }

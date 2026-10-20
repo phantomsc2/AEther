@@ -1,0 +1,7 @@
+- https://cs.dartmouth.edu/~wjarosz///publications/chen11realtime.pdf
+- https://research.nvidia.com/sites/default/files/pubs/2015-08_The-SGGX-microflake//sggx.pdf
+- https://pierremezieres.github.io/site-co-master/references/MomentShadowMapping.pdf
+- https://momentsingraphics.de/I3D2018.html
+- https://vidimce.org/publications/avsm/
+- https://arxiv.org/abs/2201.00094
+- https://momentsingraphics.de/PacificVis2022.html

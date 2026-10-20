@@ -163,221 +163,238 @@ need more transmission steps and scattering samples. Compatible edited values
 survive hot reload; use Reset defaults to load the complete new reference preset.
 
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
-sample counts show grain; raising quality costs GPU time. The current blanket
-scene discovery in `ShaderSilenceTests` includes this prototype and its silence
-assertions do not apply to it. No unit-test changes accompany this prototype.
+sample counts show grain; raising quality costs GPU time. Audio-independent volume
+prototypes are excluded from the production silence and audio-response scene lists
+in `ShaderSilenceTests` under the prototype exception in `AGENTS.md`.
+
+## MandelLightv4 prototype
+
+`MandelLightv4` rasterizes opaque instanced cubes into four scalar shadow cubemaps
+and camera color/depth. A fullscreen pass integrates single scattering through
+infinite homogeneous air, combining equiangular and optical-depth proposals with
+balance-heuristic MIS. Material edges and shadow comparisons are hard; sampling
+jitter is the only stochastic fuzziness. This audio-independent prototype remains
+exempt from production silence checks. Restart after building its new host passes.
+See [MandelLightv4](mandellight-v4.md) for controls, sampling and measurements.
+
+## MandelLightv3 prototype
+
+`MandelLightv3` aggregates procedural positive densities into a 125-real-coefficient
+Fourier field, then builds adaptive eight-knot deep cubemaps for up to four lights.
+GPU lighting has no per-object loop. Camera cells use analytical material mass,
+with sampled illumination and cached light transmission. This audio-independent
+prototype is exempt from the production silence requirement. It adds host render
+resources, so restart after building before selecting the scene. See
+[MandelLightv3](mandellight-v3.md) for controls, representation limits and profiling.
+
+## MandelLightv2 prototype
+
+`MandelLightv2` is an audio-independent experiment with procedural ellipsoidal
+density blobs and analytical camera/light attenuation. It uses a single pixel
+shader and shares its integration samples across lights and emission, with no
+transport caches or surface shading. It remains visible without music under the
+prototype exception. See [MandelLightv2](mandellight-v2.md) for the model, controls
+and profiling instructions. `MandelLight` remains the fractal-volume reference.
 
 ## MandelLight prototype
 
-`MandelLight` is a separate audio-independent surface/airlight prototype, leaving
-`MandelVolume` available for comparison. It uses an orbiting camera, up to four
-RGB point lights and RGB scattering through a shared radial density profile.
-The default enables only the original white light with equal RGB coefficients.
-No ambient illumination, volume emission,
-image history or audio response is present. It requires rebuilding/restarting
-the application once for the new precalculation passes; subsequent shader edits reload.
+`MandelLight` is an audio-independent participating-medium prototype. Up to four
+RGB point lights illuminate radial air and a bounded Mandelbox density field.
+Camera and light rays store moment representations of cumulative occupied length
+and displaced air. Local scattering and emission evaluate the density field at
+integration samples. The scene uses single scattering and has no temporal image
+history or audio response. It is exempt from the silence invariant; production
+audio reactivity must gate both emission and lights and preserve
+`ShaderSilenceTests`.
 
-### Surface and air
+Restart after updating the renderer for the new transport passes and resources.
+Subsequent shader edits use normal hot reload.
 
-The Mandelbox observable `q` and its full analytic Jacobian are the same as in
-MandelVolume. Geometry is the closed level set, clipped to the radius-10.5 sphere:
+### Interior and transport controls
+
+| Control | Behavior |
+| --- | --- |
+| `Interior.Enabled` | Enables the material density field. Disabling it leaves only the radial air. |
+| `Interior.Density` | Maps to `d = 4 * value^2`, multiplying interior scattering and absorption. Air displacement scales by `min(d,1)`, so zero density leaves the surrounding air intact. Default 0.25 gives d=0.25. |
+| `Interior.EdgeSoftness` | Width of the smooth density transition in normalized potential, from `q/v = 1-value` to `q/v = 1`. It softens the density near the threshold without changing the fully occupied core. Default 0.2; zero approaches a hard density transition. This is not a world-space distance or overall opacity control. |
+| `Interior.Scattering` | RGB scattering coefficients; default (0.7,0.7,0.7). Also contributes to extinction. |
+| `Interior.Absorption` | RGB absorption coefficients; default (0.15,0.3,0.45). |
+| `Transport.Trigonometric` | False: four power moments, the default baseline. True: two complex trigonometric moments, using the same four real coefficient channels. Applies to both camera and light transport. |
+| `Transport.OrbitRejection` | Default true. For more than four iterations, terminate a density query when a conservative orbit bound proves its final potential cannot contain material. Does not skip positions along a ray. |
+| `Emission.Enabled` | Integrates local volume emission independently of the lights. |
+| `Emission.Strength` | Maps to `8 * value^2` emitted radiance per world unit of occupied material. Default 0.2. |
+| `Emission.Color` | Linear RGB emission color; default (1,0.35,0.1). |
+| `Quality.TransportSteps` | Selects 128-1024 midpoint samples in multiples of 16 over each camera/light ray's complete interior support chord; default 512. |
+| `Quality.Samples` | Selects 1-48 camera integration samples per proposal; default 12. |
+
+Vectors use x=red, y=green and z=blue. Every exposed float remains in [0,1].
+Emission is independent of density, so zero density permits a transparent emitter.
+Disable emission to make zero-density material visually indistinguishable from air.
+Emission does not illuminate neighboring material. With all lights disabled and
+emission off, the rendered radiance is exactly black. Debug views intentionally
+visualize their caches independently of illumination.
+
+### Density and moment transport
+
+The finite Mandelbox field q retains MandelVolume's scale and iteration mappings:
+scale is `8 * Fractal.Scale - 4`, and iterations are
+`1 + round(15 * Fractal.MaximumIterations)` (four by default).
+The potential slider spans twelve octaves:
 
 ```text
-c = 0.5 * 2^(12 * (Fractal.Potential - 1))
-f(p) = max(q(p) - c, length(p) - 10.5)
-solid: f < 0
-surface: f = 0
+v = 0.5 * 2^(12 * (Fractal.Potential - 1))
+w = max(0.00001, Interior.EdgeSoftness)
+m(p) = 1 - smoothstep(1 - w, 1, q(p) / v)
+k = d * (Interior.Scattering + Interior.Absorption)
 ```
 
-The normal follows `gradient(q)`, or the sphere normal where the clipping sphere
-defines the boundary. The field is not a distance estimator. Camera and shadow
-rays use 128–1024 uniform search steps through their solid bounding interval,
-then ten bisections of the first detected outside/inside crossing. Features
-narrower than a search step, and tangential contacts, can be missed. Increasing
-`Quality.SearchSteps` helps; this is not a certified intersection algorithm.
+Occupancy m is zero outside radius 10.5 or when the interior is disabled. The
+bounding sphere defines the integration support. Every occupied interval along a
+ray contributes to attenuation; gaps contribute only air. Camera integration
+continues to the radius-16 atmosphere exit, including cameras inside material.
 
-Potential is logarithmic across twelve octaves, from 0.0001220703125 to 0.5.
-The default slider value 1 retains the original level 0.5; zero now selects the
-smallest positive level rather than a degenerate zero level. Search setup computes
-the potential threshold once per ray and clips via the bounding interval,
-avoiding a redundant sphere-distance calculation at every step.
-The normal evaluation also returns q, avoiding a second orbit at surface hits.
+For a ray `p(s) = o + s*d` with a support interval [a,b], moments accumulate two
+positive measures: occupied length m*ds and displaced unit-density air
+m*sigma_air*ds. Both use the same normalized depth `x = 2*(s-a)/(b-a)-1`.
 
-The opaque surface uses isotropic GGX, Smith masking and Schlick Fresnel, with
-scalar normal-incidence reflectance. There is no diffuse component, environment
-light, indirect reflection or multiple scattering. `Surface.Roughness` maps to
-`max(0.04, value)` and GGX alpha is its square. `Surface.Reflectance` is F0, not
-a diffuse albedo or a metalness blend. This is an approximate conductor appearance,
-without wavelength-dependent optical constants.
+```text
+f(x) = (x, x^2, x^3, x^4)                         // power mode
+f(x) = (cos(t), sin(t), cos(2*t), sin(2*t))        // trigonometric mode
+t = 0.95*pi*(x+1)
 
-Air is a prescribed isothermal, constant-gravity spherical atmosphere, independent
-of the fractal potential. It uses pure scattering (sigma_s = sigma_t) and the
-normalized unpolarized Rayleigh phase function:
+h = integral[a,b] m(p(s)) ds
+j = integral[a,b] m(p(s))*sigma_air(p(s)) ds
+B = integral[a,b] m(p(s))*f(x(s)) ds / h
+C = integral[a,b] m(p(s))*sigma_air(p(s))*f(x(s)) ds / j
+
+h(s) = h * cumulative_fraction(B, x(s))
+j(s) = j * cumulative_fraction(C, x(s))
+f = min(d,1)
+T_rgb(s) = exp(-k*h(s) - Air.Density*Air.Scattering*max(0, air_depth(s)-f*j(s)))
+```
+
+Empty measures contribute zero and endpoints return exact zero/total mass.
+Density and RGB coefficients are applied after reconstruction. This retains RGB
+absorption differences without separate per-channel moment caches. Subtracting
+displaced air makes extinction consistent with scattering: material replaces air
+in proportion to `m*min(d,1)`, while cavities retain the radial atmosphere. This
+displacement fades continuously as density approaches zero; cached occupancy and
+displaced-air moments remain independent of the material density setting.
+
+`Common/TransportMoments.hlsl` adapts the CC0 reconstruction from
+[Moment-Based Order-Independent Transparency](https://momentsingraphics.de/I3D2018.html).
+Power reconstruction uses a Hankel factorization, trigonometric reconstruction a
+complex Toeplitz factorization. Both use a small moment bias (2e-5) and the midpoint
+of the reconstructed cumulative bounds. Trigonometric depths leave a pi/10
+wrapping zone. Reconstruction returns a cumulative mass fraction, followed by
+RGB Beer-Lambert attenuation. This is a low-order approximation: intricate
+occupancy can be smoothed or misplaced, and finite transport sampling can miss
+features narrower than one step.
+
+### Scattering and integration
+
+Air retains its radial unit-density extinction and normalized Rayleigh phase:
 
 ```text
 H = 0.5 + 2 * Air.ScaleHeight
-sigma(r) = 0.08 * Air.Density * exp((6 - r) / H)
-sigma_s_rgb(r) = sigma_t_rgb(r) = sigma(r) * Air.Scattering
+sigma_air(p) = 0.08 * exp((6 - length(p)) / H)
+sigma_s_rgb(p) = Air.Density*sigma_air(p)*Air.Scattering*(1-min(d,1)*m(p))
+                 + d*Interior.Scattering*m(p)
 phase(mu) = 3 * (1 + mu*mu) / (16*pi)
 ```
 
-`mu` is the cosine between incoming and outgoing photon propagation directions.
-The finite domain ends at radius 16. This truncates an exponential tail, especially
-noticeable at large scale heights; this is not a hydrostatic solution in the actual
-fractal gravity field. The first opaque surface ends the camera air integral.
-Light visibility removes contributions whose light path crosses the solid. Air
-can scatter in empty cavities; there is no fractal-specific scattering branch.
+Both media use the same camera and light transmittance. Each light uses equal-count
+balance MIS with equiangular and endpoint-fitted exponential proposals over the
+atmosphere interval. Rays crossing the interior's support add a density-guided
+proposal within that support. Camera transport supplies 16 occupancy bins from its
+existing density evaluations. Approximate camera attenuation weights these bins;
+at least 10% uniform sampling retains coverage of features missed by the cache.
+For light integration the guide fades continuously to uniform as density approaches
+zero, including when material is disabled. The bounded proposal remains active for
+air to avoid an abrupt change in grain at zero density. Emission uses the same
+guide in an independent stratified integration, once per frame.
 
-`Air.Scattering` supplies independent RGB coefficients in [0,1], default (1,1,1).
-The shared density still controls the number of particles; coefficients control
-per-channel scattering and out-scattering. There is no absorption. Zero in one
-channel removes that channel's airlight and atmospheric attenuation while allowing
-surface light to pass unchanged in that channel. RGB is a three-channel transport
-approximation, not full spectral rendering. Light colors are linear RGB; vector
-controls use x=red, y=green and z=blue.
+The histogram changes sample placement, not the represented material or the moment
+reconstruction. Actual density is evaluated at every sample, and every proposal
+PDF uses world-space distance with the same histogram used for sampling and MIS.
+Default sampling performs 24 evaluations per light, or 36 when the ray crosses
+the interior's support. No potential gradient or distance estimate is evaluated.
+Samples use deterministic spatial jitter without time jitter. Low sample counts
+can show grain or miss small occupied intervals. This model provides direct
+single scattering; diffuse transport through repeated scattering is not included.
 
-### Precalculation
+### Cache layout and invalidation
 
-`View.CameraSpeed` sets a constant camera orbit about world Y: 0 to 0.25 radians
-per second, default 0.05 (slider 0.2). Radius and height stay fixed, and the camera
-always looks at the origin. Zero freezes it at the original `(9,6,-13.5)` pose.
-Camera motion rebuilds both the surface cache and the epipolar light map each frame,
-including when the light itself is frozen; the atmosphere lookup remains cached.
+`CameraTransportPS` produces three full-resolution RGBA32F images and one
+RGBA32UInt image, 64 bytes per pixel. Each enabled point light uses `LightTransportPS` to produce three
+512-by-512 RGBA32F angular images, 12 MiB per light. Their channels contain:
 
-`SurfacePS` builds a minimal G-buffer (`SurfaceCache`): camera first-hit depth and
-analytic normal in an RGBA32F image, shared by every light. It is generated
-at full render resolution. It rebuilds for camera motion, geometry, search-quality,
-viewport, split-view or shader changes. Lighting, air and scattering sample edits
-reuse it when the camera is frozen.
-The camera pass reads this image instead of tracing and differentiating the same
-static surface every frame. This preserves full normal/depth precision and the
-existing search budget. It costs 16 bytes per display pixel; there is no temporal
-accumulation or approximation from lowering cache resolution. The full-window
-atmosphere view defers camera geometry work until it is needed again.
+| Resource suffix | Content |
+| --- | --- |
+| `Moments` | Four normalized occupied-length coefficients. |
+| `AirMoments` | Four normalized displaced-air coefficients. |
+| `Transport` | Total occupied length, total displaced air depth, support chord entry and exit distance. |
+| `Importance` (camera only) | Sixteen mean occupancy bins, packed at eight bits per bin into four uint channels. Used only for sample placement. |
 
-`AtmospherePS` preprocesses unit-density optical depth in a 512-by-256 R32F
-lookup, using 1024 midpoint integration steps per texel. It rebuilds on shader
-reload or `Air.ScaleHeight` changes, and is reused as the light moves or density,
-material, geometry, RGB coefficients and quality controls change. Density and RGB
-scattering coefficients multiply cached depths at runtime. The table remains scalar;
-it stores outward paths from radius r to the outer sphere,
-its coordinates are radius/16 and sqrt(mu), where mu is outward zenith cosine.
-The square-root warp provides more resolution near grazing directions. Exact
-endpoint texels and bilinear lookup avoid extrapolation at the sphere boundary.
-Inward optical depths follow from full chord symmetry minus the near outward tail.
+Camera resources use the `Camera` prefix, angular resources the `Light` prefix.
+The full-resolution camera data is shared by every light and the emission draw.
+Angular coordinates are inclination gamma/pi and azimuth alpha/(2*pi), following
+the mapping used by [Chen et al.](https://cs.dartmouth.edu/~wjarosz/publications/chen11realtime.html).
+The polar axis runs from the light toward the camera: positions along any camera
+ray retain their azimuth and therefore stay in one epipolar slice. This does not
+implement Chen's hierarchical traversal or reuse an integrated result across pixels.
+At lookup, each neighboring angular ray reconstructs at the receiver distance
+using its own support chord. RGB transmissions are filtered after exponentiation.
+A deterministic azimuth handles the exact poles without a secondary light march.
 
-Each light's shadow map caches forward and reverse light-to-exit unit optical depths
-along each light direction. A scattering or surface point requires one remaining
-exit-depth lookup. Subtracting the two depths gives optical depth between light
-and point. The direction with thinner exit tails is chosen to reduce cancellation
-of nearly equal large depths. Shadow comparisons and smooth optical depths are
-filtered separately. Near the epipolar axis, the same lookup supplies the light
-endpoint while surface visibility uses its existing direct intersection fallback.
-No atmospheric integration loop runs per scattering sample or surface point.
+Geometry, enabled interior, edge softness, moment basis, orbit rejection, transport quality,
+scale height, camera motion, and shader changes invalidate affected transport
+caches. Light motion invalidates only that light's angular cache. Camera resizing
+reallocates its transport images. Density, RGB material coefficients, emission,
+light intensity and color, and integration sample count reuse transport data.
+The cache build samples the whole support chord, so cost grows with transport
+quality, camera resolution, enabled lights, and fractal iteration count.
 
-Since the camera orbit stays outside the atmosphere, camera-side optical depth is
-simply the reverse exit depth at the point. The lookup uses hardware bilinear
-filtering with explicit texel-center coordinates. No per-camera-ray bin table is
-built. The LUT still has finite interpolation and quadrature error.
+`AtmospherePS` retains its 512-by-256 R32F table with 1024 midpoint samples per
+texel. It stores outward unit-density optical depth by radius and square-root
+zenith cosine and rebuilds only for shader or scale-height changes. Inward paths
+use chord symmetry. Camera attenuation subtracts the reverse exit tail at an
+inside-atmosphere camera. Light attenuation evaluates the source and receiver
+exit tails once per sample, shared by all four angular-cache taps. Cached support
+intervals avoid recomputing angular directions and sphere intersections per tap.
 
-`View.ShowAtmosphereLookup` replaces all output with the raw unit-density lookup,
-using logarithmic grayscale (zero depth black, maximum depth white). Radius runs
-left to right; sqrt(outward zenith cosine) runs top to bottom. The table is fitted
-as a 2:1 image. This view takes priority over `View.ShowShadowMap` and remains
-visible with density or light intensity zero, to inspect the preprocessed data.
+Independent light and emission draws add into one RGBA32F radiance image, 16 bytes
+per pixel, cleared each frame. `PS` applies the exponential tone map after
+summation and encodes for display. Host `LightConstants` selects lights 0-3 or
+the emission-only draw 4.
 
-### Angular shadows and integration
+See [MandelLight performance](mandellight-performance.md) for measured pass costs,
+noise comparisons, remaining limitations, and the profiling command.
 
-The renderer follows three stages: shared atmosphere/G-buffer preprocessing, then
-independent light-source transport and camera sampling for each active light.
-Each light gets a 512-by-512 RGBA32F shadow target on demand. `ShadowPS` runs when
-that light's transport inputs change; `LightPS` then integrates only that light.
-The scene declares `Texture2D<float4> EpipolarShadow`;
-referencing it requests this prepass, with the same reflected Parameters and
-FrameConstants. A moving light or camera rebuilds it each frame. When both are
-frozen it is reused until fractal geometry, search quality, scale height, light
-speed, orbit phase, camera speed or shader changes.
-Density, RGB coefficients, light color/intensity, material, sample count and display size do not
-invalidate this unit-density light cache. The full-window atmosphere debug view
-skips the light stage. It has no min–max hierarchy or temporal accumulation.
+### Camera, lights and inspection
 
-`View.ShowShadowMap` optionally places the render in the left 70% of the window
-and a square shadow-map preview in the right panel. Gamma runs horizontally and
-epipolar slice alpha vertically. Closer first hits appear brighter; misses are
-black. The main camera aspect is adjusted for its panel. The debug view can remain
-visible with light intensity zero because it displays geometry, not radiance.
-`View.ShadowLight` selects the light shown: slider values 0, 1/3, 2/3 and 1
-correspond to Light, Light2, Light3 and Light4. A selected disabled light still
-gets a map for inspection, without contributing illumination.
+`View.CameraSpeed` maps to 0-0.25 radians/second around world Y (default 0.05).
+Orientation follows this orbit independently of translation, including at the
+origin. `View.CameraDistance` maps to `40 * value` world units, default 0.4324711.
+`View.HorizontalOffset` translates along camera right by
+`(2 * value - 1) * distance`, with 0.5 centered.
 
-The mapping follows Chen et al., [Real-Time Volumetric Shadows using 1D Min-Max
-Mipmaps](https://cs.dartmouth.edu/~wjarosz/publications/chen11realtime.html): each
-row is an epipolar plane containing camera and light, and columns vary the light
-ray's angle gamma to the light-to-camera baseline. We generate rays directly in
-these coordinates and store first-hit radial distance plus forward/reverse
-light-to-exit optical depth, rather than resampling a conventional shadow map or
-storing the paper's beta occluder angle. Visibility
-compares sample/light distance against the cached first hit. Four comparison
-results are bilinearly filtered, with periodic slice wrapping. Shadow bias is
-0.002 world units for air and 0.025 for the surface. Near either baseline pole
-(sine of gamma below 0.02), a direct level-set shadow query avoids the undefined
-epipolar plane. Finite map resolution and bias can cause leaks, acne and temporal
-aliasing around small features. Filtering is numerical antialiasing, not an area
-light or physically resolved soft shadow.
+`Light` through `Light4` expose Enabled, Intensity, Speed, Radius, Phase, and RGB
+Color. Lights orbit at horizontal radius 12 with vertical excursion 3. Speed maps
+to `0.5 * value` radians/second; phase adds `2*pi*value`. Intensity maps to
+`3000 * value^2`. Radius softens inverse-square falloff by
+`0.01 + 0.49 * value^2`. Only the original white light is enabled by default.
+Disabled, black, or zero-intensity lights skip transport and integration unless
+selected for inspection.
 
-Each independent light draw reads the same G-buffer, then combines two proposals
-with equal-count balance MIS: equiangular
-and an endpoint-fitted exponential. The latter fits the change in log density
-minus representative camera optical depth (using the mean RGB coefficient) across
-the ray, and can concentrate samples at either
-endpoint. The exponent is limited to [-20,20] for numerical stability; near zero
-it falls back to uniform sampling. Its exact normalized PDF corrects this proposal
-approximation. There is no density pilot, CDF, bin search or third MIS strategy.
-The full RGB integrand is evaluated at the same sampled depths. A scalar proposal
-remains valid for RGB; strongly different channel coefficients can increase variance.
-Each light has its own equiangular proposal and deterministic sample seed. Samples
-are not shared between lights, and no all-light cross-PDF evaluations are required.
-Camera and light transmission use the preprocessed atmosphere lookup; there is no
-per-sample atmosphere march. All proposals
-and PDFs use the camera interval truncated at the first surface. The geometric
-equiangular angle theta differs from the map angle gamma by a constant per ray:
-
-```text
-gamma = theta + pi/2 - beta
-```
-
-The angular proposal uses the true perpendicular distance; near the axis it
-falls back to uniform distance sampling. `Light.Radius` only softens inverse-square
-falloff (`0.01 + 0.49 * value^2`), not the angular coordinates. It does not create
-a visible emitter or an area light. The light orbits at horizontal radius 12,
-with vertical excursion 3, always outside the bounded solid. Its initial phase
-lights the camera-facing side. Speed is `0.5 * Light.Speed` radians/second;
-zero freezes it. Intensity maps to `3000 * Light.Intensity^2` and is multiplied by
-that light's `Color`. Each of `Light`, `Light2`, `Light3`, `Light4` has `Enabled`,
-`Intensity`, `Speed`, `Radius`, `Phase` and `Color`. Phase adds 0 to 2*pi to the
-orbit. Extra lights default disabled, with phase offsets and example colors.
-Disabled lights, zero-intensity lights and black lights skip transport/integration
-unless their map is selected for debugging. Allocated maps are retained for reuse.
-
-Each light contributes airlight plus camera-attenuated direct surface reflection
-to a shared RGBA32F radiance target using additive blending. It is cleared every
-frame; there is no lighting history. `PS` reads `LightRadiance`, applies the
-exponential tone map once to the total RGB radiance, then encodes for display.
-FP32 accumulation avoids overflow of sharp HDR highlights before tone mapping.
-It costs another 16 bytes per display pixel; each shadow map costs 4 MiB.
-The host supplies a 16-byte `LightConstants` buffer selecting the light index
-for `ShadowPS` and `LightPS`. These passes use one ordinary texture binding, not
-resource arrays. Four light groups fit the existing parameter authoring contract.
-A vacuum removes airlight but retains the lit surface; disabling all lights or
-setting all intensities/colors to zero clears the image. Large optical
-depths would require multiple scattering for quantitative physical accuracy.
-`Quality.Samples` selects 1–48 samples per MIS strategy; default 12, preserving
-24 default evaluations and a maximum of 96 per enabled light. Search defaults
-to 512 steps. `Quality.TransmissionSteps` was removed after switching to cached
-optical depth. Mandelbox scale and iteration controls retain MandelVolume's
-mappings. The prototype is exempt from the silence
-invariant; the blanket silence regression still discovers it and must not be used
-as its acceptance criterion. No unit tests were added or changed.
+`View.ShowLightTransport` uses the left 70% for rendering and the right panel for
+RGB material opacity reconstructed from the angular moments. `View.TransportDepth`
+selects radial distance 0-32 (default 32, beyond the entire interior).
+`View.TransportLight` selects Light through Light4 at values 0, 1/3, 2/3, 1.
+A selected disabled light still builds a valid cache without adding illumination.
+`View.ShowAtmosphereLookup` takes priority and displays logarithmic unit-density
+optical depth with radius horizontal and square-root zenith cosine vertical.
+Atmosphere inspection skips camera and light integration.
 
 ## Geometry scenes and image afterglow
 

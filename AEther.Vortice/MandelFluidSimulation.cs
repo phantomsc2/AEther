@@ -8,6 +8,7 @@ using Vortice.Mathematics;
 
 [assembly: InternalsVisibleTo("AEther.Smoke")]
 [assembly: InternalsVisibleTo("AEther.Tests")]
+[assembly: InternalsVisibleTo("AEther.MandelLightProfile")]
 
 namespace AEther.Vortice;
 
