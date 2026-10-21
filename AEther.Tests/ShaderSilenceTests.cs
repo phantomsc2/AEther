@@ -143,6 +143,70 @@ public class ShaderSilenceTests
         }
     }
 
+    [TestCase("Spectrum", 0.0), TestCase("Spectrum", 60.0)]
+    [TestCase("Histogram", 0.0), TestCase("Histogram", 60.0)]
+    [TestCase("MandelFluidv3", 0.0), TestCase("MandelFluidv3", 60.0), Category("GPU")]
+    public void SwiftAndStbrOutputEventuallyRendersBlack(string scene, double gainDb)
+    {
+        const int sampleRate = 12000, block = sampleRate / 60;
+        var domain = new Domain(55, 12, Bands);
+        var options = new AnalyzerOptions { TimeResolution = 60, InputGainDb = gainDb };
+        var spectrum = new SwiftProcessor(domain, sampleRate, true);
+        var splitter = new Splitter(domain, options, 60);
+        var global = new GlobalSplitter(domain, options, 60);
+        using var shaders = new SceneShaders(scene);
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        renderer.SelectScene(scene);
+        var input = new double[block]; var magnitudes = new double[Bands * 2];
+        var output = new double[Bands * 8];
+        long row = 0;
+        var gain = Math.Pow(10, gainDb / 20);
+        Tick(false);
+        AssertBlack();
+        bool lit = false;
+        for (int frame = 0; frame < 120; ++frame)
+        {
+            Tick(true);
+            if (frame % 20 == 19) lit |= renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 10);
+        }
+        Assert.That(lit, Is.True, "SWIFT/STBR musical fixture must excite the scene before silence.");
+        int decay = 0;
+        for (; decay < DecayFrames; ++decay)
+        {
+            Tick(false);
+            if (decay + 1 >= MinimumDecayFrames && (decay + 1) % 120 == 0
+                && renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0)) break;
+            if (decay % 1000 == 999) renderer.ReadPixels(false);
+        }
+        for (int frame = 0; frame < FinalFrames; ++frame) { Tick(false); AssertBlack(); }
+        Assert.That(magnitudes, Is.All.Zero, "Actual SWIFT state must expire, not merely render below visibility.");
+        Assert.That(output, Is.All.Zero, "STBR history must also expire.");
+
+        void Tick(bool active)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                double t = (row * block + i) / (double)sampleRate;
+                input[i] = active ? gain * (.6 * Math.Sin(2 * Math.PI * 55 * t)
+                    + .3 * Math.Sin(2 * Math.PI * 110 * t)) : 0;
+            }
+            spectrum.Process(input);
+            spectrum.OutputLinear(magnitudes.AsMemory(0, Bands));
+            magnitudes.AsSpan(0, Bands).CopyTo(magnitudes.AsSpan(Bands));
+            splitter.ProcessLinear(magnitudes.AsMemory(0, Bands), output.AsMemory(0, Bands * 4));
+            output.AsSpan(0, Bands * 4).CopyTo(output.AsSpan(Bands * 4));
+            var evidence = global.Process(magnitudes, 2);
+            renderer.PostAudio(new SampleEvent<double>(output, Bands * 4, DateTime.UnixEpoch)
+                { AnalysisRow = row++, GlobalEvidence = evidence }, 2);
+            clock.Advance(); renderer.Render(false);
+        }
+        void AssertBlack() => Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
+            $"{scene}, SWIFT/STBR gain {gainDb} dB, row {row}: every RGB channel must be black.");
+    }
+
     // Compile only the scene under test. Discovery and all decay/RGB assertions stay unchanged;
     // recompiling every unrelated scene for each gain/boundary case dominated this regression.
     sealed class SceneShaders : IDisposable

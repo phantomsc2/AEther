@@ -1,0 +1,9 @@
+UTC=2026-10-21T00:20:43.7513954Z
+CPU=Intel(R) Core(TM) Ultra 9 185H
+Runtime=10.0.13
+OS=Microsoft Windows 10.0.26200
+Vector<double>=4
+HardwareSIMD=True
+LogicalCPUs=22
+PinnedCPU=0
+TieredCompilation=0

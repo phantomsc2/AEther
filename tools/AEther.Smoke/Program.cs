@@ -18,6 +18,7 @@ internal static partial class Program
     {
         try
         {
+            if (args.Contains("--swift-settings-only")) { CheckSwiftSettings(); return 0; }
             if (args.Contains("--windows-only")) { CheckShaderWindows(null); return 0; }
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();

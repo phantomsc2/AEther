@@ -4,6 +4,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Data;
 using Windows.Globalization.NumberFormatting;
 
 namespace AEther.WinUI;
@@ -64,6 +65,12 @@ public sealed class SettingsWindow : ToolWindow
     {
         var groups = new StackPanel { Spacing = 8 };
         var refreshNumbers = new List<Action>();
+        var backendEditors = new List<(string Name, Control Editor)>();
+        void RefreshBackendEditors()
+        {
+            foreach (var (name, editor) in backendEditors)
+                editor.IsEnabled = name == nameof(AnalyzerOptions.WindowFunction) ? !Options.UseSwift : Options.UseSwift;
+        }
         bool refreshingNumbers = false;
         var properties = TypeDescriptor.GetProperties(Options).Cast<PropertyDescriptor>().Where(p => p.IsBrowsable && !p.IsReadOnly);
         foreach (var category in properties.GroupBy(p => p.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
@@ -75,7 +82,12 @@ public sealed class SettingsWindow : ToolWindow
                 if (property.PropertyType == typeof(bool))
                 {
                     var toggle = new ToggleSwitch { Header = property.DisplayName, IsOn = (bool)property.GetValue(Options)! };
-                    toggle.Toggled += (_, _) => { property.SetValue(Options, toggle.IsOn); Changed(); };
+                    if (property.Name == nameof(AnalyzerOptions.UseSwift))
+                    {
+                        toggle.OnContent = "SWIFT";
+                        toggle.OffContent = "DFT";
+                    }
+                    toggle.Toggled += (_, _) => { property.SetValue(Options, toggle.IsOn); RefreshBackendEditors(); Changed(); };
                     editor = toggle;
                 }
                 else if (property.PropertyType.IsEnum)
@@ -101,7 +113,11 @@ public sealed class SettingsWindow : ToolWindow
                 else
                 {
                     var integral = property.PropertyType == typeof(int);
-                    var step = integral ? 1 : .001;
+                    var logarithmic = property.Name == nameof(AnalyzerOptions.SwiftWidthScale);
+                    var step = integral ? 1 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
+                        or nameof(AnalyzerOptions.SwiftImbalance) ? .01 : .001;
+                    double ToSlider(double value) => logarithmic ? Math.Log2(value) : value;
+                    double FromSlider(double value) => logarithmic ? Math.Pow(2, value) : value;
                     var number = new NumberBox
                     {
                         Header = property.DisplayName,
@@ -116,28 +132,32 @@ public sealed class SettingsWindow : ToolWindow
                     };
                     var slider = new Slider
                     {
-                        Minimum = number.Minimum, Maximum = number.Maximum,
-                        StepFrequency = step,
-                        SmallChange = number.SmallChange, LargeChange = number.LargeChange,
-                        Value = number.Value,
+                        Minimum = ToSlider(number.Minimum), Maximum = ToSlider(number.Maximum),
+                        StepFrequency = logarithmic ? .05 : step,
+                        SmallChange = logarithmic ? .05 : number.SmallChange,
+                        LargeChange = logarithmic ? .5 : number.LargeChange,
+                        Value = ToSlider(number.Value),
                     };
+                    if (logarithmic) slider.ThumbToolTipValueConverter = new WidthToolTipConverter();
                     AutomationProperties.SetName(number, property.DisplayName);
                     AutomationProperties.SetName(slider, property.DisplayName);
                     bool updating = false;
                     refreshNumbers.Add(() =>
                     {
                         var (min, max) = NumericBounds(property.Name);
-                        number.Minimum = slider.Minimum = Math.Min(number.Minimum, min);
-                        number.Maximum = slider.Maximum = Math.Max(number.Maximum, max);
-                        number.Maximum = slider.Maximum = max;
-                        number.Minimum = slider.Minimum = min;
+                        number.Minimum = Math.Min(number.Minimum, min);
+                        slider.Minimum = ToSlider(number.Minimum);
+                        number.Maximum = Math.Max(number.Maximum, max);
+                        slider.Maximum = ToSlider(number.Maximum);
+                        number.Maximum = max; slider.Maximum = ToSlider(max);
+                        number.Minimum = min; slider.Minimum = ToSlider(min);
                         var value = Math.Clamp(Convert.ToDouble(property.GetValue(Options)), min, max);
                         property.SetValue(Options, Convert.ChangeType(value, property.PropertyType));
-                        number.Value = slider.Value = value;
+                        number.Value = value; slider.Value = ToSlider(value);
                     });
                     slider.ValueChanged += (_, e) =>
                     {
-                        if (!updating && !refreshingNumbers) number.Value = e.NewValue;
+                        if (!updating && !refreshingNumbers) number.Value = FromSlider(e.NewValue);
                     };
                     number.ValueChanged += (_, e) =>
                     {
@@ -146,7 +166,7 @@ public sealed class SettingsWindow : ToolWindow
                         updating = true;
                         try
                         {
-                            number.Value = slider.Value = value;
+                            number.Value = value; slider.Value = ToSlider(value);
                             property.SetValue(Options, Convert.ChangeType(value, property.PropertyType));
                         }
                         finally { updating = false; }
@@ -160,6 +180,13 @@ public sealed class SettingsWindow : ToolWindow
                     row.Children.Add(slider);
                     editor = row;
                 }
+                if (property.Name is nameof(AnalyzerOptions.WindowFunction) or nameof(AnalyzerOptions.SwiftWidthScale)
+                    or nameof(AnalyzerOptions.SwiftImbalance))
+                {
+                    var container = new ContentControl { Content = editor, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                    backendEditors.Add((property.Name, container));
+                    editor = container;
+                }
                 AutomationProperties.SetName(editor, property.DisplayName);
                 if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
                 rows.Children.Add(editor);
@@ -170,6 +197,7 @@ public sealed class SettingsWindow : ToolWindow
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             });
         }
+        RefreshBackendEditors();
         return groups;
     }
 
@@ -181,6 +209,8 @@ public sealed class SettingsWindow : ToolWindow
         nameof(AnalyzerOptions.MaxFrequency) => (Options.MinFrequency + 1, 22050),
         nameof(AnalyzerOptions.FrequencyResolution) => (1, 96),
         nameof(AnalyzerOptions.TimeResolution) => (16, 1024),
+        nameof(AnalyzerOptions.SwiftWidthScale) => (.25, 8),
+        nameof(AnalyzerOptions.SwiftImbalance) => (0, 1),
         nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
         nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
         nameof(AnalyzerOptions.TimeWindowSeconds) => (2.0 / Options.TimeResolution, 2),
@@ -189,6 +219,15 @@ public sealed class SettingsWindow : ToolWindow
     };
 
     void Changed() => SettingsChanged?.Invoke(this, EventArgs.Empty);
+
+    sealed class WidthToolTipConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language) =>
+            Math.Pow(2, (double)value).ToString("0.###", System.Globalization.CultureInfo.CurrentCulture);
+
+        public object ConvertBack(object value, Type targetType, object parameter, string language) =>
+            throw new NotSupportedException();
+    }
 
     public void SetScenes(IEnumerable<string> names, string selected)
     {

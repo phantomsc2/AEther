@@ -25,7 +25,7 @@ namespace AEther
         readonly int BatchSize;
         readonly double InputGain;
         readonly byte[] Batch;
-        readonly DFTProcessor[] DFT;
+        readonly ISpectrumProcessor[] Spectrum;
         readonly Splitter[] Splitters;
         readonly GlobalSplitter Global;
         readonly TransientDetector[] Transients;
@@ -64,6 +64,7 @@ namespace AEther
             Profile.Describe("Frequency bins", Domain.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("SIMD enabled", options.SIMDEnabled.ToString());
             Profile.Describe("Window function", options.WindowFunction.ToString());
+            Profile.Describe("Spectrum backend", options.UseSwift ? "SWIFT" : "DFT");
             Batch = new byte[checked(BatchSize * Format.Size)];
             Profile.Describe("Decomposition", "STBR: rolling Gaussian / directional slopes / residual RMS");
             Profile.Describe("S time slope", options.JointTimeSlopeEnabled.ToString());
@@ -71,9 +72,17 @@ namespace AEther
             Splitters = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
             Global = new(Domain, options, Format.SampleRate / (double)BatchSize);
-            DFT = Enumerable.Range(0, Format.ChannelCount)
-                .Select(_ => new DFTProcessor(Domain, Format.SampleRate, options.SIMDEnabled,
-                    options.WindowFunction)).ToArray();
+            Spectrum = Enumerable.Range(0, Format.ChannelCount)
+                .Select(_ => SpectrumProcessor.Create(Domain, Format.SampleRate, options)).ToArray();
+            if (Spectrum[0] is SwiftProcessor swift)
+            {
+                var bands = swift.Bands.ToArray();
+                Profile.Describe("SWIFT width scale", options.SwiftWidthScale.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+                Profile.Describe("SWIFT imbalance", options.SwiftImbalance.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+                Profile.Describe("SWIFT total decay ms", $"{bands.Min(b => b.SlowSeconds + b.FastSeconds) * 1000:F6}–{bands.Max(b => b.SlowSeconds + b.FastSeconds) * 1000:F6}");
+                Profile.Describe("SWIFT slow decay ms", $"{bands.Min(b => b.SlowSeconds) * 1000:F6}–{bands.Max(b => b.SlowSeconds) * 1000:F6}");
+                Profile.Describe("SWIFT fast decay ms", $"{bands.Min(b => b.FastSeconds) * 1000:F6}–{bands.Max(b => b.FastSeconds) * 1000:F6}");
+            }
             Transients = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new TransientDetector(Format.SampleRate)).ToArray();
             Features = new AudioFeatureExtractor(format);
@@ -134,7 +143,7 @@ namespace AEther
 
         void ResetAnalysis()
         {
-            foreach (var processor in DFT) processor.Reset();
+            foreach (var processor in Spectrum) processor.Reset();
             foreach (var splitter in Splitters) splitter.Reset();
             foreach (var transient in Transients) transient.Reset();
             Global.Reset();
@@ -332,8 +341,8 @@ namespace AEther
                 {
                     using (Profile.Measure("analysis.dft_channel_ms"))
                     {
-                    DFT[c].Process(samples.GetChannel(c));
-                    DFT[c].OutputLinear(spectrum.GetChannel(c));
+                    Spectrum[c].Process(samples.GetChannel(c));
+                    Spectrum[c].OutputLinear(spectrum.GetChannel(c));
                     }
                     using (Profile.Measure("analysis.split_channel_ms"))
                     {

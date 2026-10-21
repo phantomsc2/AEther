@@ -180,10 +180,13 @@ namespace AEther.Tests
             => Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, Options(capacity)));
 
         [Test]
-        public async Task SelectedWindowReachesEveryAudioChannel([Values] DFTWindow window)
+        public async Task SelectedBackendReachesEveryAudioChannel([Values] DFTWindow window, [Values] bool useSwift)
         {
             var options = Options();
             options.WindowFunction = window;
+            options.UseSwift = useSwift;
+            options.SwiftWidthScale = 2;
+            options.SwiftImbalance = .5;
             var analyzer = new Analyzer(Format, options);
             var rows = Collect(analyzer);
             var bytes = Audio(80);
@@ -193,16 +196,19 @@ namespace AEther.Tests
             Assert.That(rows.Count, Is.EqualTo(1));
             for (var c = 0; c < Format.ChannelCount; ++c)
             {
-                var processor = new DFTProcessor(options.Domain, Format.SampleRate, false, window);
+                ISpectrumProcessor processor = useSwift
+                    ? new SwiftProcessor(options.Domain, Format.SampleRate, false,
+                        widthScale: options.SwiftWidthScale, imbalance: options.SwiftImbalance)
+                    : new DFTProcessor(options.Domain, Format.SampleRate, false, window);
                 var samples = Enumerable.Range(0, 80)
                     .Select(i => (double)BitConverter.ToSingle(bytes, (2 * i + c) * sizeof(float))
                         * Math.Pow(10, options.InputGainDb / 20)).ToArray();
                 processor.Process(samples);
                 var expected = new double[options.Domain.Length];
-                processor.Output(expected);
+                processor.OutputLinear(expected);
                 for (var k = 0; k < expected.Length; ++k)
                     Assert.That(rows[0][c * Splitter.OutputStride * expected.Length + Splitter.OutputStride * k + 3],
-                        Is.EqualTo(Math.Pow(10, expected[k])).Within(1e-12));
+                        Is.EqualTo(expected[k]).Within(1e-12));
             }
         }
 

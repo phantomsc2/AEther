@@ -4,7 +4,7 @@ using System.Numerics;
 
 namespace AEther
 {
-    public class DFTProcessor
+    public class DFTProcessor : ISpectrumProcessor
     {
 
         public static readonly double[] RectWindow = new[] { 1.0 };

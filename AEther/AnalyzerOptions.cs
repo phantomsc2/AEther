@@ -33,6 +33,24 @@ namespace AEther
         public bool SIMDEnabled { get; set; } = true;
 
         [Category("DFT")]
+        [DisplayName("Spectrum analysis")]
+        [DefaultValue(true)]
+        [Description("SWIFT: exponential note-centered spectrum. DFT: finite selected window. Switching restarts analysis.")]
+        public bool UseSwift { get; set; } = true;
+
+        [Category("DFT")]
+        [DisplayName("SWIFT width")]
+        [DefaultValue(1.0)]
+        [Description("Full -3 dB bandwidth divided by geometric bin width. 1 matches bin width. Larger values are broader and faster, with more overlap; smaller values are narrower and slower.")]
+        public double SwiftWidthScale { get; set; } = 1;
+
+        [Category("DFT")]
+        [DisplayName("SWIFT imbalance")]
+        [DefaultValue(0.0)]
+        [Description("0: two equal smoothing stages. 1: single-stage limit. Intermediate values use unequal stages. Duration is retuned to preserve the selected -3 dB width.")]
+        public double SwiftImbalance { get; set; } = 0;
+
+        [Category("DFT")]
         [DisplayName("Window function")]
         [DefaultValue(DFTWindow.Hann)]
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
@@ -91,6 +109,14 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(FrequencyResolution));
             if (!Enum.IsDefined(WindowFunction))
                 throw new ArgumentOutOfRangeException(nameof(WindowFunction));
+            if (!double.IsFinite(SwiftWidthScale) || SwiftWidthScale < .25 || SwiftWidthScale > 8)
+                throw new ArgumentOutOfRangeException(nameof(SwiftWidthScale));
+            if (!double.IsFinite(SwiftImbalance) || SwiftImbalance < 0 || SwiftImbalance > 1)
+                throw new ArgumentOutOfRangeException(nameof(SwiftImbalance));
+            var highestFrequency = MinFrequency * Math.Pow(2, (Domain.Length - 1.0) / FrequencyResolution);
+            if (UseSwift && SwiftTuning.Bandwidth(highestFrequency, FrequencyResolution, SwiftWidthScale) >= format.SampleRate)
+                throw new ArgumentOutOfRangeException(nameof(SwiftWidthScale),
+                    "SWIFT bandwidth must be smaller than the sample rate. Reduce width or increase bins per octave.");
             if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)
                 throw new ArgumentOutOfRangeException(nameof(HistorySeconds));
             ValidateSplitter(FrequencyResolution, TimeResolution);
