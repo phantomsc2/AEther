@@ -9,6 +9,7 @@ using AEther;
 
 // Captures timing/size metadata only; audio samples are never saved.
 var lines = new List<string> { "mode,count,packet_median_ms,packet_p95_ms,interval_median_ms,interval_p95_ms,callback_mean_us,timestamped_packets,timestamp_errors,discontinuities,source_end_age_median_ms,source_end_age_p95_ms" };
+var positions = new List<string> { "mode,device_frame,frames,source_qpc_ticks,arrival_qpc_ticks,flags" };
 foreach (var request in new[] { 1, 2, 5, 10 })
 {
     var mode = $"NAudio-request-{request}ms";
@@ -26,6 +27,7 @@ foreach (var request in new[] { 1, 2, 5, 10 })
             lock (packets)
             {
                 packets.Add(data.Length * 1000.0 / source.Format.Size / source.Format.SampleRate);
+                positions.Add(FormattableString.Invariant($"{mode},{timing.FramePosition},{data.Length / source.Format.Size},{timing.Timestamp},{now},{(int)timing.Flags}"));
                 if (previous != 0) intervals.Add(Stopwatch.GetElapsedTime(previous, now).TotalMilliseconds);
                 previous = now;
                 if (timing.Timestamp.HasValue)
@@ -56,4 +58,5 @@ foreach (var request in new[] { 1, 2, 5, 10 })
 }
 var output = Path.GetFullPath(args.FirstOrDefault(arg => !arg.StartsWith("--")) ?? "capture-probe.csv");
 File.WriteAllLines(output, lines);
+File.WriteAllLines(Path.ChangeExtension(output, ".positions.csv"), positions);
 Console.WriteLine($"Saved timing metadata: {output}");

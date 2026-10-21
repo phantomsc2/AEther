@@ -9,7 +9,12 @@ namespace AEther
         DateTime Time
     )
     {
+        /// <summary>Optional channel-major residual RMS in linear amplitude units, one value per band.
+        /// Like Samples, pooled analyzer storage is valid only during the event callback.</summary>
+        public ReadOnlyMemory<double> ResidualRms { get; init; }
         public long SampleIndex { get; init; }
+        /// <summary>Device-frame/QPC correlation shared by all rows in this stream epoch.</summary>
+        public AudioStreamClock? StreamClock { get; init; }
         public long AnalysisRow { get; init; }
         public long ByteIndex { get; init; }
         public long CaptureTimestamp { get; init; }

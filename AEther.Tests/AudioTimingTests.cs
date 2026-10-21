@@ -69,6 +69,29 @@ public class AudioTimingTests
         }
     }
 
+    [TestCase(-.01)]
+    [TestCase(.01)]
+    public async Task DeviceClockDriftKeepsFramesOnTheFixedStreamClock(double driftMs)
+    {
+        var clock = new Clock();
+        var analyzer = new Analyzer(Format, Options(), clock);
+        var rows = Collect(analyzer);
+        for (int i = 0; i < 3; i++)
+            analyzer.PostSampleSpan(Audio(80), new(Ms(960 + i * (10 + driftMs)), i * 80,
+                AudioTimestampQuality.Device));
+        analyzer.Stop(); await analyzer.Completion;
+        Assert.That(rows.Count, Is.EqualTo(3));
+        for (int i = 0; i < rows.Count; i++)
+        {
+            long start = Ms(960 + i * 10);
+            Assert.That(rows[i].SampleStartTimestamp, Is.EqualTo(start));
+            Assert.That(rows[i].SampleEndTimestamp, Is.EqualTo(start + AudioClock.Frames(80, 8000)));
+            Assert.That(rows[i].TimestampQuality, Is.EqualTo(AudioTimestampQuality.Device));
+            Assert.That(rows[i].DiscontinuityGeneration, Is.Zero);
+        }
+        Assert.That(analyzer.LastTimestampQuality, Is.EqualTo(AudioTimestampQuality.Device));
+    }
+
     [Test]
     public async Task TimestampErrorExtrapolatesWithoutResettingValidAudio()
     {
@@ -82,6 +105,96 @@ public class AudioTimingTests
         Assert.That(rows[1].SampleStartTimestamp, Is.EqualTo(Ms(980)));
         Assert.That(rows[1].TimestampQuality, Is.EqualTo(AudioTimestampQuality.Estimated));
         Assert.That(rows[1].DiscontinuityGeneration, Is.Zero);
+    }
+
+    [Test]
+    public async Task NonzeroDevicePositionAlignsBatchesToDriverFrames()
+    {
+        var analyzer = new Analyzer(Format, Options(), new Clock());
+        var rows = Collect(analyzer);
+        analyzer.PostSampleSpan(Audio(303), new(Ms(960), 817, AudioTimestampQuality.Device));
+        analyzer.Stop(); await analyzer.Completion;
+        Assert.That(rows.Select(r => r.SampleIndex), Is.EqualTo(new long[] { 880, 960, 1040 }));
+        Assert.That(rows.Select(r => r.AnalysisRow), Is.EqualTo(new long[] { 11, 12, 13 }));
+        Assert.That(rows[0].SampleStartTimestamp, Is.EqualTo(Ms(967.875)));
+        Assert.That(rows.Select(r => r.StreamClock), Is.All.EqualTo(new AudioStreamClock(817, Ms(960), 8000)));
+        Assert.That(analyzer.DroppedAudioMilliseconds, Is.EqualTo(7.875));
+    }
+
+    [Test]
+    public async Task TimestampStepsCannotInsertFramesOrResetSignalProcessing()
+    {
+        var reference = new Analyzer(Format, Options(), new Clock());
+        var analyzer = new Analyzer(Format, Options(), new Clock());
+        var expected = Collect(reference); var actual = Collect(analyzer);
+        var audio = Audio(240);
+        reference.PostSampleSpan(audio, new(Ms(960), 800, AudioTimestampQuality.Device));
+        double[] stamps = { 960, 973, 978 };
+        for (int i = 0; i < 3; i++)
+            analyzer.PostSampleSpan(audio.AsSpan(i * 80 * 4, 80 * 4),
+                new(Ms(stamps[i]), 800 + i * 80, AudioTimestampQuality.Device));
+        reference.Stop(); analyzer.Stop(); await Task.WhenAll(reference.Completion, analyzer.Completion);
+        Assert.That(actual.Select(r => r.SampleIndex), Is.EqualTo(new long[] { 800, 880, 960 }));
+        Assert.That(actual.Select(r => r.DiscontinuityGeneration), Is.All.Zero);
+        Assert.That(actual.Select(r => r.SampleStartTimestamp), Is.EqualTo(new long?[] { Ms(960), Ms(970), Ms(980) }));
+        Assert.That(analyzer.DroppedAudioMilliseconds, Is.Zero);
+        for (int i = 0; i < actual.Count; i++) Assert.That(actual[i].Samples, Is.EqualTo(expected[i].Samples));
+        Assert.That(actual.Select(r => r.StreamClock), Is.All.EqualTo(new AudioStreamClock(800, Ms(960), 8000)));
+    }
+
+    [Test]
+    public async Task DeviceGapDiscardsPartialBatchAndLeavesTheDriverGapIntact()
+    {
+        var analyzer = new Analyzer(Format, Options(), new Clock());
+        var rows = Collect(analyzer);
+        analyzer.PostSampleSpan(Audio(40), new(Ms(960), 0, AudioTimestampQuality.Device));
+        analyzer.PostSampleSpan(Audio(80), new(Ms(980), 160, AudioTimestampQuality.Device));
+        analyzer.Stop(); await analyzer.Completion;
+        Assert.That(rows.Select(r => r.SampleIndex), Is.EqualTo(new long[] { 160 }));
+        Assert.That(rows[0].DiscontinuityGeneration, Is.EqualTo(1));
+        Assert.That(analyzer.DroppedAudioMilliseconds, Is.EqualTo(20));
+    }
+
+    [Test]
+    public async Task InvalidPacketPositionsUseOnlyTheMissingPacketsSampleCount()
+    {
+        var analyzer = new Analyzer(Format, Options(), new Clock());
+        var rows = Collect(analyzer);
+        analyzer.PostSampleSpan(Audio(80), new(Ms(960), 800, AudioTimestampQuality.Device));
+        analyzer.PostSampleSpan(Audio(80), new(0, 99999, AudioTimestampQuality.Device, AudioPacketFlags.TimestampError));
+        analyzer.PostSampleSpan(Audio(80), new(Ms(980), 960, AudioTimestampQuality.Device));
+        analyzer.Stop(); await analyzer.Completion;
+        Assert.That(rows.Select(r => r.SampleIndex), Is.EqualTo(new long[] { 800, 880, 960 }));
+        Assert.That(rows.Select(r => r.TimestampQuality), Is.EqualTo(new[] {
+            AudioTimestampQuality.Device, AudioTimestampQuality.Estimated, AudioTimestampQuality.Device }));
+        Assert.That(rows.Select(r => r.DiscontinuityGeneration), Is.All.Zero);
+        Assert.That(rows.Select(r => r.StreamClock), Is.All.EqualTo(rows[0].StreamClock));
+    }
+
+    [Test]
+    public async Task DeviceResetStartsANewPositionAndClockEpoch()
+    {
+        var analyzer = new Analyzer(Format, Options(), new Clock());
+        var rows = Collect(analyzer);
+        analyzer.PostSampleSpan(Audio(80), new(Ms(960), 800, AudioTimestampQuality.Device));
+        analyzer.PostSampleSpan(Audio(80), new(Ms(980), 0, AudioTimestampQuality.Device, AudioPacketFlags.Discontinuity));
+        analyzer.Stop(); await analyzer.Completion;
+        Assert.That(rows.Select(r => r.SampleIndex), Is.EqualTo(new long[] { 800, 0 }));
+        Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
+        Assert.That(rows[1].StreamClock, Is.EqualTo(new AudioStreamClock(0, Ms(980), 8000)));
+    }
+
+    [Test]
+    public async Task ExplicitDiscontinuityReanchorsClockWithoutInsertingFrames()
+    {
+        var analyzer = new Analyzer(Format, Options(), new Clock());
+        var rows = Collect(analyzer);
+        analyzer.PostSampleSpan(Audio(80), new(Ms(960), 800, AudioTimestampQuality.Device));
+        analyzer.PostSampleSpan(Audio(80), new(Ms(990), 880, AudioTimestampQuality.Device, AudioPacketFlags.Discontinuity));
+        analyzer.Stop(); await analyzer.Completion;
+        Assert.That(rows.Select(r => r.SampleIndex), Is.EqualTo(new long[] { 800, 880 }));
+        Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
+        Assert.That(rows[1].StreamClock, Is.EqualTo(new AudioStreamClock(880, Ms(990), 8000)));
     }
 
     [Test]
@@ -171,9 +284,9 @@ public class AudioTimingTests
         analyzer.PostSampleSpan(Audio(80), deviceTiming ? new(Ms(1020), 80, AudioTimestampQuality.Device) : new());
         analyzer.Stop(); await analyzer.Completion;
         Assert.That(rows.Count, Is.EqualTo(2));
-        Assert.That(rows[1].SampleEndTimestamp, Is.EqualTo(Ms(clock.Milliseconds)));
-        Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
-        Assert.That(rows[1].AnalysisRow, Is.GreaterThan(1));
+        Assert.That(rows[1].SampleEndTimestamp, Is.EqualTo(Ms(deviceTiming ? 1010 : clock.Milliseconds)));
+        Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(deviceTiming ? 0 : 1));
+        Assert.That(rows[1].AnalysisRow, Is.EqualTo(1), "Elapsed host time must not invent device frames.");
     }
 
     [Test]
@@ -198,6 +311,36 @@ public class AudioTimingTests
             TimestampQuality = AudioTimestampQuality.Device, DiscontinuityGeneration = generation,
         };
 
+    [TestCase(0)]
+    [TestCase(20)]
+    public void LiveHistoryScrollIgnoresBatchedArrivalsTimestampJitterAndRetention(double delayMs)
+    {
+        var clock = new Clock { Milliseconds = 100 + delayMs };
+        var history = new AudioHistory(1, 100, presentationDelay: delayMs / 1000, timeProvider: clock);
+        history.Post(Row(0, 90, 100, .1), 1);
+        Check(100);
+        Check(105); // No new audio: keep moving by half a row.
+        history.Post(Row(1, 100, 109.9, .2), 1);
+        history.Post(Row(2, 109.9, 119.8, .3), 1);
+        Check(120); // Batched arrival and clock drift must not reanchor the playhead.
+        Check(125);
+        Check(180); // Crossing retention must not change scrolling speed.
+        history.Post(Row(3, 119.8, 129.7, .4), 1);
+        history.Post(Row(4, 129.7, 139.6, .5), 1);
+        Check(185); // Late rows fill their slots without pulling the clock backward.
+        Assert.That(history.History[0][12], Is.EqualTo(.4f));
+        Assert.That(history.History[0][16], Is.EqualTo(.5f));
+
+        void Check(double targetMs)
+        {
+            clock.Milliseconds = targetMs + delayMs;
+            history.Advance(0); // Absolute monotonic clock determines the scroll, not caller dt.
+            double row = (targetMs - 100) / 10;
+            Assert.That(history.Shift, Is.EqualTo((row + .5) / history.Rows).Within(1e-7),
+                $"target {targetMs} ms");
+        }
+    }
+
     [Test]
     public void FrameMeanWeightsDurations()
     {
@@ -207,21 +350,23 @@ public class AudioTimingTests
         history.Post(Row(1, 5, 20, 1), 1);
         history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
+        Assert.That(history.BlockSpectrum[0], Is.All.EqualTo(1f), "Expose the last actual block without averaging.");
         clock.Milliseconds = 40; history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
+        Assert.That(history.BlockSpectrum[0], Is.All.Zero, "No newly consumed block means a visible gap in Spectrum.");
         clock.Milliseconds = 71; history.Advance(.031);
         Assert.That(history.Spectrum[0], Is.All.Zero);
     }
 
     [Test]
-    public void DelayExcludesFutureRowsAndKeepsHistoryAndLiveOnOneCursor()
+    public void DelayBuffersHistoryAheadOfPresentationWithoutExposingFutureSpectrum()
     {
         var clock = new Clock { Milliseconds = 20 };
         var history = new AudioHistory(1, 100, presentationDelay: .01, timeProvider: clock);
         history.Post(Row(0, 0, 10, .2), 1); history.Post(Row(1, 10, 20, .8), 1);
         history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.2f));
-        Assert.That(history.History[0][4], Is.Zero);
+        Assert.That(history.History[0][4], Is.EqualTo(.8f), "Storage is independent of presentation delay.");
         clock.Milliseconds = 30; history.Advance(.01);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.8f));
         Assert.That(history.NewestAge, Is.Zero);

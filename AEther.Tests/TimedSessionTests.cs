@@ -60,6 +60,8 @@ public class TimedSessionTests
         Assert.That(session.Renderer.Audio.Profile, Is.SameAs(session.Analyzer.Profile));
         Assert.That(session.Renderer.PreferDisplayAdapter, Is.True);
         Assert.That(session.NeedsRendererChange("Spectrum", window.Handle), Is.False);
+        Assert.That(session.NeedsRendererChange("Histogram", window.Handle), Is.False,
+            "Both diagnostic scenes should render on the display adapter.");
         Assert.That(source.TimedSubscribers, Is.EqualTo(1), "Keep the existing capture subscription.");
         session.Renderer.Render(false);
         Assert.That(session.Renderer.LastHistoryUpload.Rows, Is.EqualTo(audio.Rows));
@@ -67,11 +69,16 @@ public class TimedSessionTests
 
         session.RecreateRenderer(window.Handle, 1280, 720, _ => { }, "Histogram");
         Assert.That(session.Renderer.Audio, Is.SameAs(audio));
-        Assert.That(session.Renderer.PreferDisplayAdapter, Is.False);
+        Assert.That(session.Renderer.PreferDisplayAdapter, Is.True);
         session.Renderer.Render(false);
         Assert.That(session.Renderer.LastHistoryUpload.Rows, Is.EqualTo(audio.Rows));
         Assert.That(session.Renderer.ReadHistogram(0), Is.EqualTo(audio.History[0]),
             "New GPU textures must receive the retained history after switching back.");
+
+        session.RecreateRenderer(window.Handle, 1280, 720, _ => { }, "Mandelbox");
+        Assert.That(session.Renderer.Audio, Is.SameAs(audio));
+        Assert.That(session.Renderer.PreferDisplayAdapter, Is.False,
+            "Heavy scenes retain performance-GPU selection.");
     }
 
     [Test, Category("GPU")]

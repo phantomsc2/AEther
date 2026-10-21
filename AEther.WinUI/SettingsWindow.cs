@@ -278,6 +278,8 @@ public sealed class SettingsWindow : ToolWindow
             + $"Fluid work: {session.Renderer.FluidWork}\n"
             + $"GPU timing: delayed, nonblocking; skipped {session.Renderer.SkippedGpuTimingFrames}, invalid {session.Renderer.InvalidGpuTimingFrames}\n"
             + $"Frame pacing wait: {Stat("render.pacing_wait_ms")}\n"
+            + $"Frame clock: {(session.Renderer.LastPresentationTimestamp.HasValue ? "compositor estimate" : "host QPC")}\n"
+            + $"Display interval: {Stat("render.display_interval_ms")}\n"
             + $"Present wait: {Stat("render.present_wait_ms")} | {fps}\n"
             + $"Output: {session.Renderer.OutputDescription}\n"
             + $"GPU: {session.Renderer.AdapterDescription}\n"

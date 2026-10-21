@@ -40,8 +40,8 @@ public sealed partial class Renderer : IDisposable
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
     ID3D11Buffer frameBuffer = null!;
-    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
-    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
+    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[5];
+    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[5];
     readonly string shaderDirectory;
     int width, height;
     double previousTime;
@@ -50,6 +50,8 @@ public sealed partial class Renderer : IDisposable
     double distortionMomentum;
     bool disposed;
     long previousFrame;
+    CompositionClock? displayClock;
+    public long? LastPresentationTimestamp { get; private set; }
     public AudioHistory Audio { get; }
     public string SceneName { get; private set; } = "Mandelbox";
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
@@ -126,12 +128,12 @@ public sealed partial class Renderer : IDisposable
             {
                 textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
                 {
-                    Width = (uint)bands, Height = (uint)(i < 2 ? 1 : Audio.Rows),
-                    MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
+                    Width = (uint)bands, Height = (uint)(i == 4 ? 2 : i < 2 ? 1 : Audio.Rows),
+                    MipLevels = 1, ArraySize = 1, Format = i == 4 ? Format.R32_Float : Format.R32G32B32A32_Float,
                     SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
                     BindFlags = BindFlags.ShaderResource,
                 }));
-                textures[i].DebugName = i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
+                textures[i].DebugName = i == 4 ? "ResidualSpectrum" : i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
                 views[i] = Own(device.CreateShaderResourceView(textures[i]));
             }
             var sampler = Own(device.CreateSamplerState(new SamplerDescription
@@ -364,22 +366,36 @@ public sealed partial class Renderer : IDisposable
         feedback?.Dispose(); feedback = null;
     }
 
-    public void Render(bool present = true, uint syncInterval = 1)
+    public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null)
     {
         if (syncInterval > 4) throw new ArgumentOutOfRangeException(nameof(syncInterval));
-        lock (graphicsGate) RenderCore(present, syncInterval);
+        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp);
     }
 
-    unsafe void RenderCore(bool present, uint syncInterval)
+    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp)
     {
         if (output.SceneTarget == null) return;
         using var gpuFrame = gpu.BeginFrame(Audio.Profile);
         var frameStart = Stopwatch.GetTimestamp();
         if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
         previousFrame = frameStart;
-        var now = Audio.Now;
+        if (present && !presentationTimestamp.HasValue)
+            presentationTimestamp = (displayClock ??= Own(new CompositionClock())).NextFrameTimestamp();
+        // Rasterize for the compositor's next display time rather than this thread's
+        // jittery wake-up time. Offline renders retain their injected host clock.
+        if (presentationTimestamp.HasValue && LastPresentationTimestamp.HasValue)
+            presentationTimestamp = Math.Max(presentationTimestamp.Value, LastPresentationTimestamp.Value);
+        if (presentationTimestamp.HasValue)
+        {
+            if (LastPresentationTimestamp.HasValue)
+                Audio.Profile?.Record("render.display_interval_ms", AudioClock.Seconds(
+                    presentationTimestamp.Value - LastPresentationTimestamp.Value) * 1000);
+            Audio.Profile?.Record("render.display_lead_ms", AudioClock.Seconds(presentationTimestamp.Value - frameStart) * 1000);
+        }
+        LastPresentationTimestamp = presentationTimestamp;
+        var now = Math.Max(previousTime, presentationTimestamp.HasValue ? Audio.TimeAt(presentationTimestamp.Value) : Audio.Now);
         var dt = Math.Max(0, now - previousTime);
-        Audio.Advance(dt);
+        Audio.Advance(dt, presentationTimestamp);
         // Material evolution follows sustained components. Onsets can pulse a
         // silhouette without permanently advancing its underlying shape.
         shapeTime += Math.Clamp(dt, 0, .05)
@@ -463,6 +479,7 @@ public sealed partial class Renderer : IDisposable
             namedSamplers["AtmosphereSampler"] = lightTransport.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
+        namedTextures["ResidualSpectrum"] = views[4];
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
         // Compatibility names now refer to the core evidence; there is no scene filter pass.

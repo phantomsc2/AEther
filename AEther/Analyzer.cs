@@ -159,8 +159,9 @@ namespace AEther
             var filled = 0;
             var batchTime = DateTime.Now;
             long expectedByte = 0, batchIndex = 0, captureTimestamp = 0;
-            long extraBytes = 0;
-            long? expectedDevice = null, expectedTime = null, batchStart = null;
+            long positionOffset = 0;
+            long? expectedPosition = null, expectedTime = null, batchStart = null;
+            AudioStreamClock? streamClock = null;
             long? lastPacketArrival = null;
             AudioTimestampQuality quality = AudioTimestampQuality.Unspecified;
             try
@@ -174,27 +175,31 @@ namespace AEther
                     {
                         var offset = 0;
                         long byteGap = input.ByteIndex - expectedByte;
-                        long previousExtraBytes = extraBytes;
                         bool gap = byteGap != 0 || packet.Timing?.Flags.HasFlag(AudioPacketFlags.Discontinuity) == true;
                         var timing = packet.Timing;
+                        // A driver-reported discontinuity starts a new clock correlation,
+                        // even if its frame counter resumes consecutively after a stop.
+                        if (timing?.Flags.HasFlag(AudioPacketFlags.Discontinuity) == true) streamClock = null;
                         bool valid = timing.HasValue && !timing.Value.Flags.HasFlag(AudioPacketFlags.TimestampError);
                         long? device = valid ? timing?.FramePosition : null;
                         long? sourceStart = valid ? timing?.Timestamp : null;
                         var packetQuality = sourceStart.HasValue ? timing!.Value.Quality : AudioTimestampQuality.Estimated;
                         if (sourceStart.HasValue && packetQuality == AudioTimestampQuality.Unspecified)
                             packetQuality = AudioTimestampQuality.Estimated;
-                        if (device.HasValue && expectedDevice.HasValue && device != expectedDevice)
+                        // The driver position is authoritative. Byte counting is only a fallback for
+                        // offline/legacy sources or packets whose positions WASAPI marked invalid.
+                        long packetPosition = device.HasValue ? checked(device.Value * Format.Size)
+                            : input.ByteIndex + positionOffset;
+                        if (expectedPosition.HasValue && packetPosition != expectedPosition.Value)
                         {
-                            var missing = device.Value - expectedDevice.Value;
                             gap = true;
-                            // Byte indices already account for packets dropped by our own queue.
-                            if (missing > 0)
-                            {
-                                long missingBytes = Math.Max(0, missing * Format.Size - Math.Max(0, byteGap));
-                                extraBytes += missingBytes;
-                                RecordLoss(missingBytes / Format.Size);
-                            }
+                            // Queue overflow was already counted by DropPacket.
+                            RecordLoss(Math.Max(0, packetPosition - expectedPosition.Value - Math.Max(0, byteGap)) / Format.Size);
+                            if (packetPosition < expectedPosition.Value) streamClock = null;
                         }
+                        positionOffset = packetPosition - input.ByteIndex;
+                        if (device.HasValue && sourceStart.HasValue && streamClock == null)
+                            streamClock = new(device.Value, sourceStart.Value, Format.SampleRate);
                         if (timing.HasValue && !sourceStart.HasValue)
                         {
                             // Untimestamped capture can stop emitting packets during a pause. Extrapolating
@@ -203,23 +208,15 @@ namespace AEther
                                 && AudioClock.Seconds(packet.Arrival - lastPacketArrival.Value)
                                     > Math.Max(.05, 2.0 * input.SampleCount / Format.Size / Format.SampleRate);
                             sourceStart = expectedTime.HasValue && !paused && timing?.Flags.HasFlag(AudioPacketFlags.Discontinuity) != true
-                                ? expectedTime.Value + AudioClock.Frames((Math.Max(0, byteGap) + extraBytes - previousExtraBytes) / Format.Size, Format.SampleRate)
+                                ? expectedTime.Value + AudioClock.Frames(Math.Max(0, byteGap) / Format.Size, Format.SampleRate)
                                 : packet.Arrival - AudioClock.Frames(input.SampleCount / Format.Size, Format.SampleRate);
+                            if (paused) gap = true;
                         }
-                        // Account for source-clock gaps not already represented by missing bytes/device frames.
-                        // Device stamps can establish short gaps; arrival estimates need a generous tolerance.
-                        var accountedTime = expectedTime + AudioClock.Frames(
-                            (Math.Max(0, byteGap) + extraBytes - previousExtraBytes) / Format.Size, Format.SampleRate);
-                        if (sourceStart.HasValue && accountedTime.HasValue
-                            && AudioClock.Seconds(sourceStart.Value - accountedTime.Value)
-                                > (packetQuality == AudioTimestampQuality.Device ? Math.Max(.001, 2.0 / Format.SampleRate) : .05))
-                        {
-                            extraBytes += (long)Math.Round(AudioClock.Seconds(sourceStart.Value - accountedTime.Value)
-                                * Format.SampleRate) * Format.Size;
-                            gap = true;
-                        }
-                        // A malformed timestamp must not rewind the presented timeline or discard valid audio.
-                        if (!gap && sourceStart.HasValue && expectedTime.HasValue && sourceStart < expectedTime)
+                        // Valid device stamps anchor the source clock. Its rate can differ slightly
+                        // from the nominal sample rate, so adjacent packet intervals may overlap.
+                        // Only repair estimated timing; do not replace WASAPI observations with extrapolation.
+                        if (!gap && packetQuality != AudioTimestampQuality.Device
+                            && sourceStart.HasValue && expectedTime.HasValue && sourceStart < expectedTime)
                         {
                             sourceStart = expectedTime;
                             packetQuality = AudioTimestampQuality.Estimated;
@@ -230,7 +227,7 @@ namespace AEther
                             filled = 0; ResetAnalysis();
                         }
                         expectedByte = input.ByteIndex + input.SampleCount;
-                        expectedDevice = device + input.SampleCount / Format.Size;
+                        expectedPosition = packetPosition + input.SampleCount;
                         expectedTime = sourceStart + AudioClock.Frames(input.SampleCount / Format.Size, Format.SampleRate);
                         lastPacketArrival = packet.Arrival;
                         while (offset < input.SampleCount)
@@ -241,7 +238,7 @@ namespace AEther
                                 // Expire completed observations, not the early samples needed by a fresh
                                 // observation. This also permits tick durations longer than the age budget.
                                 var lateFrames = Math.Max(0, (long)Math.Floor(AudioClock.Seconds(oldest - sourceStart.Value) * Format.SampleRate));
-                                var packetFrame = (input.ByteIndex + extraBytes) / Format.Size;
+                                var packetFrame = packetPosition / Format.Size;
                                 var firstFreshFrame = (packetFrame + lateFrames) / BatchSize * BatchSize;
                                 var skipTo = (int)Math.Min(input.SampleCount, Math.Max(0, firstFreshFrame - packetFrame) * Format.Size);
                                 if (skipTo > offset)
@@ -257,7 +254,7 @@ namespace AEther
                             }
                             if (filled == 0)
                             {
-                                var position = input.ByteIndex + extraBytes + offset;
+                                var position = packetPosition + offset;
                                 var remainder = position % Batch.Length;
                                 if (remainder != 0)
                                 {
@@ -269,7 +266,9 @@ namespace AEther
                                 batchIndex = position / Batch.Length;
                                 batchTime = audioOrigin + TimeSpan.FromSeconds(batchIndex * (double)BatchSize / Format.SampleRate);
                                 captureTimestamp = packet.Arrival;
-                                batchStart = sourceStart + AudioClock.Frames(offset / Format.Size, Format.SampleRate);
+                                batchStart = streamClock is { } clock
+                                    ? clock.Timestamp + AudioClock.Frames(batchIndex * BatchSize - clock.FramePosition, Format.SampleRate)
+                                    : sourceStart + AudioClock.Frames(offset / Format.Size, Format.SampleRate);
                                 quality = sourceStart.HasValue ? packetQuality : AudioTimestampQuality.Unspecified;
                             }
                             if (packetQuality < quality) quality = packetQuality;
@@ -279,8 +278,10 @@ namespace AEther
                             offset += count;
                             if (filled == Batch.Length)
                             {
-                                var batchEnd = sourceStart + AudioClock.Frames(offset / Format.Size, Format.SampleRate);
-                                AnalyzeBatch(batchTime, batchIndex, captureTimestamp, batchStart, batchEnd, quality);
+                                // An observation contains exactly BatchSize device frames, including
+                                // when it spans packets with slightly different QPC correlations.
+                                var batchEnd = batchStart + AudioClock.Frames(BatchSize, Format.SampleRate);
+                                AnalyzeBatch(batchTime, batchIndex, captureTimestamp, batchStart, batchEnd, quality, streamClock);
                                 filled = 0;
                             }
                         }
@@ -301,12 +302,13 @@ namespace AEther
         }
 
         void AnalyzeBatch(DateTime time, long row, long captureTimestamp, long? start, long? end,
-            AudioTimestampQuality quality)
+            AudioTimestampQuality quality, AudioStreamClock? streamClock)
         {
             using var totalTiming = Profile.Measure("analysis.total_ms");
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
             var spectrum = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var output = RentEvent<double>(AEther.Splitter.OutputStride * Domain.Length, Format.ChannelCount, time);
+            var residual = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var jointEvidence = JointEvidenceAvailable is not null
                 ? RentEvent<JointEvidence>(Domain.Length, Format.ChannelCount, time) : null;
             try
@@ -342,17 +344,23 @@ namespace AEther
                     using (Profile.Measure("analysis.split_channel_ms"))
                     {
                         Splitters[c].ProcessLinear(spectrum.GetChannel(c), output.GetChannel(c));
+                        var estimates = Splitters[c].Estimates.Span;
+                        var residualChannel = residual.GetChannel(c).Span;
+                        for (var k = 0; k < estimates.Length; k++) residualChannel[k] = estimates[k].ResidualRms;
                         if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
                     }
                 }
                 // Publish immediately; render pacing belongs to the renderer.
-                output = output with { SampleIndex = row * BatchSize, AnalysisRow = row,
+                output = output with { ResidualRms = residual.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
+                    SampleIndex = row * BatchSize, AnalysisRow = row,
+                    StreamClock = streamClock,
                     CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
                     SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                     DiscontinuityGeneration = Interlocked.Read(ref generation) };
                 if (jointEvidence is not null)
                 {
                     jointEvidence = jointEvidence with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
+                        StreamClock = streamClock,
                         CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp,
                         SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                         DiscontinuityGeneration = output.DiscontinuityGeneration };
@@ -369,6 +377,7 @@ namespace AEther
             {
                 ReturnEvent(samples);
                 ReturnEvent(spectrum);
+                ReturnEvent(residual);
                 ReturnEvent(output);
                 if (jointEvidence is not null) ReturnEvent(jointEvidence);
             }

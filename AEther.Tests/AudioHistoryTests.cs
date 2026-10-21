@@ -7,6 +7,40 @@ namespace AEther.Tests;
 public class AudioHistoryTests
 {
     [Test]
+    public void ResidualIsOwnedAveragedAndClearedWithSpectrum()
+    {
+        var clock = new HistoryClock();
+        var history = new AudioHistory(1, 100, timeProvider: clock);
+        var residual = new[] { .2 };
+        history.Post(new(new double[4], 4, DateTime.UnixEpoch) { ResidualRms = residual }, 1);
+        residual[0] = .9; // The producer may recycle its storage immediately.
+        history.Post(new(new double[4], 4, DateTime.UnixEpoch)
+            { AnalysisRow = 1, ResidualRms = new[] { .6 } }, 1);
+        history.Advance(.02);
+        Assert.That(history.ResidualSpectrum[0][0], Is.EqualTo(.4f).Within(1e-7));
+        Assert.That(history.ResidualSpectrum[1], Is.EqualTo(history.ResidualSpectrum[0]));
+        clock.Milliseconds = 100;
+        history.Advance(.1);
+        Assert.That(history.ResidualSpectrum[0], Is.All.Zero);
+        Assert.That(history.ResidualSpectrum[1], Is.All.Zero);
+        history.Post(new(new double[4], 4, DateTime.UnixEpoch)
+            { AnalysisRow = 2, DiscontinuityGeneration = 1 }, 1);
+        history.Advance(.01);
+        Assert.That(history.ResidualSpectrum[0], Is.All.Zero);
+    }
+
+    [Test]
+    public void ResidualPreservesStereoAndSanitizesInvalidValues()
+    {
+        var history = new AudioHistory(2, 100, timeProvider: new HistoryClock());
+        history.Post(new(new double[16], 8, DateTime.UnixEpoch)
+            { ResidualRms = new[] { .2, double.NaN, .7, -1 } }, 2);
+        history.Advance(.01);
+        Assert.That(history.ResidualSpectrum[0], Is.EqualTo(new[] { .2f, 0f }));
+        Assert.That(history.ResidualSpectrum[1], Is.EqualTo(new[] { .7f, 0f }));
+    }
+
+    [Test]
     public void DelayedRowsAfterCaptureDropRestorePresentationReserve()
     {
         var clock = new HistoryClock();

@@ -8,17 +8,21 @@ public sealed class AudioHistory
 {
     const double Retention = .05, HandoffSeconds = .1;
     sealed record Row(long Index, long Capture, long Completed, double Start, double End,
-        double Arrival, float[] Samples, long Generation, bool Live);
+        double Arrival, float[] Samples, float[] Residual, long Generation, bool Live, AudioStreamClock? Clock);
     readonly Channel<Row> pending, offline;
     readonly Queue<Row> scheduled = new(), recent = new();
     readonly TimeProvider timeProvider;
     readonly long started;
     readonly double rate;
     readonly int handoffRows;
-    readonly double[] sum;
-    long newestRow = -1, firstRow, generation = -1;
+    readonly double[] sum, residualSum;
+    long newestRow = -1, consumedRow = -1, firstRow, generation = -1;
     double position, newestEnd, newestArrival, cursor, stateTime;
-    bool haveCursor, haveState, live;
+    double historyClockTime;
+    double historyClockRow;
+    AudioStreamClock? streamClock;
+    bool haveHistoryClock;
+    bool haveCursor, haveState, haveConsumed, live;
     long dropped;
     int dirtyStart, dirtyCount;
 
@@ -59,6 +63,11 @@ public sealed class AudioHistory
     /// <summary>Physical ring storage. Direct edits require InvalidateHistory before rendering.</summary>
     public float[][] History { get; }
     public float[][] Spectrum { get; }
+    /// <summary>Newest analysis block consumed this display frame; zero when no new block became due.</summary>
+    internal float[][] BlockSpectrum { get; }
+    internal float[][] BlockResidualSpectrum { get; }
+    /// <summary>Residual RMS averaged over the same rows as Spectrum.</summary>
+    public float[][] ResidualSpectrum { get; }
     public Vector3 Components { get; private set; }
     public float FractalEnergy { get; private set; }
     public double MusicalTime { get; private set; }
@@ -67,6 +76,8 @@ public sealed class AudioHistory
     public float Flash { get; private set; }
     public float Energy { get; private set; }
     public double Now => timeProvider.GetElapsedTime(started).TotalSeconds;
+    internal double TimeAt(long timestamp) => AudioClock.Seconds(timestamp
+        - AudioClock.ConvertTimestamp(started, timeProvider.TimestampFrequency));
     double HostNow => AudioClock.Seconds(AudioClock.Now(timeProvider));
     public float Shift => (float)(((position % Rows + Rows) % Rows + .5) / Rows);
     public float TimeScale => (float)(Seconds * rate / Rows);
@@ -87,9 +98,13 @@ public sealed class AudioHistory
         Bands = bands; rate = analysisRate; Seconds = seconds; PresentationDelay = presentationDelay;
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
+        BlockSpectrum = [new float[4 * bands], new float[4 * bands]];
+        BlockResidualSpectrum = [new float[bands], new float[bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
         InvalidateHistory();
         sum = new double[8 * bands];
+        residualSum = new double[2 * bands];
+        ResidualSpectrum = [new float[bands], new float[bands]];
         handoffRows = Math.Max(2, (int)Math.Ceiling((HandoffSeconds + presentationDelay) * rate));
         pending = Mailbox(handoffRows);
         // Legacy/offline fixtures can seed an entire history without pretending it is live capture.
@@ -110,37 +125,49 @@ public sealed class AudioHistory
         if (timed != input.SampleStartTimestamp.HasValue
             || timed && input.SampleEndTimestamp <= input.SampleStartTimestamp)
             throw new ArgumentException("A timed row must have a positive source interval.");
+        if (!input.ResidualRms.IsEmpty && input.ResidualRms.Length != Bands * channelCount)
+            throw new ArgumentException("Residual dimensions do not match the renderer.");
+        var residual = new float[Bands * 2];
         var owned = new float[Bands * 8];
         for (var c = 0; c < 2; c++)
         {
-            var src = input.GetChannel(Math.Min(c, channelCount - 1)).Span;
+            int channel = Math.Min(c, channelCount - 1);
+            if (!input.ResidualRms.IsEmpty)
+                for (int k = 0; k < Bands; k++)
+                {
+                    double value = input.ResidualRms.Span[channel * Bands + k];
+                    residual[c * Bands + k] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
+                }
+            var src = input.GetChannel(channel).Span;
             for (var i = 0; i < src.Length; i++)
                 owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
         }
         var row = new Row(input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp,
             timed ? AudioClock.Seconds(input.SampleStartTimestamp!.Value) : input.AnalysisRow / rate,
             timed ? AudioClock.Seconds(input.SampleEndTimestamp!.Value) : (input.AnalysisRow + 1) / rate,
-            HostNow, owned, input.DiscontinuityGeneration, timed);
+            HostNow, owned, residual, input.DiscontinuityGeneration, timed, input.StreamClock);
         (timed ? pending : offline).Writer.TryWrite(row);
     }
 
-    public void Advance(double dt)
+    public void Advance(double dt, long? presentationTimestamp = null)
     {
+        foreach (var channel in BlockSpectrum) Array.Clear(channel);
+        foreach (var channel in BlockResidualSpectrum) Array.Clear(channel);
         long hostTicks = AudioClock.Now(timeProvider);
         double host = AudioClock.Seconds(hostTicks);
-        double target = AudioClock.Seconds(hostTicks - (long)Math.Round(PresentationDelay * System.Diagnostics.Stopwatch.Frequency));
+        double target = AudioClock.Seconds((presentationTimestamp ?? hostTicks)
+            - (long)Math.Round(PresentationDelay * System.Diagnostics.Stopwatch.Frequency));
         // Bounded work even if a producer is concurrently filling the mailbox.
         for (var i = 0; i < handoffRows && pending.Reader.TryRead(out var row); i++)
         {
-            if (generation >= 0 && row.Generation != generation)
-            {
-                ClearLive(); recent.Clear(); haveCursor = false; Flash = 0;
-            }
             if (scheduled.Count > 0 && scheduled.Last().Generation != row.Generation)
             {
                 Interlocked.Add(ref dropped, scheduled.Count);
                 scheduled.Clear();
             }
+            // Upload rows as soon as they arrive, even ahead of a delayed presentation
+            // cursor. Visibility and live envelopes are selected separately below.
+            if (!Store(row)) continue;
             scheduled.Enqueue(row);
             while (scheduled.Count > handoffRows) { scheduled.Dequeue(); Interlocked.Increment(ref dropped); }
         }
@@ -150,12 +177,12 @@ public sealed class AudioHistory
             Consume(row, host);
         }
         for (var i = 0; i < Math.Min(32768, Rows * 2) && offline.Reader.TryRead(out var row); i++)
-            Consume(row, host);
+            if (Store(row)) Consume(row, host);
 
         if (newestRow < 0) return;
         double end = live ? Math.Min(target, newestEnd) : newestEnd - PresentationDelay;
         double age = live ? target - newestEnd : host - newestArrival;
-        if (!haveCursor || end > cursor)
+        if (haveConsumed && (!haveCursor || end > cursor))
         {
             double start = haveCursor ? cursor : recent.TryPeek(out var first) ? first.Start : end;
             if (live) start = Math.Max(start, end - Retention);
@@ -163,7 +190,7 @@ public sealed class AudioHistory
             cursor = end;
             haveCursor = true;
         }
-        if (age > Retention)
+        if (haveConsumed && age > Retention)
         {
             ClearLive();
             var silenceEnd = live ? target : newestEnd + age;
@@ -173,36 +200,55 @@ public sealed class AudioHistory
                 stateTime = silenceEnd;
             }
         }
-        position = newestRow + (end - newestEnd) * rate;
-        if (age > Retention) position = newestRow + age * rate;
-        if (live)
+        // Row arrivals update storage, never the live scroll clock. Anchor once so
+        // batching, capture jitter and the retention timeout cannot move existing pixels.
+        // NewestAge masks the unwritten strip while delayed rows are in flight.
+        position = live ? historyClockRow + (target - historyClockTime) * rate
+            : newestRow + (end - newestEnd) * rate;
+        if (!live && age > Retention) position = newestRow + age * rate;
+        if (live && haveConsumed)
         {
             Profile?.Record("render.presented_audio_age_ms", Math.Max(0, host - end) * 1000);
             Profile?.Record("render.source_age_ms", (host - newestEnd) * 1000);
         }
     }
 
-    void Consume(Row row, double host)
+    bool Store(Row row)
     {
         bool changed = generation != row.Generation;
+        bool clockChanged = row.Live && row.Clock.HasValue && streamClock.HasValue && row.Clock != streamClock;
         if (changed)
         {
             generation = row.Generation;
             recent.Clear();
             haveCursor = false;
+            haveConsumed = false;
             ClearLive();
             Flash = 0;
         }
-        if (newestRow >= 0 && (row.Index <= newestRow || row.End <= newestEnd))
+        if (newestRow >= 0 && (row.Index <= newestRow || clockChanged))
         {
-            if (!changed) { Interlocked.Increment(ref dropped); return; }
+            if (!changed && !clockChanged) { Interlocked.Increment(ref dropped); return false; }
             foreach (var history in History) Array.Clear(history);
             InvalidateHistory();
             newestRow = row.Index - 1;
             firstRow = row.Index;
             haveState = false;
+            haveConsumed = false;
+            consumedRow = -1;
+            haveHistoryClock = false;
         }
-        long previous = newestRow;
+        if (row.Live && (!haveHistoryClock || row.Clock.HasValue && row.Clock != streamClock))
+        {
+            // The driver correlation can precede the first retained/complete analysis row.
+            // In row-center coordinates, the end of stream frame zero is row -1.
+            historyClockRow = row.Clock is { } clock ? clock.FramePosition * (rate / clock.SampleRate) - 1 : row.Index;
+            historyClockTime = row.Clock is { } source ? AudioClock.Seconds(source.Timestamp) : row.End;
+            streamClock = row.Clock;
+            haveHistoryClock = true;
+        }
+        if (!row.Live) haveHistoryClock = false;
+        if (newestRow < 0 && row.Live) firstRow = row.Index;
         long clearFrom = Math.Max(newestRow + 1, row.Index - Rows + 1);
         MarkHistoryRows((int)((clearFrom % Rows + Rows) % Rows), (int)(row.Index - clearFrom + 1));
         for (long clear = clearFrom; clear <= row.Index; clear++)
@@ -212,14 +258,31 @@ public sealed class AudioHistory
         }
         int offset = (int)((row.Index % Rows + Rows) % Rows) * Bands * 4;
         for (var c = 0; c < 2; c++) row.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
-        newestRow = row.Index; newestEnd = row.End; newestArrival = row.Arrival; live = row.Live;
+        newestRow = row.Index;
+        live = row.Live;
+        return true;
+    }
+
+    void Consume(Row row, double host)
+    {
+        newestEnd = row.End; newestArrival = row.Arrival;
+        haveConsumed = true;
+        // The diagnostic spectrum exposes delivery cadence. Never hold, average,
+        // or replay older blocks across subsequent display frames.
+        if (!row.Live || host - PresentationDelay - row.End <= Retention)
+            for (int channel = 0; channel < 2; channel++)
+            {
+                row.Samples.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockSpectrum[channel]);
+                row.Residual.AsSpan(channel * Bands, Bands).CopyTo(BlockResidualSpectrum[channel]);
+            }
         LatestCaptureTimestamp = row.Capture;
         LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;
         recent.Enqueue(row);
         double keepFrom = row.End - (row.Live ? Retention : Rows / rate);
         while (recent.TryPeek(out var old) && old.End <= keepFrom) recent.Dequeue();
         while (recent.Count > (row.Live ? handoffRows : Rows)) recent.Dequeue();
-        if (previous >= 0 && row.Index != previous + 1) { ClearLive(); Flash = 0; }
+        if (consumedRow >= 0 && row.Index != consumedRow + 1) { ClearLive(); Flash = 0; }
+        consumedRow = row.Index;
         // Untimed replay rows have a logical sample clock, independent of time spent paused in the host.
         if (!row.Live && haveState && stateTime > row.Start) stateTime = row.Start;
         if (haveState && row.Start > stateTime) DriveZero(row.Start - stateTime);
@@ -238,6 +301,7 @@ public sealed class AudioHistory
     void Aggregate(double start, double end)
     {
         Array.Clear(sum);
+        Array.Clear(residualSum);
         double width = end - start;
         if (width <= 0) return;
         foreach (var row in recent)
@@ -245,9 +309,12 @@ public sealed class AudioHistory
             double weight = Math.Max(0, Math.Min(end, row.End) - Math.Max(start, row.Start)) / width;
             if (weight == 0) continue;
             for (var i = 0; i < sum.Length; i++) sum[i] += weight * row.Samples[i];
+            for (var i = 0; i < residualSum.Length; i++) residualSum[i] += weight * row.Residual[i];
         }
         for (var c = 0; c < 2; c++)
             for (var i = 0; i < Bands * 4; i++) Spectrum[c][i] = (float)Math.Clamp(sum[c * Bands * 4 + i], 0, float.MaxValue);
+        for (var c = 0; c < 2; c++)
+            for (var k = 0; k < Bands; k++) ResidualSpectrum[c][k] = (float)Math.Clamp(residualSum[c * Bands + k], 0, float.MaxValue);
         double power = 0;
         for (var i = 3; i < sum.Length; i += 4) power += sum[i] * sum[i];
         Energy = (float)Math.Sqrt(power / (2 * Bands));
@@ -256,6 +323,7 @@ public sealed class AudioHistory
     void ClearLive()
     {
         foreach (var spectrum in Spectrum) Array.Clear(spectrum);
+        foreach (var residual in ResidualSpectrum) Array.Clear(residual);
         Energy = 0;
     }
 

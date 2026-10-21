@@ -1,6 +1,6 @@
 # Latency and profiling
 
-## Current source-timed pipeline (2026-10-20)
+## Device-position and display-time pipeline (2026-10-21)
 
 The WinUI session prefers the core `ITimedSampleSource` capability. Its borrowed-span callback
 adds `AudioPacketTiming`: first-frame position, first-sample monotonic timestamp, quality,
@@ -9,15 +9,29 @@ native packet callback remain available; subscribe to one ingestion path to avoi
 WASAPI QPC positions are expressed in 100 ns units and are converted once into `Stopwatch`
 ticks. Wall-clock `DateTime` values do not drive synchronization.
 
+Valid WASAPI device positions are authoritative. For a packet starting at frame `p`,
+its frame offset `k` represents stream time `(p + k) / sampleRate`. Analysis aligns
+complete batches to those driver frame indices; `SampleIndex` is the actual batch's
+starting device frame and `AnalysisRow` is that index divided by batch size. Counted
+bytes provide positions only for offline/legacy sources and invalid-position packets.
+QPC differences never insert frames, shift row indices, or reset contiguous signal processing.
+
 Analysis retains its sample-count cadence (`sampleRate / floor(sampleRate / TimeResolution)`).
 Rows carry their completed source interval `[SampleStartTimestamp, SampleEndTimestamp)`,
 timestamp quality and discontinuity generation; `SampleIndex` still identifies the batch start.
+With a stream correlation, both interval boundaries are computed from the driver's frame
+indices and sample rate through that fixed correlation. Per-packet QPC noise therefore
+cannot change observation durations, temporal averaging or envelopes. Raw packet QPC stamps
+remain available in the capture callback/probe and determine input age separately.
 Packets can contain many rows, and a row can cross packet boundaries. Arrival/completion times
 are separate from represented sample time. Invalid timestamps extrapolate from contiguous
 sample history; absent history uses callback time minus packet duration and is marked estimated.
 After an untimestamped capture pause, a new arrival anchor is established rather than keeping
-resumed packets permanently beyond the live age budget. Trustworthy device timestamps also
-identify short source-time gaps even if the device frame counter resumes consecutively.
+resumed packets permanently beyond the live age budget. A driver discontinuity or backward
+device-position reset establishes a new `AudioStreamClock` correlation from the next valid
+device-frame/QPC pair. It does not fabricate missing samples from elapsed host time.
+Forward device-position gaps preserve their exact absent frame indices. Timestamp errors
+are explicitly estimated using known packet lengths until valid device positions return.
 
 Capture does not wait for analysis or graphics. Queue overflow drops the **oldest** queued
 packet. `BufferCapacity` bounds packet count; `MaxInputAgeMilliseconds` defaults to 50 ms and
@@ -28,19 +42,52 @@ remains sample-count based. Known missing samples and stream discontinuities res
 DFT rings/state, statistical fits and waveform filters; they are not concatenated or silently
 invented as zeros. Explicitly silent packets override their buffer contents with zeros.
 
-The renderer follows the newest completed source interval at or before its presentation target.
+The histogram is the exchange point between the two clocks. A fixed `AudioStreamClock`
+pair converts presentation QPC time to a fractional analysis-row coordinate. Stored rows
+remain at driver-derived ring slots; packet arrival and QPC jitter cannot reanchor scrolling.
+A new stream clock epoch clears the old history mapping. This uses the nominal sample rate;
+it does not implement long-term device/host clock drift calibration or speaker latency calibration.
+
+Incoming history uploads occur immediately, independently of presentation. Late rows fill
+their assigned historical slots; ahead-of-cursor rows can already be in GPU memory. The shader
+samples only the history behind its display cursor, masking unwritten history rather than
+slowing down or catching up. The renderer's live spectrum/envelopes select completed source
+intervals at or before the presentation target separately from history storage.
+The Histogram scene loads discrete rows over their actual analysis intervals without
+interpolating amplitudes between neighboring blocks. Missing rows and the unwritten strip
+remain black. Its sharp edges move on the physical pixel grid.
 The default added presentation delay is **zero**. Explicit delay applies to all audio fields.
 Live spectral fields use a duration-weighted arithmetic mean over the audio
 interval; missing intervals contribute zero and partial intersections receive fractional weight.
 Individual historical rows retain their original values.
 
-No new packet does not mean a silent frame. The last aggregate can survive up to 50 ms of source
+The Spectrum scene displays the latest new analysis block consumed in each display frame,
+including its residual outline, without averaging blocks or holding the previous frame.
+No newly consumed block means black. When multiple blocks arrive before one refresh, Spectrum
+shows the newest eligible block and Histogram retains each at its original position; they
+are never played back across later refreshes to catch up. Blocks older than the existing
+50 ms live-envelope freshness limit remain available only in history.
+
+For the other scenes, no new packet does not mean a silent frame. The last aggregate can survive up to 50 ms of source
 age, then live values clear and history continues aging. A discontinuity cancels retention.
 The live handoff holds at most 100 ms of rows plus any explicitly requested presentation reserve;
 shader history duration is independent. After stalls only the latest 50 ms can excite current
 envelopes/motion. Stale rows cannot create a new flash merely because they were dequeued now.
 Untimed offline/fixture rows retain a separate bounded history-seeding path; use explicit source
 timestamps and an injected `TimeProvider` for synchronization tests.
+
+WinUI continues pacing its render thread with the compositor heartbeat (`Present(0)`),
+or the DXGI frame-ready signal (`Present(1)`) on older systems. For visible rendering,
+`IDCompositionDevice::GetFrameStatistics().nextEstimatedFrameTime` supplies the estimated
+display timestamp. Both scene time and the histogram cursor use that timestamp, rather
+than CPU wake time. Missing compositor statistics explicitly fall back to host QPC.
+Offline rendering uses the injected clock or an explicit presentation timestamp.
+The timing panel identifies the active frame clock and reports display-target intervals.
+These are display estimates, not proof that each submitted frame actually reached scanout.
+Spectrum and Histogram select the GPU that owns the window's display, avoiding full-frame
+transfers between adapters on hybrid laptops. Heavy scenes retain the performance GPU.
+Moving a diagnostic window between displays recreates graphics resources while preserving
+the same audio history and stream clock.
 
 F9 records CSV stage timings and metadata. The status panel reports source quality, discarded
 audio duration, discontinuities and visual drops. Useful stages are:
@@ -53,6 +100,8 @@ audio duration, discontinuities and visual drops. Useful stages are:
 | `analysis.source_age_ms` | Completed source boundary to publication |
 | `analysis.total_ms` | Batch CPU/wait time including synchronous subscribers |
 | `render.audio_upload_ms` | CPU time submitting current spectrum and dirty history uploads |
+| `render.display_interval_ms` | Difference between compositor display-target timestamps |
+| `render.display_lead_ms` | Estimated next display time minus CPU frame start |
 | `gpu.frame_ms` | Delayed GPU elapsed time across frame commands, excluding Present |
 | `gpu.fluid_ms` | Fluid work including all simulation steps in that frame |
 | `gpu.fluid_pressure_ms` | Pressure divergence, multigrid cycles and projection, accumulated across steps |
@@ -70,6 +119,16 @@ The UI labels its source-cursor age "Audio age at frame start"; the historical C
 The DFT window's frequency-dependent response is unchanged. Physical audio/display calibration
 remains separate work. Rendering performance comparisons must use 720p
 or higher; low-resolution GPU silence tests are correctness checks, not timing benchmarks.
+
+### Positioning validation
+
+`AudioTimingTests` covers nonzero and unaligned driver positions, packet fragmentation,
+QPC steps without frame insertion, invalid-position recovery, missing frames and new epochs.
+`DisplayTimingTests` checks the actual compositor API and uses the RTX 4070 at 1280x720
+to verify histogram impulse displacement at explicit display times despite irregular CPU
+timing, followed by strict zero checks on every RGB channel across 60 final silent frames.
+The capture probe additionally writes `.positions.csv` timing metadata with driver frame
+positions and QPC stamps; it never saves audio samples.
 
 ### Live GPU diagnostics and RenderDoc
 

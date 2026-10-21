@@ -18,6 +18,37 @@ public class ShaderSilenceTests
     // original generous upper bound, but dark scenes need not render it all.
     const int MinimumDecayFrames = 1200, DecayFrames = 10000, FinalFrames = 60;
 
+    [TestCase(false, false), TestCase(true, false), TestCase(false, true), TestCase(true, true), Category("GPU")]
+    public void SpectrumResidualDrawsGreyOutlineAtLinearAmplitude(bool combined, bool intensity)
+    {
+        using var shaders = new SceneShaders("Spectrum");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock, preferDisplayAdapter: true);
+        renderer.SelectScene("Spectrum");
+        var parameters = renderer.ActiveShader!.Parameters!;
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), combined);
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Intensity"), intensity);
+        var residual = Enumerable.Repeat(.5, Bands).Concat(Enumerable.Repeat(.25, Bands)).ToArray();
+        renderer.PostAudio(new(new double[Bands * 8], Bands * 4, DateTime.UnixEpoch)
+            { ResidualRms = residual }, 2);
+        clock.Advance(); renderer.Render(false);
+        var pixels = renderer.ReadPixels(false);
+        // Left boundary is x=24, right boundary x=60. Only their antialiased outlines may light up.
+        for (int y = 0; y < Height; y++)
+            for (int x = 0; x < Width; x++)
+            {
+                int i = (y * Width + x) * 4;
+                Assert.That(pixels[i], Is.EqualTo(pixels[i + 1]));
+                Assert.That(pixels[i], Is.EqualTo(pixels[i + 2]));
+                if (x is 23 or 24 or 59 or 60)
+                    Assert.That(pixels[i], Is.GreaterThan(20), $"Expected grey outline at {x},{y}.");
+                else
+                    Assert.That(pixels[i], Is.Zero, $"Unexpected fill at {x},{y}.");
+            }
+    }
+
     static string ShaderDirectory
     {
         get
@@ -123,7 +154,7 @@ public class ShaderSilenceTests
                     samples[i + 3] = gain * .9;
                 }
             renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                { AnalysisRow = row++ }, 2);
+                { AnalysisRow = row++, ResidualRms = Enumerable.Repeat(music ? gain * .4 : 0, Bands * 2).ToArray() }, 2);
         }
         void AssertBlack(string stage)
         {
@@ -1025,7 +1056,7 @@ public class ShaderSilenceTests
         var analyzer = new Analyzer(new(SampleType.Float32.Instance, sampleRate, 2), options);
         var rows = new List<SampleEvent<double>>();
         analyzer.SamplesAnalyzed += (_, e) => rows.Add(e with
-            { Samples = e.Samples.AsSpan(0, e.SampleCount * 2).ToArray() });
+            { Samples = e.Samples.AsSpan(0, e.SampleCount * 2).ToArray(), ResidualRms = e.ResidualRms.ToArray() });
         var waveform = new float[140 * batch * 2];
         for (int j = 0; j < 20 * batch; j++)
         {

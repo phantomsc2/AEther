@@ -37,7 +37,9 @@ public sealed class Session : IDisposable, IAsyncDisposable
         Analyzer.SamplesAnalyzed += OnAnalysis;
     }
 
-    static bool PreferDisplay(string? scene) => scene == "Spectrum";
+    // These diagnostic scenes cost less to render on the scanout GPU than to
+    // transfer a native-resolution FP16 frame from a separate performance GPU.
+    static bool PreferDisplay(string? scene) => scene is "Spectrum" or "Histogram";
     public bool NeedsRendererChange(string scene, IntPtr window) => Renderer.PreferDisplayAdapter != PreferDisplay(scene)
         || (PreferDisplay(scene) && !Renderer.IsDisplayMonitorCurrent(window));
 

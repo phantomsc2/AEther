@@ -10,10 +10,13 @@ float4 PS(PSin input) : SV_Target
     Histogram0.GetDimensions(width, height);
     float age = 2 * abs(input.UV.x - .5);
     // Wrapping is a storage detail; unavailable history must never reveal newer rows.
-    if (age * HistorySpan > HistoryAvailable || age * HistorySpan < HistoryNewestAge)
+    if (age * HistorySpan > HistoryAvailable + 1.0 / height || age * HistorySpan < HistoryNewestAge)
         return float4(0, 0, 0, 1);
-    float frequency = (min(floor((1 - input.UV.y) * width), width - 1) + .5) / width;
-    float2 uv = float2(frequency, HistogramShift - age * HistorySpan);
-    float4 v = input.UV.x < .5 ? Histogram0.Sample(Linear, uv) : Histogram1.Sample(Linear, uv);
+    int frequency = min((int)((1 - input.UV.y) * width), (int)width - 1);
+    // A row covers its actual [start, end) analysis interval. Load that block
+    // directly so interpolation cannot smear attacks into missing neighboring rows.
+    int row = (int)floor((HistogramShift - age * HistorySpan) * height + .5);
+    row = (row % (int)height + (int)height) % (int)height;
+    float4 v = input.UV.x < .5 ? Histogram0.Load(int3(frequency, row, 0)) : Histogram1.Load(int3(frequency, row, 0));
     return float4(CombinedLevel ? v.aaa : v.rgb, 1);
 }

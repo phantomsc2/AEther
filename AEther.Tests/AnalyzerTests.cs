@@ -173,6 +173,30 @@ namespace AEther.Tests
             Assert.That(events, Is.EqualTo(new[] { "attack", "spectrum" }));
         }
 
+        [Test]
+        public async Task PublishedResidualMatchesLinearSplitterEstimates()
+        {
+            var analyzer = new Analyzer(Format, Options());
+            double[] expected = null!;
+            int count = 0;
+            analyzer.JointEvidenceAvailable += (_, e) =>
+            {
+                expected = new double[e.SampleCount * Format.ChannelCount];
+                for (int c = 0; c < Format.ChannelCount; c++)
+                    for (int k = 0; k < e.SampleCount; k++)
+                        expected[c * e.SampleCount + k] = e.GetChannel(c).Span[k].ResidualRms;
+            };
+            analyzer.SamplesAnalyzed += (_, e) =>
+            {
+                Assert.That(e.ResidualRms.ToArray(), Is.EqualTo(expected));
+                count++;
+            };
+            analyzer.PostSamples(Audio(160));
+            analyzer.Stop();
+            await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(count, Is.EqualTo(2));
+        }
+
         [TestCase(0)]
         [TestCase(-1)]
         public void RejectsUnboundedOrInvalidCapacity(int capacity)

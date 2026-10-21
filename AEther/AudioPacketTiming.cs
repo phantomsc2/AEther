@@ -12,6 +12,9 @@ public enum AudioPacketFlags { None = 0, Silent = 1, Discontinuity = 2, Timestam
 public readonly record struct AudioPacketTiming(long? Timestamp = null, long? FramePosition = null,
     AudioTimestampQuality Quality = AudioTimestampQuality.Unspecified, AudioPacketFlags Flags = AudioPacketFlags.None);
 
+/// <summary>A fixed device-frame/QPC correlation for one stream epoch. Packet arrivals never move it.</summary>
+public readonly record struct AudioStreamClock(long FramePosition, long Timestamp, int SampleRate);
+
 public delegate void TimedSampleDataHandler(object? sender, ReadOnlySpan<byte> data, AudioPacketTiming timing);
 
 /// <summary>Optional live capture capability. Subscribe to this OR SampleSource.DataAvailable.</summary>
