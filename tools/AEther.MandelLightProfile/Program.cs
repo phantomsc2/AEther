@@ -14,6 +14,7 @@ internal static partial class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Contains("--fluid-v4")) { RunFluidV4Profile(args); return; }
         if (args.Contains("--light-types")) { RunLightTypeProfile(args); return; }
         if (args.Contains("--airlight-lut")) { RunAirlightLutStudy(args); return; }
         if (args.Contains("--tonal-ring") || args.Contains("--spotlight-sampling")) { RunTonalRingProfile(args); return; }
@@ -516,7 +517,7 @@ internal static partial class Program
             {
                 ulong time = Read<ulong>(stamp.Query);
                 if (stamp.Start) starts[stamp.Name] = time;
-                else result[stamp.Name] = 1000.0 * (time - starts[stamp.Name]) / data.Frequency;
+                else result[stamp.Name] = result.GetValueOrDefault(stamp.Name) + 1000.0 * (time - starts[stamp.Name]) / data.Frequency;
             }
             return result;
         }

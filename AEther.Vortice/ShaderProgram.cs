@@ -13,6 +13,9 @@ internal sealed class ShaderProgram : IDisposable
     readonly ID3D11Buffer? parameterBuffer;
     readonly byte[]? uploaded;
     bool hasUploaded;
+    ShaderParameters? copiedFrom;
+    long copiedVersion = -1;
+    long localVersion = -1;
     readonly Dictionary<string, InputBindingDescription> bindings = new(StringComparer.Ordinal);
     public bool Uses(string name) => bindings.ContainsKey(name);
 
@@ -29,7 +32,7 @@ internal sealed class ShaderProgram : IDisposable
                 ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "DistanceConstants" or "LightConstants" or "FourierConstants" or "FourierPassConstants" or "RasterPassConstants" or "RasterLightConstants" or "RasterAirlightConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "DistanceSampler" or "AtmosphereSampler" or "RasterShadowSampler" or "RasterLutSampler",
                 ShaderInputType.Texture => binding.Name is "PreviousImage" or "SceneImage" or "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
-                    or "FilteredHistogram0" or "FilteredHistogram1" or "GlobalHistogram"
+                    or "FilteredHistogram0" or "FilteredHistogram1"
                     or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "DistanceSeeds" or "DistanceField"
                     or "LightMoments" or "LightAirMoments" or "LightTransport" or "CameraMoments" or "CameraAirMoments" or "CameraTransport" or "CameraImportance" or "AtmosphereOpticalDepth" or "LightRadiance"
                     or "FourierDeep0" or "FourierDeep1" or "FourierDeep2" or "FourierDeep3"
@@ -47,7 +50,7 @@ internal sealed class ShaderProgram : IDisposable
             uploaded = new byte[Parameters.Data.Length];
             parameterBuffer = device.CreateBuffer((uint)Parameters.Data.Length, BindFlags.ConstantBuffer);
         }
-        try { Pixel = device.CreatePixelShader(code.Span); }
+        try { Pixel = device.CreatePixelShader(code.Span); Pixel.DebugName = $"{file}:{entry}"; }
         catch { parameterBuffer?.Dispose(); throw; }
     }
 
@@ -66,7 +69,15 @@ internal sealed class ShaderProgram : IDisposable
                     // Each entry point owns its layout; transfer values by path, never by slot or declaration order.
                     lock (Parameters!.SyncRoot)
                     {
-                        if (values != null && !ReferenceEquals(values, Parameters)) Parameters.Restore(values);
+                        if (values != null && !ReferenceEquals(values, Parameters))
+                        {
+                            long version = values.Version;
+                            if (!ReferenceEquals(values, copiedFrom) || copiedVersion != version || localVersion != Parameters.Version)
+                            {
+                                Parameters.Restore(values);
+                                copiedFrom = values; copiedVersion = version; localVersion = Parameters.Version;
+                            }
+                        }
                         if (!hasUploaded || !Parameters.Data.AsSpan().SequenceEqual(uploaded))
                         {
                             fixed (byte* data = Parameters.Data)

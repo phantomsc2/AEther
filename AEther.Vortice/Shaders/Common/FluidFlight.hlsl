@@ -137,8 +137,7 @@ float4 FlightMap(float2 p)
         z = 2 * clamp(z, -1, 1) - z;
         float fold = 1 / clamp(dot(z, z), .2, 1);
         z *= fold;
-        z.xy = FlightRotate(z.xy, .3 + .35 * Flight.Warp * sin(birth * .17)
-            + .05 * MusicStructure(GlobalSTBR));
+        z.xy = FlightRotate(z.xy, .3 + .35 * Flight.Warp * sin(birth * .17));
         z = -1.65 * z + offset;
         derivative = 1.65 * fold * derivative + .3;
     }
@@ -186,7 +185,7 @@ float2 FlightCarrier(float2 p)
     float2 forward = speed * inverseDepth * q;
     float2 lateral = float2((Flight.Turn * 2 - 1) * speed * inverseDepth * .4, 0);
     float2 roll = (Flight.Roll * 2 - 1) * 1.5 * float2(-q.y, q.x);
-    return (forward - lateral + roll) * (1 + Reaction.CameraMotion * max(PoseY + PoseZ, MusicActivity()));
+    return (forward - lateral + roll) * (1 + Reaction.CameraMotion * (PoseY + PoseZ));
 #endif
 }
 
@@ -212,12 +211,11 @@ float2 FlightTurbulence(float2 p, float4 source)
     float2 q = p - FlightVanishingPoint();
     float radius = length(q);
     float angle = atan2(q.y, q.x);
-    float noise = max(1 - exp(-(8 + 24 * Reaction.Strength) * source.b), .7 * MusicBed(GlobalSTBR));
+    float noise = 1 - exp(-(8 + 24 * Reaction.Strength) * source.b);
     float eddy = sin(8 * angle + 18 * radius - .6 * MusicalMovementTime)
         + .5 * sin(14 * q.x - 11 * q.y + .4 * MusicalMovementTime);
     float2 stirring = float2(-q.y, q.x) / max(.06, radius) * eddy
-        * (Fluid.Background * 3) * (2 * noise) * exp(-1.5 * radius * radius)
-        * (1 + .6 * MusicInteraction(GlobalSTBR));
+        * (Fluid.Background * 3) * (2 * noise) * exp(-1.5 * radius * radius);
     // Tonal wing cuts also displace the cloud into a small rotational wake.
     float2 wake = FlightRotate(float2(0, .025 * sign(q.x) * FlightSlice(p, source)),
         - (Flight.WingAngle - .5) * 3.14159265);
@@ -252,7 +250,6 @@ float FlightLightning(float4 source, float4 mapping)
 {
     float gain = 4 + 60 * Flight.AudioGain;
     float attack = 1 - exp(-gain * (1 + 3 * Reaction.Attacks) * source.g);
-    attack = max(attack, .55 * MusicRise(MusicAtAge(mapping.y)));
     // Conduct the pulse along the existing round contours. This only scales
     // material light: it cannot create cloud density or illuminate empty space.
     float conductor = pow(saturate(mapping.z), .7);
@@ -265,8 +262,6 @@ float4 FlightLightSource(float2 p, float4 source, float4 mapping)
     float gain = 4 + 60 * Flight.AudioGain;
     float noise = 1 - exp(-gain * source.b);
     float tone = 1 - exp(-gain * source.r);
-    float4 global = MusicAtAge(mapping.y);
-    float bed = MusicBody(global);
 #ifdef FLIGHT_PLANE_PROJECTION
     float4 hit = FlightPlaneHit(p);
     if (hit.w <= 0) return 0;
@@ -281,15 +276,13 @@ float4 FlightLightSource(float2 p, float4 source, float4 mapping)
     // tones reveal/cut its circular contours, attacks excite that same body.
     // A broad texture transition avoids a separate layer of hard cloud blocks.
     cloud = smoothstep(.2 - .12 * Flight.CloudCover, .85 - .2 * Flight.CloudCover, cloud);
-    float occupancy = max(1 - exp(-gain * (source.b + .04 * source.r)), .5 * bed);
+    float occupancy = 1 - exp(-gain * (source.b + .04 * source.r));
     float relief = mapping.z;
     float density = occupancy * (.15 + .85 * cloud) * (.18 + .82 * relief);
     density *= exp(-.045 * FlightSliceContour(p, source, mapping.z));
-    float excitation = .25 + .75 * max(noise, bed) + tone * (.15 + 1.5 * relief)
-        * (1 + .4 * MusicStructure(global));
+    float excitation = .25 + .75 * noise + tone * (.15 + 1.5 * relief);
     float3 palette = lerp(float3(.45, .62, .7), FlightPalette(mapping.x, mapping.w), .65);
-    float passage = 1 + .65 * bed + .35 * MusicStructure(global);
-    return float4(.5 * palette * density * excitation * passage, density);
+    return float4(.5 * palette * density * excitation, density);
 }
 
 float4 FlightPigment(float2 p, float4 source, float substepOffset)

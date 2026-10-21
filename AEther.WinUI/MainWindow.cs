@@ -21,7 +21,7 @@ public sealed class MainWindow : Window
     Session? session;
     RenderWorker? renderWorker;
     FileSystemWatcher? watcher;
-    bool loaded, closing, shutdownComplete, fullscreen, visible = true;
+    bool loaded, closing, shutdownComplete, fullscreen, visible = true, rendererChangeQueued;
     RectInt32 windowBounds;
 
     public MainWindow(Func<SampleSource>? createSource = null, string? shaderDirectory = null)
@@ -39,6 +39,7 @@ public sealed class MainWindow : Window
         {
             Title = $"AEther - {shaders.SelectedScene}";
             settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [], shaders.SelectedScene);
+            QueueRendererChange();
         };
         settings.SettingsChanged += async (_, _) => await RestartAsync();
         settings.ShaderWindowRequested += (_, _) => shaders.Toggle();
@@ -95,7 +96,7 @@ public sealed class MainWindow : Window
         timingTimer.Tick += (_, _) => { if (!closing && settings.IsVisible) settings.SetTiming(session); };
         timingTimer.Start();
         VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
-        AppWindow.Changed += (_, _) => UpdateRendering();
+        AppWindow.Changed += (_, _) => { UpdateRendering(); QueueRendererChange(); };
         AppWindow.Closing += OnClosing;
     }
 
@@ -146,7 +147,7 @@ public sealed class MainWindow : Window
             {
                 var size = CanvasSize;
                 next = new(WinRT.Interop.WindowNative.GetWindowHandle(this), size.Width, size.Height,
-                    source, settings.Options, shaderDirectory, chain => SwapChainHost.Attach(canvas, chain));
+                    source, settings.Options, shaderDirectory, chain => SwapChainHost.Attach(canvas, chain), shaders.SelectedScene);
                 next.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
@@ -163,16 +164,7 @@ public sealed class MainWindow : Window
                 watcher.Deleted += ShaderChanged;
                 watcher.EnableRaisingEvents = true;
                 settings.SetStatus("Running. Space: settings · F6: shaders · F11: fullscreen\nF5: restart · R: level · I: intensity · [ / ]: slice");
-                // Present(1) on a composition chain can inherit the 60 Hz primary
-                // display even when this window is on a 165 Hz secondary display.
-                // The compositor clock supplies pacing; Present(0) submits the latest
-                // frame for composition without adding that separate vsync gate.
-                bool compositorPacing = CompositorClock.IsSupported;
-                renderWorker = new(next.Renderer.FrameReady,
-                    () => next.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u),
-                    error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)),
-                    waitForTick: compositorPacing ? CompositorClock.Wait : null,
-                    waited: milliseconds => next.Analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
+                StartRenderWorker(next);
                 UpdateRendering();
             }
             catch
@@ -208,6 +200,46 @@ public sealed class MainWindow : Window
         {
             if (closing || !ReferenceEquals(sender, watcher)) return;
             reloadTimer.Stop(); reloadTimer.Start();
+        });
+    }
+
+    void StartRenderWorker(Session current)
+    {
+        // Present(1) can follow the slower primary monitor. On Windows 11 the
+        // compositor clock supplies the cadence; DXGI must not add another wait.
+        bool compositorPacing = CompositorClock.IsSupported;
+        renderWorker = new(current.Renderer.FrameReady,
+            () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u),
+            error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)),
+            waitForTick: compositorPacing ? CompositorClock.Wait : null,
+            waited: milliseconds => current.Analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
+    }
+
+    void QueueRendererChange()
+    {
+        if (closing || session == null || rendererChangeQueued) return;
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (!session.NeedsRendererChange(shaders.SelectedScene, handle)) return;
+        rendererChangeQueued = true;
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            await sessionGate.WaitAsync();
+            try
+            {
+                var current = session;
+                if (closing || current == null || !current.NeedsRendererChange(shaders.SelectedScene, handle)) return;
+                renderWorker?.Dispose(); renderWorker = null;
+                shaders.Attach(null);
+                var size = CanvasSize;
+                current.RecreateRenderer(WinRT.Interop.WindowNative.GetWindowHandle(this), size.Width, size.Height,
+                    chain => SwapChainHost.Attach(canvas, chain), shaders.SelectedScene);
+                current.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
+                shaders.Attach(current.Renderer);
+                StartRenderWorker(current);
+                UpdateRendering();
+            }
+            catch (Exception error) { RenderFailed(error); }
+            finally { rendererChangeQueued = false; sessionGate.Release(); }
         });
     }
 

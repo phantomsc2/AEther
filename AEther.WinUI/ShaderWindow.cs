@@ -56,7 +56,10 @@ public sealed class ShaderWindow : ToolWindow
     public void SelectScene(string name)
     {
         if (renderer == null) return;
+        bool firstCompilation = renderer.Scenes.Single(scene => scene.Name == name).Parameters == null;
         renderer.SelectScene(name);
+        if (firstCompilation && saved.TryGetValue(name, out var previous))
+            renderer.ActiveShader?.Parameters?.Restore(previous);
         RefreshScene();
     }
 

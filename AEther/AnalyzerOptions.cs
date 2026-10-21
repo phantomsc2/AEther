@@ -60,18 +60,6 @@ namespace AEther
         [Description("Seconds of spectral history retained for age-based shader lookups. Longer values allow longer fluid tails and use more memory.")]
         public double HistorySeconds { get; set; } = 2;
 
-        [Category("STBR fit")]
-        [DefaultValue(false)]
-        [DisplayName("S time slope")]
-        [Description("Allow each frequency's S evidence to rise or fall linearly through the time window.")]
-        public bool JointTimeSlopeEnabled { get; set; } = false;
-
-        [Category("STBR fit")]
-        [DefaultValue(true)]
-        [DisplayName("T frequency slope")]
-        [Description("Allow each frame's T evidence to tilt linearly across log frequency.")]
-        public bool JointFrequencySlopeEnabled { get; set; } = true;
-
         [Category("Input")]
         [DisplayName("Input gain (dB)")]
         [DefaultValue(15.0)]

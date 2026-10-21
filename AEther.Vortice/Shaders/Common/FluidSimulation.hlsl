@@ -84,8 +84,7 @@ float CurlAt(int2 p)
     return (ReadVelocity(p + int2(1, 0)).y - ReadVelocity(p - int2(1, 0)).y) / (2 * CellSize.x)
         - (ReadVelocity(p + int2(0, 1)).x - ReadVelocity(p - int2(0, 1)).x) / (2 * CellSize.y);
 }
-float Mobility() { return max(MusicActivity(), smoothstep(.02, .55, PoseZ + .2 * PoseY)); }
-float PassageFlow() { return 1 + .6 * MusicBed(GlobalSTBR) + .35 * MusicRise(GlobalSTBR) - .2 * MusicFall(GlobalSTBR); }
+float Mobility() { return smoothstep(.02, .55, PoseZ + .2 * PoseY); }
 float2 SampleTransportVelocity(float2 uv)
 {
 #ifdef MANDEL_FLUID_V3
@@ -104,10 +103,10 @@ float2 Transport(float2 p)
         // A torus has no net expansion/outflow. A shared translational current
         // lets old plumes return continuously, instead of colliding radial jets
         // at the seam. Turbulent velocity remains fully pressure projected.
-        float activity = max(MusicActivity(), saturate(PoseX + PoseZ + .2 * PoseY));
+        float activity = saturate(PoseX + PoseZ + .2 * PoseY);
         float2 direction = normalize(float2(-1, .2 * sin(.12 * MusicalMovementTime)));
         return SampleTransportVelocity(ToUV(p))
-            + activity * Fluid.Flow * 3 * direction * (1 + .5 * MusicBed(GlobalSTBR));
+            + activity * Fluid.Flow * 3 * direction;
     }
 #ifdef MANDEL_FLUID_V3
     return SampleTransportVelocity(ToUV(p)) + RadiatingCarrier(p);
@@ -122,7 +121,7 @@ float2 Transport(float2 p)
     // projecting this source as well would cancel the intended explosion.
     float r = length(p);
     return Velocity.SampleLevel(ClampFluid, ToUV(p), 0)
-        + Mobility() * PassageFlow() * (Fluid.Flow * 3) * .65 * p / max(.08, r) / (1 + .65 * r);
+        + Mobility() * (Fluid.Flow * 3) * .65 * p / max(.08, r) / (1 + .65 * r);
 #endif
 }
 float2 Trace(float2 uv, float dt)
@@ -208,17 +207,14 @@ float2 AdvectVelocity(PSin input) : SV_Target
     float eddies = sin(5 * angle + 7 * radius - .9 * (MusicalMovementTime * Quality.MovementSpeed * 10))
         + .5 * sin(9 * p.x + 7 * p.y + 1.3 * (MusicalMovementTime * Quality.MovementSpeed * 10));
     float2 force = float2(-direction.y, direction.x) * eddies
-        * (1.8 * tone + 3 * (Fluid.Background * 3) * max(noise, MusicBed(GlobalSTBR))
-            + .7 * max(attack, MusicRise(GlobalSTBR))) * envelope * Mobility();
-    force *= 1 + .65 * MusicInteraction(GlobalSTBR);
+        * (1.8 * tone + 3 * (Fluid.Background * 3) * noise + .7 * attack) * envelope * Mobility();
 #endif
     // Vorticity confinement restores small curls lost to semi-Lagrangian advection.
     int2 q = int2(input.Position.xy);
     float2 gradient = float2(abs(CurlAt(q + int2(1, 0))) - abs(CurlAt(q - int2(1, 0))),
         abs(CurlAt(q + int2(0, 1))) - abs(CurlAt(q - int2(0, 1)))) / (2 * CellSize);
     gradient /= max(1e-4, length(gradient));
-    float curlDrive = 1 + .75 * MusicBed(GlobalSTBR) + .5 * MusicInteraction(GlobalSTBR);
-    force += (Fluid.Curl * 2) * curlDrive * min(CellSize.x, CellSize.y) * CurlAt(q) * float2(gradient.y, -gradient.x);
+    force += (Fluid.Curl * 2) * min(CellSize.x, CellSize.y) * CurlAt(q) * float2(gradient.y, -gradient.x);
     v += StepSeconds * force;
     v *= min(1, 2.0 / max(1e-5, length(v)));
     if (!Fluid.PeriodicBoundary)
@@ -307,7 +303,7 @@ float4 AdvectDye(PSin input) : SV_Target
     float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4 / (CellSize.x * CellSize.y));
 #else
     float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4
-        * max(smoothstep(.02, .35, max(noise, PoseZ)), .6 * MusicInteraction(GlobalSTBR))
+        * smoothstep(.02, .35, max(noise, PoseZ))
         / (CellSize.x * CellSize.y));
 #endif
     // Conserve pigment as the carrier expands. Without dilution a fading
@@ -320,7 +316,7 @@ float4 AdvectDye(PSin input) : SV_Target
 #elif defined(PROJECTIVE_FLIGHT)
     float expansion = FlightDilution(p);
 #else
-    float expansion = Mobility() * PassageFlow() * .65 * (Fluid.Flow * 3) / (max(.08, r) * pow(1 + .65 * r, 2));
+    float expansion = Mobility() * .65 * (Fluid.Flow * 3) / (max(.08, r) * pow(1 + .65 * r, 2));
 #endif
     if (Fluid.PeriodicBoundary) expansion = 0;
     dye = lerp(dye, neighbors, diffusion) * exp(-((0.69314718 / (0.1 + Fluid.HalfLife * 9.9)) + expansion) * StepSeconds);
@@ -337,9 +333,9 @@ float4 AdvectDye(PSin input) : SV_Target
     float meanAge = clamp(age.x / max(1e-12, age.y), 0, 120) + StepSeconds + AgeCatchupSeconds;
     float oldDensity = dye.a;
     age = float2(meanAge * oldDensity, oldDensity);
-    float4 dose = StepSeconds * 6 * RadiatingPigment(p, source, SourceAge);
+    float4 dose = StepSeconds * 6 * RadiatingPigment(p, source);
 #elif defined(MANDEL_COMET)
-    float4 dose = StepSeconds * 6 * CometPigment(p, source, SourceAge);
+    float4 dose = StepSeconds * 6 * CometPigment(p, source);
 #elif defined(PROJECTIVE_FLIGHT)
     // Capture the continuously mapped IFS foreground for a fluid afterglow.
 #ifdef GEOMETRY_AFTERGLOW
@@ -355,8 +351,6 @@ float4 AdvectDye(PSin input) : SV_Target
     float radius = length(p);
     float emitter = exp(-pow(radius / .32, 4)) * smoothstep(.015, .09, radius);
     float tone = 1 - exp(-2 * source.r);
-    float4 global = MusicAtRingAge(max(SourceAge, HistoryNewestAge));
-    tone *= 1 + .6 * MusicStructure(global) + .4 * MusicBody(global);
     float mist = .16 * exp(-1.3 * radius * radius) * (Fluid.Background * 3) * noise;
     float3 pigment = palette * tone * emitter + lerp(palette, float3(.45, .62, .72), .65) * mist;
     float4 dose = StepSeconds * 6 * float4(pigment, tone * emitter + mist);

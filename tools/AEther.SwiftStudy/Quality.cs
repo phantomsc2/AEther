@@ -106,7 +106,7 @@ static class Quality
         var f0 = frequencies[center];
         using var trace = new StreamWriter(Path.Combine(directory, "traces.csv"));
         using var summary = new StreamWriter(Path.Combine(directory, "scenarios.csv"));
-        trace.WriteLine("scenario,backend,time_s,center_amplitude,neighbor_amplitude,global_s,global_t,global_b,global_r,local_s,local_t,local_b,local_r");
+        trace.WriteLine("scenario,backend,time_s,center_amplitude,neighbor_amplitude,local_s,local_t,local_b,local_r");
         summary.WriteLine("scenario,backend,sample_rate,channels,seconds,peak_t,time_peak_t,peak_r,time_peak_r,mean_s,mean_b,mean_r");
         foreach (var scenario in new[] { "Tone attack", "Tone plus noise", "Neighbors equal", "Neighbor louder", "Note replacement", "Synchronous attacks" })
         {
@@ -146,7 +146,6 @@ static class Quality
         {
             var banks = samples.Select(_ => Create(name, domain, fs)).ToArray();
             var splits = samples.Select(_ => new Splitter(domain, options, rate)).ToArray();
-            var global = new GlobalSplitter(domain, options, rate);
             var magnitudes = new double[samples.Length * domain.Length];
             var output = new double[domain.Length * Splitter.OutputStride];
             double peakT = 0, timeT = 0, peakR = 0, timeR = 0, sumS = 0, sumB = 0, sumR = 0;
@@ -159,16 +158,14 @@ static class Quality
                     banks[c].OutputLinear(magnitudes.AsMemory(c * domain.Length, domain.Length));
                     splits[c].ProcessLinear(magnitudes.AsMemory(c * domain.Length, domain.Length), output);
                 }
-                var g = global.Process(magnitudes, samples.Length);
+                var local = splits[0].Estimates.Span[center];
                 var t = (start + block) / (double)fs;
-                if (g.Transient > peakT) { peakT = g.Transient; timeT = t; }
-                if (g.InteractionRms > peakR) { peakR = g.InteractionRms; timeR = t; }
-                sumS += g.Structure; sumB += g.Background; sumR += g.InteractionRms; rows++;
+                if (local.Transient > peakT) { peakT = local.Transient; timeT = t; }
+                if (local.ResidualRms > peakR) { peakR = local.ResidualRms; timeR = t; }
+                sumS += local.Sine; sumB += local.Background; sumR += local.ResidualRms; rows++;
                 if (rows % 5 == 0)
                 {
-                    var local = splits[0].Estimates.Span[center];
                     trace.WriteLine($"{scenario},{name},{t:G17},{magnitudes[center]:G17},{magnitudes[center + 1]:G17},"
-                        + $"{g.Structure:G17},{g.Transient:G17},{g.Background:G17},{g.InteractionRms:G17},"
                         + $"{local.Sine:G17},{local.Transient:G17},{local.Background:G17},{local.ResidualRms:G17}");
                 }
             }

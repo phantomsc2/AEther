@@ -50,7 +50,7 @@ float3 CometShade(float2 uv, float sampleWidth)
     float sourceToneFrequency = CometRayFrequency(q, distances, rayNoise);
     // Flash has a 45 ms release; cubing its bounded response makes an onset
     // illuminate the entire wake briefly, then relinquish it to advancing fronts.
-    float flash = max(pow(1 - exp(-4 * max(0, VisualFlash)), 3), .6 * pow(MusicRise(GlobalSTBR), 2));
+    float flash = pow(1 - exp(-4 * max(0, current.g)), 3);
     float t = CometTime();
 
     // The untouched Mandelbox slice supplies fine spectral structure behind
@@ -103,11 +103,10 @@ float3 CometShade(float2 uv, float sampleWidth)
     // The live edge flashes immediately, before its row enters delayed history.
     float rim = exp(-max(0, surface) / max(.0015, 1.5 * pixel));
     float front = pow(1 - exp(-4 * max(0, attack)), 2) * exp(-2.8 * age);
-    front = max(front, .35 * pow(MusicRise(GlobalSTBRAtAge(attackAge * HistorySeconds)), 2) * exp(-2.8 * age));
     front *= ShockEdgeAttenuation(uv, attackAge);
     float3 flashPalette = lerp(CometPalette(attackFrequency, -.07 * t), float3(.7, .88, 1), .3);
     float excitation = Comet.Shockwaves * (7 * flash + 5 * front);
-    float bed = MusicBody(GlobalSTBR);
+    float bed = AmplitudeResponse(currentHull.b, .01);
     float3 light = background * (.8 * pow(CometReaction().x, 2) + .45 * noise + .6 * excitation + .7 * bed);
     // Pigment supplies soft material between sharp rays. Existing orbit relief
     // adds fine wisps without any additional fractal or 3D-noise evaluations.
@@ -115,7 +114,7 @@ float3 CometShade(float2 uv, float sampleWidth)
     float wakeRelief = lerp(.4, 1.2, sliceRelief) * (1 + .3 * saturate(length(slope)));
     float edge = 1 - .7 * smoothstep(.6, 1.2, length(2 * uv - 1));
     light += (1 + 3 * Comet.Tail) * wakeColor * wakeBody * wakeRelief * edge
-        * (.16 * tone + .24 * noise + .7 * excitation + .4 * bed + .15 * MusicStructure(GlobalSTBR));
+        * (.16 * tone + .24 * noise + .7 * excitation + .4 * bed);
     // Tones pick fine distance hulls; noise reveals broader folded texture.
     // Every term follows a spectral component, without persistent field lighting.
     light += CometPalette(frequency, -.05 * t) * Comet.Background

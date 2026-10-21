@@ -5,7 +5,7 @@ float RadiatingStereo(float2 p)
     float side = p.x / max(.001, length(p));
     return .5 + .5 * side * abs(side);
 }
-float RadiatingActivity() { return max(MusicActivity(), smoothstep(.005, .5, PoseX + .6 * PoseZ)); }
+float RadiatingActivity() { return smoothstep(.005, .5, PoseX + .6 * PoseZ); }
 float4 RadiatingRead(float frequency, float age, float right)
 {
     float2 uv = float2(saturate(frequency), HistogramShift - age);
@@ -36,21 +36,18 @@ float4 RadiatingSource(float2 p, float sourceAge)
 }
 float2 RadiatingCarrier(float2 p)
 {
-    float flow = 1 + .65 * MusicBed(GlobalSTBR) + .4 * MusicRise(GlobalSTBR) - .2 * MusicFall(GlobalSTBR);
-    return RadiatingActivity() * Fluid.Flow * 2.4 * flow * p;
+    return RadiatingActivity() * Fluid.Flow * 2.4 * p;
 }
 float RadiatingDilution(float2 p)
 {
     // Divergence of the same expanding carrier; added flow must also dilute dye.
-    float flow = 1 + .65 * MusicBed(GlobalSTBR) + .4 * MusicRise(GlobalSTBR) - .2 * MusicFall(GlobalSTBR);
-    return RadiatingActivity() * Fluid.Flow * 4.8 * flow;
+    return RadiatingActivity() * Fluid.Flow * 4.8;
 }
 float RadiatingBackground(float4 source)
 {
     // One local B response drives both stirring and pigment injection. The
     // Background control sets its sensitivity; silence supplies exactly zero.
-    // Preserve local/stereo contrast. Global B supplies the added passage-wide
-    // drive separately; normalizing each faint stereo blend would wash it out.
+    // Preserve local/stereo contrast without normalizing faint blends.
     return Fluid.Background * 3 * (1 - exp(-3 * max(0, source.b)));
 }
 float2 RadiatingTurbulence(float2 p, float4 source)
@@ -58,13 +55,8 @@ float2 RadiatingTurbulence(float2 p, float4 source)
     float r = length(p), t = RadiatingTime();
     float tone = 1 - exp(-3 * source.r);
     float background = RadiatingBackground(source);
-    float bed = MusicBed(GlobalSTBR);
     float strength = ((.8 * tone + 4 * source.a) * (1 + background) + 3 * background)
         * (.12 + 4 * Fluid.Curl * Fluid.Curl);
-    // Broadband B keeps the fluid moving even when local contrast S is small.
-    // Interaction changes existing eddy strength, without creating pigment.
-    strength = (strength + 2 * Fluid.Curl * bed)
-        * (1 + .65 * MusicInteraction(GlobalSTBR) + .25 * MusicStructure(GlobalSTBR));
     float2 force = 0;
     // Localized counter-rotating vortices roll whole streams into spirals.
     // Curl changes their forcing as well as the small-scale confinement;
@@ -82,7 +74,7 @@ float2 RadiatingTurbulence(float2 p, float4 source)
     force += .18 * float2(-p.y, p.x) * exp(-2 * r * r);
     return force * strength * RadiatingActivity();
 }
-float4 RadiatingPigment(float2 p, float4 source, float sourceAge)
+float4 RadiatingPigment(float2 p, float4 source)
 {
     // Same inverse display projection and distance field as the dark core.
     // Evaluate only on the simulation grid, not in every pressure pass.
@@ -94,9 +86,7 @@ float4 RadiatingPigment(float2 p, float4 source, float sourceAge)
     float emitter = exp(-abs(surface) / band) * streams;
     float tone = 1 - exp(-3 * source.r);
     float background = RadiatingBackground(source);
-    float4 global = MusicAtRingAge(max(sourceAge, HistoryNewestAge));
-    float density = 2.2 * (tone * (1 + background + .6 * MusicStructure(global)
-        + .5 * MusicBody(global)) + background) * emitter;
+    float density = 2.2 * (tone * (1 + background) + background) * emitter;
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
     // Color is a frequency identity, so it must not rotate with the clock.
     return float4(RadiatingPalette(frequency) * density, density);

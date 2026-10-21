@@ -7,17 +7,9 @@ namespace AEther;
 public readonly record struct JointEvidence(double Sine, double Transient, double Background,
     double ResidualRms, double Amplitude, int FrequencySamples, int TimeSamples)
 {
-    /// <summary>Directional slope coefficients in amplitude per second and per octave.</summary>
-    public double SineTimeSlope { get; init; }
-    public double TransientFrequencySlope { get; init; }
-    /// <summary>Dimensions occupied on each axis by the shared polynomial basis.</summary>
-    public int TimeBasisRank { get; init; } = 1;
-    public int FrequencyBasisRank { get; init; } = 1;
     public double Scale => ResidualRms;
-    public int ResidualDegreesOfFreedom => (FrequencySamples - FrequencyBasisRank) * (TimeSamples - TimeBasisRank);
+    public int ResidualDegreesOfFreedom => Math.Max(0, FrequencySamples - 1) * Math.Max(0, TimeSamples - 1);
     public bool HasResidualScale => Scale > 0;
-    /// <summary>Signed local intercept relative to a row-aligned global background.</summary>
-    public double BackgroundContrast(GlobalEvidence global) => Background - global.Background;
     public double NormalizedSine => Standardize(Sine, Scale);
     public double NormalizedTransient => Standardize(Transient, Scale);
 

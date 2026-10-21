@@ -11,7 +11,7 @@ float2 RadiatingCenter()
     return float2(min(1, AspectRatio) * (.1 + .06 * sin(.73 * t)),
         -.06 + .045 * sin(.61 * t + .6));
 }
-float RadiatingBoundary() { return .003 + .003 * max(saturate(PoseX), MusicStructure(GlobalSTBR)); }
+float RadiatingBoundary() { return .003 + .003 * saturate(PoseX); }
 float2 RadiatingDistances(float2 p)
 {
     float t = RadiatingShapeTime();
@@ -20,9 +20,8 @@ float2 RadiatingDistances(float2 p)
     q = mul(Rx(.65 * sin(.91 * t)), q);
     q = mul(Ry(.7 * cos(.73 * t)), q);
     q.z += Geometry.SliceDepth * 4 - 2 + .84 * (.9 * sin(1.1 * t) + .4 * sin(1.93 * t));
-    q.z += .12 * MusicStructure(GlobalSTBR) + .1 * MusicBed(GlobalSTBR);
     float depth = max(1, (1 + round(Quality.MaximumIterations * 29))
-        * lerp(.3, 1, max(saturate(PoseX + PoseZ), MusicActivity())));
+        * lerp(.3, 1, saturate(PoseX + PoseZ)));
     return max(1e-8, BoxDistanceAtDepth(q, t, depth));
 }
 float3 RadiatingPalette(float frequency)

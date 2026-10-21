@@ -25,24 +25,31 @@ uses FlipSequential, opaque alpha and an inverse composition-scale transform. Pi
 dimensions and the transform follow layout and DPI changes. The HWND presentation
 path remains available for renderer probes.
 
-The dedicated render thread waits on DXGI's frame-latency waitable object before each
-frame, including the first. On Windows 11 it also waits for the compositor clock and
-uses `Present(0)` with no tearing flags, submitting the latest frame for desktop
+The dedicated render thread uses one pacing source. On Windows 11 it waits for the
+compositor clock and uses `Present(0)` with no tearing flags, submitting the latest frame for desktop
 composition. This avoids both the XAML `CompositionTarget.Rendering` gate and the
 composition swap chain's `Present(1)` gate, which followed the 60 Hz primary display
 even with the window on the 165 Hz secondary display in the mixed-monitor probe.
+Waiting for DXGI and then for a fresh compositor tick can skip alternate refreshes
+at native resolution. The compositor path therefore does not also wait on DXGI.
 The compositor heartbeat can follow the fastest active display, so rendering on a
 slower display may submit more frames than that display scans out. Windows 10 keeps
 the DXGI wait plus `Present(1)` fallback. See Microsoft's
 [compositor-clock guidance](https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock).
 The swap chain allows one queued frame; its waitable flag is preserved on resize.
-Both waits are interruptible for shutdown, and the handle is closed after the worker
+Either pacing wait is interruptible for shutdown, and the handle is closed after the worker
 stops. Timing shows frame-pacing wait separately from draw CPU and Present wait;
 the FPS value measures render submissions, not physical scanout.
 Resize, shader reload, readback and
 frame rendering are serialized around the D3D immediate context. Minimizing pauses
 rendering, and restore consumes recent audio from the bounded mailbox. Settings
 edits rebuild the complete session.
+Spectrum selects the hardware adapter connected to the window's monitor, avoiding
+native FP16 frame copies between GPUs on hybrid laptops. Other scenes use DXGI's
+high-performance adapter preference. Changing between these policies, or moving
+Spectrum to another monitor, replaces graphics resources on the UI thread while
+preserving capture, analysis, audio history and shader parameter values. The new
+textures receive the complete retained history before incremental uploads resume.
 Closing a tool window hides it; closing the render window awaits audio/analysis
 shutdown, detaches the swap chain, releases graphics resources and closes both tools.
 
@@ -63,6 +70,40 @@ restore and resize to 1366x768 it measured 163.7 submissions/s. These are short
 local Release runs after warmup, not GPU execution timings or a measurement of
 physical scanout. The one-frame-queue comparison used quiet input; it establishes
 the presentation ceiling rather than a controlled audio-processing speedup.
+
+### Native-resolution verification, 2026-10-21
+
+At 3200x2000, serial DXGI/compositor waits reproduced approximately 82.5 submissions/s
+despite sub-millisecond shader work. Removing the extra gate improved throughput;
+the NVIDIA-to-Intel presentation path still incurred stalls at native resolution.
+Spectrum now uses the Intel Arc adapter driving this 165 Hz panel.
+
+The final Release production-worker run used native 3200x2000 FP16 scRGB output,
+continuous synthetic 48 kHz stereo audio and 1000 Hz analysis. After two seconds of
+warmup, an eight-second trace contained 1,323 frame intervals:
+
+| Measurement | Result |
+| --- | ---: |
+| Render submissions | 165.00/s |
+| Mean frame interval | 6.061 ms |
+| p95 frame interval | 6.179 ms |
+| Recent mean pacing wait | 5.93 ms |
+| Recent mean draw CPU | 0.06 ms |
+| Recent mean Present wait | 0.04 ms |
+
+Minimizing paused rendering; restore and resize to 1366x768 returned to 165.0
+submissions/s. Frame-interval statistics cover the full trace; the CPU/wait rows
+use the timing panel's last 256 measurements. These are submission measurements,
+not physical scanout timings. Resolution, FP16 output and shader appearance are
+preserved. The local trace is
+`artifacts/native-spectrum-profile/pipeline-20261021-221557-188.csv`.
+
+Focused scheduler, swap-chain and timed-session regressions passed (12 tests),
+including retained-history readback across adapter changes. Spectrum silence
+checks passed on the display-adapter path (8 tests), retaining the generous decay
+period and exact RGB checks across final frames. WinUI smoke checks passed for
+scene changes without capture restart, parameter persistence, shader reload,
+resize, fullscreen, session restart and shutdown.
 
 ## Audio handoff
 

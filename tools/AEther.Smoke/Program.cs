@@ -280,6 +280,7 @@ internal static partial class Program
         // No source remains: transport must persist while pigment dissipates.
         var releaseStartMass = Mass(renderer.Fluid.ReadDye());
         foreach (var history in renderer.Audio.History) Array.Clear(history);
+        renderer.Audio.InvalidateHistory();
         renderer.Render(false);
         renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 120);
         var released = renderer.Fluid.ReadDye();
@@ -339,6 +340,7 @@ internal static partial class Program
         Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-shockwave.png"));
         var withAttack = renderer.ReadPixels();
         foreach (var history in renderer.Audio.History) Array.Clear(history);
+        renderer.Audio.InvalidateHistory();
         renderer.Render(false);
         var withoutAttack = renderer.ReadPixels();
         if (withAttack.Zip(withoutAttack, (a, b) => Math.Abs(a - b)).Average() < 2)
@@ -359,6 +361,7 @@ internal static partial class Program
             throw new Exception("Repeated extreme input destabilized the fluid velocity.");
         Console.WriteLine("Fluid stability: repeated million-amplitude tone/noise/attack bursts stayed finite and within pigment capacity.");
         foreach (var history in renderer.Audio.History) Array.Clear(history);
+        renderer.Audio.InvalidateHistory();
         renderer.Scene = Scene.Mandelbox;
         renderer.Render(false);
         renderer.Scene = Scene.MandelFluid;
@@ -396,11 +399,13 @@ internal static partial class Program
             if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
             renderer.Resize(640, 360);
             foreach (var history in renderer.Audio.History) Array.Clear(history);
+            renderer.Audio.InvalidateHistory();
             renderer.Render(false);
             var unlit = renderer.ReadPixels(false);
             double FrontRadius(float age)
             {
                 foreach (var history in renderer.Audio.History) Array.Clear(history);
+                renderer.Audio.InvalidateHistory();
                 int row = (int)Math.Round((.75 - age * renderer.Audio.TimeScale) * renderer.Audio.Rows - .5);
                 foreach (var history in renderer.Audio.History)
                     for (int y = row - 1; y <= row + 1; y++)
@@ -556,6 +561,7 @@ internal static partial class Program
 
     static void FillContrastHistory(Renderer renderer)
     {
+        renderer.Audio.InvalidateHistory();
         for (var channel = 0; channel < 2; channel++)
             for (var row = 0; row < renderer.Audio.Rows; row++)
                 for (var band = 0; band < renderer.Audio.Bands; band++)
@@ -645,6 +651,7 @@ internal static partial class Program
         foreach (var target in new[] { .12, .5, .88 })
         {
             foreach (var history in renderer.Audio.History) Array.Clear(history);
+            renderer.Audio.InvalidateHistory();
             var historyData = renderer.Audio.History[channel];
             for (var row = 0; row < 256; row++)
             for (var band = 0; band < 64; band++)
@@ -831,7 +838,7 @@ internal static partial class Program
         Console.WriteLine("HEAD depth travel: integer continuity and spatial-AA alignment passed.");
     }
 
-    static void Seed(Renderer renderer)
+    static void Seed(Renderer renderer, long generation = 0)
     {
         var bands = renderer.Audio.Bands;
         var end = DateTime.Now;
@@ -850,7 +857,7 @@ internal static partial class Program
                     data[i + 3] = .65;
                 }
             renderer.PostAudio(new(data, bands * 4, end - TimeSpan.FromSeconds((256 - row) / 256.0))
-                { AnalysisRow = firstRow + row }, 2);
+                  { AnalysisRow = firstRow + row, DiscontinuityGeneration = generation }, 2);
         }
     }
 

@@ -230,6 +230,11 @@ float2 Project(PSin input) : SV_Target
     }
     return v;
 }
+// Validate the pressure solve independently of the prescribed inlet boundary.
+float2 ProjectUnforced(PSin input) : SV_Target
+{
+    return ProjectedVelocity(int2(input.Position.xy));
+}
 DyeOutput AdvectDye(PSin input)
 {
     // Carry one frequency-tinted S material, plus independent age/frequency metadata.
@@ -250,7 +255,7 @@ DyeOutput AdvectDye(PSin input)
     float3 source;
     RingEmissionSample(p, SourceAge, source);
     // S alone generates material. B controls velocity; T is lighting only.
-    float materialDrive = GlobalAmplitudeResponse(source.r
+    float materialDrive = AmplitudeResponse(source.r
         * exp2(20 * Emitter.MaterialGain - 10), .035);
     float dose = StepSeconds * (200 * Emitter.Rate) * emitter * materialDrive;
     float capacity = max(1e-6, 100 * Emitter.Capacity);

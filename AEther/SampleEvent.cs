@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace AEther
 {
@@ -19,7 +19,6 @@ namespace AEther
         public long? SampleEndTimestamp { get; init; }
         public AudioTimestampQuality TimestampQuality { get; init; }
         public long DiscontinuityGeneration { get; init; }
-        public GlobalEvidence GlobalEvidence { get; init; }
 
         public Memory<T> GetChannel(int channelIndex)
         {

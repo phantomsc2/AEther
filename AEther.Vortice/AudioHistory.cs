@@ -8,7 +8,7 @@ public sealed class AudioHistory
 {
     const double Retention = .05, HandoffSeconds = .1;
     sealed record Row(long Index, long Capture, long Completed, double Start, double End,
-        double Arrival, float[] Samples, GlobalEvidence Global, long Generation, bool Live);
+        double Arrival, float[] Samples, long Generation, bool Live);
     readonly Channel<Row> pending, offline;
     readonly Queue<Row> scheduled = new(), recent = new();
     readonly TimeProvider timeProvider;
@@ -20,18 +20,45 @@ public sealed class AudioHistory
     double position, newestEnd, newestArrival, cursor, stateTime;
     bool haveCursor, haveState, live;
     long dropped;
+    int dirtyStart, dirtyCount;
+
+    internal readonly record struct HistoryRange(int Start, int Count);
+
+    /// <summary>Call after directly editing History, on the render thread before rendering.</summary>
+    public void InvalidateHistory() { dirtyStart = 0; dirtyCount = Rows; }
+
+    internal int GetHistoryUpdates(Span<HistoryRange> ranges)
+    {
+        if (dirtyCount == 0) return 0;
+        int count = Math.Min(dirtyCount, Rows - dirtyStart);
+        ranges[0] = new(dirtyStart, count);
+        if (count == dirtyCount) return 1;
+        ranges[1] = new(0, dirtyCount - count);
+        return 2;
+    }
+
+    internal void AcknowledgeHistoryUpload() => dirtyCount = 0;
+
+    void MarkHistoryRows(int start, int count)
+    {
+        if (count >= Rows) { InvalidateHistory(); return; }
+        if (dirtyCount == Rows) return;
+        if (dirtyCount == 0) { dirtyStart = start; dirtyCount = count; return; }
+        // Accepted rows advance monotonically. Their writes and cleared gaps extend
+        // one circular interval until every physical row has been touched.
+        int distance = (start - dirtyStart + Rows) % Rows;
+        dirtyCount = Math.Min(Rows, Math.Max(dirtyCount, distance + count));
+        if (dirtyCount == Rows) dirtyStart = 0;
+    }
 
     public PipelineProfile? Profile { get; set; }
     public double PresentationDelay { get; }
     public int Bands { get; }
     public int Rows { get; }
     public double Seconds { get; }
+    /// <summary>Physical ring storage. Direct edits require InvalidateHistory before rendering.</summary>
     public float[][] History { get; }
     public float[][] Spectrum { get; }
-    /// <summary>Duration-weighted frame fields. Support metadata comes from the latest contributing row.</summary>
-    public GlobalEvidence GlobalEvidence { get; private set; }
-    public Vector4 GlobalSTBR => PackGlobal(GlobalEvidence);
-    public float[] GlobalHistory { get; }
     public Vector3 Components { get; private set; }
     public float FractalEnergy { get; private set; }
     public double MusicalTime { get; private set; }
@@ -61,7 +88,7 @@ public sealed class AudioHistory
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
-        GlobalHistory = new float[4 * Rows];
+        InvalidateHistory();
         sum = new double[8 * bands];
         handoffRows = Math.Max(2, (int)Math.Ceiling((HandoffSeconds + presentationDelay) * rate));
         pending = Mailbox(handoffRows);
@@ -93,15 +120,8 @@ public sealed class AudioHistory
         var row = new Row(input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp,
             timed ? AudioClock.Seconds(input.SampleStartTimestamp!.Value) : input.AnalysisRow / rate,
             timed ? AudioClock.Seconds(input.SampleEndTimestamp!.Value) : (input.AnalysisRow + 1) / rate,
-            HostNow, owned, input.GlobalEvidence, input.DiscontinuityGeneration, timed);
+            HostNow, owned, input.DiscontinuityGeneration, timed);
         (timed ? pending : offline).Writer.TryWrite(row);
-    }
-
-    static Vector4 PackGlobal(GlobalEvidence value)
-    {
-        static float Finite(double x) => double.IsFinite(x) ? (float)Math.Clamp(x, -float.MaxValue, float.MaxValue) : 0;
-        return new(Math.Max(0, Finite(value.Structure)), Finite(value.Transient),
-            Math.Max(0, Finite(value.Background)), Math.Max(0, Finite(value.InteractionRms)));
     }
 
     public void Advance(double dt)
@@ -177,21 +197,21 @@ public sealed class AudioHistory
         {
             if (!changed) { Interlocked.Increment(ref dropped); return; }
             foreach (var history in History) Array.Clear(history);
-            Array.Clear(GlobalHistory);
+            InvalidateHistory();
             newestRow = row.Index - 1;
             firstRow = row.Index;
             haveState = false;
         }
         long previous = newestRow;
-        for (long clear = Math.Max(newestRow + 1, row.Index - Rows + 1); clear <= row.Index; clear++)
+        long clearFrom = Math.Max(newestRow + 1, row.Index - Rows + 1);
+        MarkHistoryRows((int)((clearFrom % Rows + Rows) % Rows), (int)(row.Index - clearFrom + 1));
+        for (long clear = clearFrom; clear <= row.Index; clear++)
         {
             int slot = (int)((clear % Rows + Rows) % Rows);
-            Array.Clear(GlobalHistory, slot * 4, 4);
             foreach (var history in History) Array.Clear(history, slot * Bands * 4, Bands * 4);
         }
         int offset = (int)((row.Index % Rows + Rows) % Rows) * Bands * 4;
         for (var c = 0; c < 2; c++) row.Samples.AsSpan(c * Bands * 4, Bands * 4).CopyTo(History[c].AsSpan(offset));
-        PackGlobal(row.Global).CopyTo(GlobalHistory.AsSpan(offset / Bands, 4));
         newestRow = row.Index; newestEnd = row.End; newestArrival = row.Arrival; live = row.Live;
         LatestCaptureTimestamp = row.Capture;
         LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;
@@ -220,23 +240,14 @@ public sealed class AudioHistory
         Array.Clear(sum);
         double width = end - start;
         if (width <= 0) return;
-        double background = 0, transient = 0, structure = 0, residual = 0;
-        GlobalEvidence support = default;
         foreach (var row in recent)
         {
             double weight = Math.Max(0, Math.Min(end, row.End) - Math.Max(start, row.Start)) / width;
             if (weight == 0) continue;
             for (var i = 0; i < sum.Length; i++) sum[i] += weight * row.Samples[i];
-            static double Finite(double v) => double.IsFinite(v) ? v : 0;
-            background += weight * Finite(row.Global.Background);
-            transient += weight * Finite(row.Global.Transient);
-            structure += weight * Finite(row.Global.Structure);
-            residual += weight * Finite(row.Global.InteractionRms);
-            support = row.Global;
         }
         for (var c = 0; c < 2; c++)
             for (var i = 0; i < Bands * 4; i++) Spectrum[c][i] = (float)Math.Clamp(sum[c * Bands * 4 + i], 0, float.MaxValue);
-        GlobalEvidence = support with { Background = background, Transient = transient, Structure = structure, InteractionRms = residual };
         double power = 0;
         for (var i = 3; i < sum.Length; i += 4) power += sum[i] * sum[i];
         Energy = (float)Math.Sqrt(power / (2 * Bands));
@@ -245,7 +256,6 @@ public sealed class AudioHistory
     void ClearLive()
     {
         foreach (var spectrum in Spectrum) Array.Clear(spectrum);
-        GlobalEvidence = default;
         Energy = 0;
     }
 

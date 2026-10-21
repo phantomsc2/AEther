@@ -31,7 +31,7 @@ float2 RingBoundaryVelocity(float2 p)
 {
     float3 stb;
     RingEmissionSample(p, 0, stb);
-    float background = GlobalAmplitudeResponse(stb.b * exp2(20 * Fluid.VelocityGain - 10), .01);
+    float background = AmplitudeResponse(stb.b * exp2(20 * Fluid.VelocityGain - 10), .01);
     float speed = 20 * Fluid.EmissionVelocity * background;
     float2 normal = p / max(1e-6, length(p));
     float2 tangent = float2(-normal.y, normal.x);
@@ -41,7 +41,7 @@ float2 RingBoundaryVelocity(float2 p)
     float angle = atan2(p.y, abs(p.x));
     float variation = 1 + .25 * sin(6 * angle + .7 * T) + .125 * sin(11 * angle - .9 * T);
     float spin = -normal.x * variation;
-    float curlDrive = GlobalAmplitudeResponse(stb.b, .01);
+    float curlDrive = AmplitudeResponse(stb.b, .01);
     float swirl = 20 * Fluid.Curl * curlDrive * spin;
     return speed * normal + swirl * tangent;
 }

@@ -101,11 +101,10 @@ float3 ShadeSliceAt(float2 uv, float sampleWidth, float movementTime, float3 rea
     float4 currentHull = CurrentSpectrum(frequency, right);
     float4 currentRay = CurrentSpectrum(tonalFrequency, right);
     float center = exp(-12 * radius);
-    float4 global = lerp(GlobalSTBRAtAge(age * HistorySeconds), GlobalSTBR, center);
-    float bodyDrive = MusicBody(global);
-    float structureDrive = MusicStructure(global);
     hull = lerp(hull, currentHull, center);
     ray = lerp(ray, currentRay, center);
+    float bodyDrive = AmplitudeResponse(hull.b, .01);
+    float structureDrive = AmplitudeResponse(ray.r, .035);
     float dust = smoothstep(.28, .85, age);
     float trail = exp(-2.3 * age);
     // Put the transient spectrum around each advancing front: bass below,
@@ -149,8 +148,7 @@ float3 ShadeSliceAt(float2 uv, float sampleWidth, float movementTime, float3 rea
     float3 sustainedHullPalette = .5 + .5 * cos(6.2831853 * (frequency * .9 + palettePhase + float3(.04, .38, .62)));
     // Attacks are crisp near the core, then widen and disperse into a faint
     // coarse glow near the old-history horizon.
-    float4 globalAttack = lerp(GlobalSTBRAtAge(attackAge * HistorySeconds), GlobalSTBR, center);
-    float attack = (6.2 * max(0, attackEnvelope) + .65 * MusicRise(globalAttack)) * trail * 1.2;
+    float attack = 6.2 * max(0, attackEnvelope) * trail * 1.2;
     float dispersed = TransientHistory(attackFrequency, attackAge, right, attackWidth + .07 * dust) * transientEdge;
     float broad = 2.0 * max(0, dispersed) * dust * trail;
 #ifdef MANDEL_FLUID
@@ -159,14 +157,14 @@ float3 ShadeSliceAt(float2 uv, float sampleWidth, float movementTime, float3 rea
     float3 drives = saturate(float3(PoseX, PoseY, PoseZ)); // tone, transient, noise
     float together = pow(max(0, drives.x * drives.y * drives.z), 1.0 / 3.0);
     float interaction = .35 + .65 * together;
-    float energy = max(saturate(VisualBreath), MusicBody(GlobalSTBR));
+    float energy = AmplitudeResponse(hull.a, .015);
     float3 field = hullPalette * energy * (.07 + .52 * tonalRelief);
     float plumeBlend = smoothstep(.08, .85, radius);
     float3 body = FluidLight(uv, tonalRelief) * lerp(.4, 1.0, plumeBlend);
     float3 beams = rayPalette * sustain * lerp(.8, .24, plumeBlend)
         + sustainedHullPalette * sustainedHull * .25;
     float noiseAir = 1 - exp(-2 * max(0, hull.b));
-    float3 light = field + (body + beams) * max(interaction, .55 + .45 * MusicBody(GlobalSTBR));
+    float3 light = field + (body + beams) * interaction;
     // Recorded onsets remain crisp and ordered by history age. They illuminate
     // and expose the field rather than accumulating as long-lived pigment.
     float front = 1 - exp(-4 * max(0, attackEnvelope) * trail);

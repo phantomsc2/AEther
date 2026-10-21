@@ -147,9 +147,6 @@ float4 PS(EdgeVertex input) : SV_Target
     float tone = 1 - exp(-gain * audio.r);
     float noise = 1 - exp(-gain * audio.b);
     float attack = 1 - exp(-gain * audio.g);
-    float4 global = MusicAtAge(age);
-    float bed = MusicBody(global);
-    attack = max(attack, .55 * MusicRise(global));
     float3 eye, right, up, forward;
     EdgeView(eye, right, up, forward);
     float3 normal = input.Normal;
@@ -174,10 +171,9 @@ float4 PS(EdgeVertex input) : SV_Target
     float3 viewDirection = normalize(eye - input.World);
     float specular = pow(saturate(dot(normal, normalize(normalize(lamp) + viewDirection))), 32);
     float3 palette = lerp(float3(.32, .48, .55), FlightPalette(frequency, .03 * input.World.z), .65);
-    float body = (.3 * bed + .65 * noise + .25 * tone) * (.25 + .75 * field.y)
-        * (1 + .35 * MusicStructure(global));
+    float body = (.65 * noise + .25 * tone) * (.25 + .75 * field.y);
     float lightning = 1 + (4 + 18 * Material.Lightning) * attack * pow(saturate(field.y), .7);
-    float3 light = (palette * body * diffuse + .12 * specular * (noise + tone + .5 * bed)) * lightning;
+    float3 light = (palette * body * diffuse + .12 * specular * (noise + tone)) * lightning;
     // Keep the small central patch readable as the place to look toward.
     if (input.Face == 7) light *= 1.5;
     light *= exp(-input.Depth * .012);

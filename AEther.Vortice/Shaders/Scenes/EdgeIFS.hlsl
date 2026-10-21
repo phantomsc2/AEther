@@ -53,19 +53,18 @@ float4 PS(PSin input) : SV_Target
             : edge == 1 ? float2(2 * uv.y - 1, 1 - uv.x)
             : edge == 2 ? float2(1 - 2 * uv.x, 1 - uv.y)
             : float2(1 - 2 * uv.y, uv.x);
-        float a = .2 + .9 * Branches.Angle + .12 * MusicStructure(GlobalSTBR);
-        float w = .22 + .22 * Branches.Spread + .04 * MusicBed(GlobalSTBR);
+        float f = saturate(.5 + .5 * p.x);
+        float4 audio = max(0, .5 * (Spectrum0.SampleLevel(Linear, float2(f, .5), 0)
+            + Spectrum1.SampleLevel(Linear, float2(f, .5), 0)));
+        float a = .2 + .9 * Branches.Angle + .12 * AmplitudeResponse(audio.r, .035);
+        float w = .22 + .22 * Branches.Spread + .04 * AmplitudeResponse(audio.b, .01);
         float h = .68 + .22 * Branches.Reach;
         float3 copies = Branch(p, edge, float2(.88, h), .025, float2(0, .075));
         copies = max(copies, Branch(p, edge, float2(w, .43), a, float2(-.055, .18)));
         copies = max(copies, Branch(p, edge, float2(w, .43), -a, float2(.055, .18)));
         ink = max(ink, copies);
 
-        float f = saturate(.5 + .5 * p.x);
-        float4 audio = max(0, .5 * (Spectrum0.SampleLevel(Linear, float2(f, .5), 0)
-            + Spectrum1.SampleLevel(Linear, float2(f, .5), 0)));
         float energy = 1 - exp(-(audio.x + .35 * audio.y + .3 * audio.z) * (1 + 12 * Ink.Gain));
-        energy = max(energy, .45 * MusicBody(GlobalSTBR) + .3 * MusicRise(GlobalSTBR));
         float width = max(1.5 / max(Resolution.x, Resolution.y), .002 + .012 * Ink.Width);
         // Several narrow roots on each edge give repeated fern-like crowns.
         float root = 1 - smoothstep(.015, .045, abs(frac(f * 7) - .5));

@@ -23,7 +23,6 @@ static class Bench
             long construction = GC.GetAllocatedBytesForCurrentThread() - beforeSetup;
             double rate = fs / (double)block;
             var splits = new[] { new Splitter(domain, options, rate), new Splitter(domain, options, rate) };
-            var global = new GlobalSplitter(domain, options, rate);
             var random = new Random(123);
             var input = Enumerable.Range(0, 64).Select(_ => Enumerable.Range(0, block).Select(_ => .3 * (random.NextDouble() - .5)).ToArray()).ToArray();
             var magnitudes = new double[domain.Length * 2]; var output = new double[domain.Length * 4];
@@ -36,7 +35,6 @@ static class Bench
                     banks[c].OutputLinear(magnitudes.AsMemory(c * domain.Length, domain.Length));
                     if (withFit) splits[c].ProcessLinear(magnitudes.AsMemory(c * domain.Length, domain.Length), output);
                 }
-                if (withFit) global.Process(magnitudes, 2);
                 frame++;
             }
             var clock = Stopwatch.StartNew();
@@ -59,7 +57,7 @@ static class Bench
             }
             double mean = elapsed.Average(); Array.Sort(elapsed);
             double median = elapsed[elapsed.Length / 2], p95 = elapsed[(int)(.95 * (elapsed.Length - 1))];
-            string workload = withFit ? "spectrum+local+global" : "spectrum";
+            string workload = withFit ? "spectrum+local" : "spectrum";
             csv.WriteLine($"{fs},{resolution},{domain.Length},{block},{workload},{name},{mean:G17},{median:G17},{p95:G17},{elapsed[^1]:G17},"
                 + $"{roundMeans.Min():G17},{roundMeans.Max():G17},{allocated / (double)elapsed.Length:G17},{construction},{elapsed.Length}");
             Console.WriteLine($"{fs} Hz / {resolution} bins/oct / {block} samples / {workload} / {name}: median {median:F2}, p95 {p95:F2} us stereo, alloc {allocated / (double)elapsed.Length:G3}");

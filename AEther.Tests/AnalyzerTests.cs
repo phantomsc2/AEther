@@ -46,7 +46,6 @@ namespace AEther.Tests
             analyzer.JointEvidenceAvailable += (_, evt) =>
             {
                 support.Add(evt.GetChannel(0).Span[0].TimeSamples);
-                Assert.That(evt.GetChannel(0).Span[0].TimeSamples, Is.EqualTo(evt.GlobalEvidence.TimeSamples));
             };
             analyzer.SamplesAnalyzed += (_, evt) =>
             {

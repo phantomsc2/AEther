@@ -265,16 +265,24 @@ public sealed class SettingsWindow : ToolWindow
             + $"Capture to draw: {Stat("render.capture_to_submission_ms")}\n"
             + $"Capture queue: {Stat("capture.queue_ms")}\n"
             + $"Source to draw: {Stat("render.source_to_submission_ms")}\n"
-            + $"Presented audio age: {Stat("render.presented_audio_age_ms")}\n"
+            + $"Audio age at frame start: {Stat("render.presented_audio_age_ms")}\n"
             + $"Timestamp quality: {analyzer.LastTimestampQuality}\n"
             + $"Analysis CPU: {Stat("analysis.total_ms")}\n"
             + $"Draw CPU: {Stat("render.draw_cpu_ms")}\n"
+            + $"Audio upload CPU: {Stat("render.audio_upload_ms")}\n"
+            + $"GPU frame: {Stat("gpu.frame_ms")}\n"
+            + $"GPU fluid: {Stat("gpu.fluid_ms")}\n"
+            + $"GPU pressure: {Stat("gpu.fluid_pressure_ms")}\n"
+            + $"GPU velocity / material: {Stat("gpu.fluid_velocity_ms")} | {Stat("gpu.fluid_material_ms")}\n"
+            + $"GPU scene / output: {Stat("gpu.scene_ms")} | {Stat("gpu.output_ms")}\n"
+            + $"Fluid work: {session.Renderer.FluidWork}\n"
+            + $"GPU timing: delayed, nonblocking; skipped {session.Renderer.SkippedGpuTimingFrames}, invalid {session.Renderer.InvalidGpuTimingFrames}\n"
             + $"Frame pacing wait: {Stat("render.pacing_wait_ms")}\n"
             + $"Present wait: {Stat("render.present_wait_ms")} | {fps}\n"
             + $"Output: {session.Renderer.OutputDescription}\n"
             + $"GPU: {session.Renderer.AdapterDescription}\n"
             + $"History delay: {audio.PresentationDelay * 1000:F0} ms | Drops: {analyzer.DroppedInputCount} input, {audio.DroppedRows} visual\n"
             + $"Lost audio: {analyzer.DroppedAudioMilliseconds:F1} ms | Discontinuities: {analyzer.DiscontinuityCount}\n"
-            + "Timings end at CPU submission; speaker/display delay is not calibrated.";
+            + "GPU stages are nested; do not sum them. Source ages end at CPU submission; speaker/display delay is not calibrated.";
     }
 }

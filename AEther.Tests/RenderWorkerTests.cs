@@ -56,9 +56,9 @@ public class RenderWorkerTests
     }
 
     [Test]
-    public void CompositorTickIsRequiredAndItsWaitCanBeCancelled()
+    public void CompositorTickReplacesDxgiWaitAndItsWaitCanBeCancelled()
     {
-        using var ready = new AutoResetEvent(true);
+        using var ready = new AutoResetEvent(false);
         using var tick = new AutoResetEvent(false);
         using var waiting = new AutoResetEvent(false);
         using var rendered = new AutoResetEvent(false);
@@ -67,11 +67,11 @@ public class RenderWorkerTests
             waitForTick: stopped => { waiting.Set(); return WaitHandle.WaitAny([stopped, tick]) == 1; });
         worker.SetEnabled(true);
         Assert.That(waiting.WaitOne(2000), Is.True);
-        Assert.That(rendered.WaitOne(30), Is.False, "An available back buffer alone must not cause unbounded rendering.");
+        Assert.That(rendered.WaitOne(30), Is.False, "Do not render before the compositor tick.");
         tick.Set();
         Assert.That(rendered.WaitOne(2000), Is.True);
-        ready.Set();
         Assert.That(waiting.WaitOne(2000), Is.True);
+        Assert.That(rendered.WaitOne(30), Is.False, "Each subsequent frame needs another tick.");
         Assert.That(Task.Run(worker.Dispose).Wait(2000), Is.True, "Stop must interrupt a compositor wait too.");
         Assert.That(failure, Is.Null);
     }

@@ -11,13 +11,16 @@ python tools/AEther.SwiftStudy/plot_results.py
 
 `--quality` writes deterministic transfer/response results and production STBR traces for
 synthetic signals and the first 12 seconds of `TestFiles/test_input.wav`. `--bench` compares
-scalar SWIFT, SIMD SWIFT, and existing SIMD Hann, with/without both local fits and the shared
-global fit. `--pin` pins the measurement thread to logical CPU 0 on Windows.
+scalar SWIFT, SIMD SWIFT, and existing SIMD Hann, with/without both local fits.
+Traces and scenario summaries use the selected frequency in the first channel.
+`--pin` pins the measurement thread to logical CPU 0 on Windows.
 
 Run quality, tests, and benchmark sequentially so other checks do not compete with timing.
 Plots require NumPy and Matplotlib. Results overwrite the corresponding files under
 `doc/swift-study`; quality and benchmark runs save separate machine metadata. The study
 uses the production implementations and requires no extra .NET package dependencies.
+Regenerate both quality and benchmark data before plotting: archived results use
+the removed global-fit schema and workload.
 
 Benchmark cases: stereo 44.1/48 kHz; 12/24 bins per octave over 30–8000 Hz; current 1 kHz
 publication blocks (44/48 samples), 187 samples, and 1,024 samples. Warmup lasts at least

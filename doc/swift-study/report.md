@@ -1,5 +1,7 @@
 # SWIFT versus windowed SIMD DFT
 
+Historical results: these measurements include the removed global fit and frequency-slope fitting. The current study tool records local fits only; regenerate quality and benchmark data together before comparing the current pipeline.
+
 > Historical measurements: the CSVs, plots and timings in this report used Hann-neighbor
 > calibration with fast/slow ratio 0.6 and duration multiplier 1. They do not describe the
 > current default. Production now uses full -3 dB bandwidth equal to geometric bin width

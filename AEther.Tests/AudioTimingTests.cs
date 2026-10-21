@@ -95,7 +95,6 @@ public class AudioTimingTests
         analyzer.Stop(); await analyzer.Completion;
         Assert.That(rows.Select(r => r.AnalysisRow), Is.EqualTo(new long[] { 0, 2 }));
         Assert.That(rows[1].Samples, Is.All.Zero);
-        Assert.That(rows[1].GlobalEvidence.TimeSamples, Is.EqualTo(1));
         Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
     }
 
@@ -175,7 +174,6 @@ public class AudioTimingTests
         Assert.That(rows[1].SampleEndTimestamp, Is.EqualTo(Ms(clock.Milliseconds)));
         Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
         Assert.That(rows[1].AnalysisRow, Is.GreaterThan(1));
-        Assert.That(rows[1].GlobalEvidence.TimeSamples, Is.EqualTo(1));
     }
 
     [Test]
@@ -198,25 +196,21 @@ public class AudioTimingTests
         {
             AnalysisRow = row, SampleStartTimestamp = Ms(start), SampleEndTimestamp = Ms(end),
             TimestampQuality = AudioTimestampQuality.Device, DiscontinuityGeneration = generation,
-            GlobalEvidence = new(value, value, value, value, 1, 3),
         };
 
     [Test]
-    public void FrameMeanWeightsDurationsAndPreservesSignedGlobalFields()
+    public void FrameMeanWeightsDurations()
     {
         var clock = new Clock { Milliseconds = 20 };
         var history = new AudioHistory(1, 100, timeProvider: clock);
-        history.Post(Row(0, 0, 5, 0) with { GlobalEvidence = new(0, .5, 0, 0, 1, 2) }, 1);
-        history.Post(Row(1, 5, 20, 1) with { GlobalEvidence = new(1, -.5, 1, 1, 1, 3) }, 1);
+        history.Post(Row(0, 0, 5, 0), 1);
+        history.Post(Row(1, 5, 20, 1), 1);
         history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
-        Assert.That(history.GlobalEvidence.Transient, Is.EqualTo(-.25).Within(1e-12));
-        Assert.That(history.GlobalEvidence.TimeSamples, Is.EqualTo(3));
         clock.Milliseconds = 40; history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
         clock.Milliseconds = 71; history.Advance(.031);
         Assert.That(history.Spectrum[0], Is.All.Zero);
-        Assert.That(history.GlobalSTBR, Is.EqualTo(System.Numerics.Vector4.Zero));
     }
 
     [Test]
@@ -230,7 +224,6 @@ public class AudioTimingTests
         Assert.That(history.History[0][4], Is.Zero);
         clock.Milliseconds = 30; history.Advance(.01);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.8f));
-        Assert.That(history.GlobalSTBR.X, Is.EqualTo(.8f));
         Assert.That(history.NewestAge, Is.Zero);
     }
 

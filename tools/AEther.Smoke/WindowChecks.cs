@@ -122,7 +122,8 @@ internal static partial class Program
                                     var dropdown = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
                                     if (!dropdown.Items.Contains("WatcherProbe")) throw new Exception("Watcher failed to refresh scene UI.");
                                 }
-                                Seed(current.Renderer);
+                                // This replay uses a logical clock after timestamped live capture.
+                                Seed(current.Renderer, generation: 1);
                                 current.Renderer.Render(false);
                                 if (!current.Renderer.ReadPixels().Where((_, i) => i % 4 != 3).Any(v => v > 10))
                                     throw new Exception("Composition renderer produced no visible output.");

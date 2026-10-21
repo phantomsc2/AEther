@@ -12,10 +12,11 @@ tiered compilation disabled. Deterministic synthetic stereo chords + noise +
 broadband onsets; 48 kHz, Hann, 98 bands, 187 samples/block, 51 history rows,
 37-bin frequency neighborhood. Block budget: 3.896 ms.
 
-## Directional slope update (current implementation)
+## Historical directional slope update
 
-Both time-linear S and log-frequency-linear T terms are now enabled by default
-in LocalJointFit and independently switchable. A fresh same-process comparison:
+At the time of this measurement, time-linear S and log-frequency-linear T terms were enabled by default
+in LocalJointFit and independently switchable. Both slope models have since been removed.
+The following same-process comparison describes that historical implementation:
 
 | Configuration | Stereo median / p95 ms | Evidence median ms |
 |---|---:|---:|

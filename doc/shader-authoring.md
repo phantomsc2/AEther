@@ -27,7 +27,9 @@ cbuffer Parameters
 
 float4 PS(PSin input) : SV_TARGET
 {
-    float level = MusicBody(GlobalSTBR);
+    float4 local = .5 * (Spectrum0.SampleLevel(Linear, float2(input.UV.x, .5), 0)
+        + Spectrum1.SampleLevel(Linear, float2(input.UV.x, .5), 0));
+    float level = AmplitudeResponse(local.b, .01);
     return float4(Appearance.Enabled ? Appearance.Tint * Appearance.Brightness * level : 0, 1);
 }
 ```
@@ -39,13 +41,13 @@ decodes it for scRGB output. Alpha should be one.
 
 Production scenes must eventually turn black without music, including Mandelbench.
 Explicit audio-independent prototypes, such as MandelVolume and MandelLight, are exceptions.
-Its study geometry stays static while the global controls drive exposure.
-Retained history, trails
-and fluid may decay naturally; procedural backgrounds and ambient illumination
-must also lose their light. `MusicBody(GlobalSTBR)` provides a bounded global
-background/current-level response for passage illumination. Structure, signed
-rise/fall and interaction controls are described in [global STBR](global-stbr.md).
-Historical sources must use controls sampled at their own age.
+Mandelbench's study geometry stays static while raw spectral energy drives exposure.
+Retained history, trails and fluid may decay naturally; procedural backgrounds
+and ambient illumination must also lose their light. Sample local S/T/B and raw
+amplitude from `Spectrum0/1`, or `Histogram0/1` for historical sources at their
+own age. The texture layout is `[max(S,0), max(T,0), B, A]`; alpha is not residual.
+`AmplitudeResponse(x,h)` bounds a positive amplitude with sensitivity h and maps
+zero to zero. There is no separate global fit or global evidence transport.
 
 ## MandelVolume prototype
 

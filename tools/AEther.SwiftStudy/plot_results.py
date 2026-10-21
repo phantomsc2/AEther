@@ -53,10 +53,10 @@ fig, axes = plt.subplots(3, 3, figsize=(14, 9), constrained_layout=True, sharex=
 for col, scenario in enumerate(['Tone attack', 'Tone plus noise', 'Note replacement']):
     for name in NAMES:
         rows = [r for r in traces if r['scenario'] == scenario and r['backend'] == name]
-        for row, key in enumerate(['center_amplitude', 'global_t', 'global_r']):
+        for row, key in enumerate(['center_amplitude', 'local_t', 'local_r']):
             axes[row, col].plot(nums(rows, 'time_s'), nums(rows, key), color=COLORS[name], label=name)
     axes[0, col].set_title(scenario)
-    for row, label in enumerate(['Center amplitude', 'Signed global T', 'Global residual RMS']):
+    for row, label in enumerate(['Center amplitude', 'Signed local T', 'Local residual RMS']):
         axes[row, col].set_ylabel(label)
         axes[row, col].set_xlim(.2, 1.9)
         axes[row, col].legend(fontsize=7)
@@ -66,14 +66,14 @@ save(fig, 'stbr.png')
 fig, axes = plt.subplots(2, 2, figsize=(12, 7), constrained_layout=True, sharex=True)
 for name in NAMES:
     rows = [r for r in traces if r['scenario'] == 'Music WAV' and r['backend'] == name]
-    for ax, key, title in zip(axes.flat, ['global_s', 'global_t', 'global_b', 'global_r'], ['Structure RMS', 'Signed transient', 'Background', 'Interaction RMS']):
+    for ax, key, title in zip(axes.flat, ['local_s', 'local_t', 'local_b', 'local_r'], ['Signed sustained effect', 'Signed transient', 'Background', 'Residual RMS']):
         ax.plot(nums(rows, 'time_s'), nums(rows, key), color=COLORS[name], label=name, lw=.8)
         ax.set(title=title, xlabel='Time (s)', ylabel='Linear amplitude')
         ax.legend(fontsize=8)
 save(fig, 'music.png')
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
-for ax, work in zip(axes, ['spectrum', 'spectrum+local+global']):
+for ax, work in zip(axes, ['spectrum', 'spectrum+local']):
     for name in ['Hann SIMD', 'SWIFT scalar', 'SWIFT SIMD']:
         rows = [r for r in perf if r['sample_rate'] == '48000' and r['bins_per_octave'] == '12' and r['backend'] == name and r['workload'] == work]
         ax.plot(nums(rows, 'block'), nums(rows, 'median_us'), 'o-', color=COLORS[name], label=name)
@@ -95,7 +95,7 @@ f55_table = table(['Backend', 'Slow / fast cycles', '10% attack', '50% attack', 
 
 cpu_rows = []
 for block in [48, 187, 1024]:
-    for work in ['spectrum', 'spectrum+local+global']:
+    for work in ['spectrum', 'spectrum+local']:
         rows = [one(perf, sample_rate=48000, bins_per_octave=12, block=block, workload=work, backend=n)
                 for n in ['Hann SIMD', 'SWIFT scalar', 'SWIFT SIMD']]
         cpu_rows.append([block, work] + [f"{float(r['median_us']):.2f} / {float(r['p95_us']):.2f}" for r in rows]
@@ -103,7 +103,7 @@ for block in [48, 187, 1024]:
 cpu_table = table(['Block', 'Workload', 'Hann SIMD', 'SWIFT scalar', 'SWIFT SIMD', 'Median speedup vs Hann'], cpu_rows)
 
 tone_rows = [one(scenarios, scenario='Tone attack', backend=n) for n in NAMES]
-tone_table = table(['Backend', 'Global T peak after onset', 'Global R peak after onset', 'Peak R'],
+tone_table = table(['Backend', 'Local T peak after onset', 'Local R peak after onset', 'Peak R'],
     [[r['backend'], f"{1000*(float(r['time_peak_t'])-.3):.0f} ms", f"{1000*(float(r['time_peak_r'])-.3):.0f} ms", f"{float(r['peak_r']):.5f}"] for r in tone_rows])
 
 calibration_error = max(abs(float(r['hann_neighbor_db'])-float(r['swift_neighbor_db'])) for r in tuning)
@@ -167,9 +167,10 @@ analytic real-tone minimum/maximum caused by the negative-frequency image.
 ## Downstream STBR behavior
 
 Synthetic signals are analyzed at 48 kHz with the default 97-bin domain, the actual 1 kHz update
-rate, a 0.2 s time window, a two-octave local frequency window, S time slope off, and T frequency
-slope on. Input gain is unity for the comparison. Both local and global production fits consume
-each backend's linear magnitudes. Trace CSVs keep every fifth observation; summary peaks use every row.
+rate, a 0.2 s time window, and a two-octave local frequency window. Input gain is unity for
+the comparison. Local additive production fits consume
+each backend's linear magnitudes. Traces and summaries use the selected bin in the first channel.
+Trace CSVs keep every fifth observation; summary peaks use every row.
 The centered tone is the first domain bin above 55 Hz (about 56.63 Hz), starting at 0.3 s.
 
 {tone_table}
@@ -195,7 +196,7 @@ in [benchmark-machine.txt](benchmark-machine.txt). The benchmark thread is pinne
 tiered compilation is disabled. Each case warms for at least 200 ms and enough samples to populate
 the Hann and STBR histories. Five measured rounds target approximately 200 ms each. Every timed
 call includes linear magnitude readout. The combined workload additionally includes both local fits
-and the shared global fit at the actual block update rate. Audio synthesis, construction, and I/O are excluded.
+at the actual block update rate. Audio synthesis, construction, and I/O are excluded.
 
 {cpu_table}
 

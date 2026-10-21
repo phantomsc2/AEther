@@ -12,11 +12,12 @@ float4 FlightFluidSource(float2 p, float substepOffset)
 float2 FlightCarrier(float2 p)
 {
     float depth = SceneImage.SampleLevel(Linear, GeometryUV(p), 0).a * 120;
-    return p * (1 + 12 * Camera.Speed) * MusicActivity() / max(8, depth);
+    return p * (1 + 12 * Camera.Speed) * saturate(PoseX + PoseZ + .2 * PoseY) / max(8, depth);
 }
 float2 FlightTurbulence(float2 p, float4 source)
 {
-    return .12 * Effects.Turbulence * MusicActivity() * (1 + MusicInteraction(GlobalSTBR))
+    float light = dot(max(0, source.rgb), float3(.2126, .7152, .0722));
+    return .12 * Effects.Turbulence * AmplitudeResponse(light, .01)
         * float2(sin(5 * p.y + MusicalMovementTime * .2), -sin(5 * p.x - MusicalMovementTime * .17));
 }
 float FlightDilution(float2 p) { return 0; }

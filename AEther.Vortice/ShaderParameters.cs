@@ -21,6 +21,8 @@ public sealed class ShaderParameters
 {
     internal byte[] Data { get; }
     internal Lock SyncRoot { get; } = new();
+    long version;
+    internal long Version => Interlocked.Read(ref version);
     readonly byte[] defaults;
     public IReadOnlyList<ShaderParameter> Items { get; }
     internal ShaderParameters(ID3D11ShaderReflectionConstantBuffer buffer)
@@ -72,20 +74,30 @@ public sealed class ShaderParameters
     public void SetFloat(ShaderParameter parameter, float value)
     {
         if (!float.IsFinite(value) || value is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(value));
-        lock (SyncRoot) BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value);
+        lock (SyncRoot)
+        {
+            if (BitConverter.ToSingle(Data, parameter.Offset) == value) return;
+            BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value);
+            version++;
+        }
     }
     public void SetBoolean(ShaderParameter parameter, bool value)
     {
-        lock (SyncRoot) BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value ? 1 : 0);
+        lock (SyncRoot)
+        {
+            if ((BitConverter.ToInt32(Data, parameter.Offset) != 0) == value) return;
+            BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value ? 1 : 0);
+            version++;
+        }
     }
-    public void Reset() { lock (SyncRoot) defaults.CopyTo(Data, 0); }
+    public void Reset() { lock (SyncRoot) { defaults.CopyTo(Data, 0); version++; } }
     internal static IEnumerable<ShaderParameter> Leaves(IEnumerable<ShaderParameter> items) =>
         items.SelectMany(p => p.Children.Count == 0 ? [p] : Leaves(p.Children));
     public void Restore(ShaderParameters previous)
     {
         byte[] source;
         lock (previous.SyncRoot) source = (byte[])previous.Data.Clone();
-        lock (SyncRoot) Copy(Items, previous.Items);
+        lock (SyncRoot) { Copy(Items, previous.Items); version++; }
         void Copy(IReadOnlyList<ShaderParameter> current, IReadOnlyList<ShaderParameter> old)
         {
             foreach (var item in current)

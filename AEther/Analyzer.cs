@@ -27,7 +27,6 @@ namespace AEther
         readonly byte[] Batch;
         readonly ISpectrumProcessor[] Spectrum;
         readonly Splitter[] Splitters;
-        readonly GlobalSplitter Global;
         readonly TransientDetector[] Transients;
         readonly AudioFeatureExtractor Features;
         readonly record struct InputPacket(SampleEvent<byte> Event, long Arrival, AudioPacketTiming? Timing);
@@ -66,12 +65,9 @@ namespace AEther
             Profile.Describe("Window function", options.WindowFunction.ToString());
             Profile.Describe("Spectrum backend", options.UseSwift ? "SWIFT" : "DFT");
             Batch = new byte[checked(BatchSize * Format.Size)];
-            Profile.Describe("Decomposition", "STBR: rolling Gaussian / directional slopes / residual RMS");
-            Profile.Describe("S time slope", options.JointTimeSlopeEnabled.ToString());
-            Profile.Describe("T frequency slope", options.JointFrequencySlopeEnabled.ToString());
+            Profile.Describe("Decomposition", "STBR: rolling Gaussian additive fit / residual RMS");
             Splitters = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
-            Global = new(Domain, options, Format.SampleRate / (double)BatchSize);
             Spectrum = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => SpectrumProcessor.Create(Domain, Format.SampleRate, options)).ToArray();
             if (Spectrum[0] is SwiftProcessor swift)
@@ -146,7 +142,6 @@ namespace AEther
             foreach (var processor in Spectrum) processor.Reset();
             foreach (var splitter in Splitters) splitter.Reset();
             foreach (var transient in Transients) transient.Reset();
-            Global.Reset();
             Features.Reset();
             Interlocked.Increment(ref generation);
             Profile.Describe("Discontinuities", Interlocked.Read(ref generation).ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -350,18 +345,15 @@ namespace AEther
                         if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
                     }
                 }
-                GlobalEvidence global;
-                using (Profile.Measure("analysis.global_split_ms"))
-                    global = Global.Process(spectrum.Samples.AsMemory(0, Domain.Length * Format.ChannelCount), Format.ChannelCount);
                 // Publish immediately; render pacing belongs to the renderer.
                 output = output with { SampleIndex = row * BatchSize, AnalysisRow = row,
-                    CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock), GlobalEvidence = global,
+                    CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
                     SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                     DiscontinuityGeneration = Interlocked.Read(ref generation) };
                 if (jointEvidence is not null)
                 {
                     jointEvidence = jointEvidence with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
-                        CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp, GlobalEvidence = global,
+                        CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp,
                         SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                         DiscontinuityGeneration = output.DiscontinuityGeneration };
                     JointEvidenceAvailable?.Invoke(this, jointEvidence);

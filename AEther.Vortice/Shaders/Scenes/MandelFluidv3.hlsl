@@ -59,7 +59,7 @@ float3 RadiatingShade(float2 uv, float sampleWidth, float pulse)
     float3 toLight = normalize(float3(-q, .45));
     float diffuse = .22 + .78 * saturate(dot(normal, toLight));
     float falloff = 1 / (1 + 100.0 * Lighting.SpatialFalloff * dot(q, q));
-    float ambient = Lighting.Ambient * (.12 + 1.8 * MusicBody(GlobalSTBR));
+    float ambient = Lighting.Ambient * .12;
     float illumination = 18 * Lighting.Strobe * pulse * falloff * diffuse;
     // Every light term needs real pigment. Age never gates a new flash: a
     // returning cloud in the periodic fluid can be revealed again by any hit.
@@ -75,11 +75,9 @@ float4 PS(const PSin input) : SV_Target
     float sampleWidth = 1.0 / samples;
     float2 uvX = ddx(input.UV), uvY = ddy(input.UV);
     float3 color = 0;
-    // Flash already has a 45 ms release in AudioHistory. Positive global T
-    // supplies broadband attacks even without a strong local spectral peak.
+    // Local transient envelopes have a 45 ms release in AudioHistory.
     float flash = 1 - exp(-4 * max(0, VisualFlash));
-    float rise = MusicRise(GlobalSTBR);
-    float pulse = max(flash * flash, rise * rise);
+    float pulse = flash * flash;
     [loop] for (int y = 0; y < samples; ++y)
         [loop] for (int x = 0; x < samples; ++x)
         {

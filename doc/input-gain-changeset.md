@@ -41,7 +41,7 @@ For optional diagnostics, label meters explicitly:
 - Silence reads minus infinity. No sine-referenced RMS offset is added.
 
 There is no universal STB ceiling derived from sample full scale. Spectral
-distribution, overlapping windows, local-fit effects and enabled slopes matter.
+distribution, overlapping windows and local-fit effects matter.
 Keep analysis values in floating point; any bounded color mapping belongs in the
 renderer and must preserve zero input as black.
 

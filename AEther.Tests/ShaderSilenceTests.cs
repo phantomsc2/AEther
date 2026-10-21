@@ -53,18 +53,13 @@ public class ShaderSilenceTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, preferDisplayAdapter: scene == "Spectrum");
         renderer.SelectScene(scene);
         if (IsFluidScene(scene))
         {
             var parameters = renderer.ActiveShader!.Parameters!;
             parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
                 .Single(p => p.Name == "PeriodicBoundary"), periodic);
-        }
-        if (scene is "Spectrum" or "Histogram")
-        {
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetBoolean(parameters.Items.Single(p => p.Name == "ShowGlobalSTBR"), true);
         }
         var gain = Math.Pow(10, inputGainDb / 20);
         long row = 0;
@@ -128,9 +123,7 @@ public class ShaderSilenceTests
                     samples[i + 3] = gain * .9;
                 }
             renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                { AnalysisRow = row++, GlobalEvidence = music
-                    ? new GlobalEvidence(gain * .3, gain * (row % 12 < 6 ? .2 : -.2), gain * .5, gain * .1, Bands, 13)
-                    : new GlobalEvidence(0, 0, 0, 0, Bands, 13) }, 2);
+                { AnalysisRow = row++ }, 2);
         }
         void AssertBlack(string stage)
         {
@@ -153,12 +146,11 @@ public class ShaderSilenceTests
         var options = new AnalyzerOptions { TimeResolution = 60, InputGainDb = gainDb };
         var spectrum = new SwiftProcessor(domain, sampleRate, true);
         var splitter = new Splitter(domain, options, 60);
-        var global = new GlobalSplitter(domain, options, 60);
         using var shaders = new SceneShaders(scene);
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, preferDisplayAdapter: scene == "Spectrum");
         renderer.SelectScene(scene);
         var input = new double[block]; var magnitudes = new double[Bands * 2];
         var output = new double[Bands * 8];
@@ -198,9 +190,8 @@ public class ShaderSilenceTests
             magnitudes.AsSpan(0, Bands).CopyTo(magnitudes.AsSpan(Bands));
             splitter.ProcessLinear(magnitudes.AsMemory(0, Bands), output.AsMemory(0, Bands * 4));
             output.AsSpan(0, Bands * 4).CopyTo(output.AsSpan(Bands * 4));
-            var evidence = global.Process(magnitudes, 2);
             renderer.PostAudio(new SampleEvent<double>(output, Bands * 4, DateTime.UnixEpoch)
-                { AnalysisRow = row++, GlobalEvidence = evidence }, 2);
+                { AnalysisRow = row++ }, 2);
             clock.Advance(); renderer.Render(false);
         }
         void AssertBlack() => Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
@@ -235,89 +226,6 @@ public class ShaderSilenceTests
         }
     }
 
-    public static IEnumerable<string> ArtisticScenes() => Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
-        .Select(Path.GetFileNameWithoutExtension).Where(name => name is not ("Spectrum" or "Histogram" or "MandelFluidv4"))
-        // The spectral light rings intentionally respond only to live local S/T,
-        // not to the global B-only fixture. It remains in the silence regression.
-        .Where(name => name != "MandelLightv4")
-        .Where(name => !IsAudioIndependentPrototype(name!))
-        .OrderBy(name => name, StringComparer.Ordinal);
-
-    [TestCaseSource(nameof(ArtisticScenes)), Category("GPU")]
-    public void GlobalBackgroundSuppliesIntensityWithoutLocalContrastOrAttacks(string scene)
-    {
-        using var window = new HiddenWindow();
-        var without = Measure(false);
-        var with = Measure(true);
-        TestContext.Progress.WriteLine($"{scene}: B-only mean RGB {without.Mean:F4} -> {with.Mean:F4}");
-        Assert.That(with.Mean, Is.GreaterThan(.2), "A sustained broadband bed must produce visible intensity.");
-        Assert.That(with.Mean, Is.GreaterThan(without.Mean * 1.05),
-            "Global B must contribute materially when local S and T are zero.");
-
-        (double Mean, byte[] Pixels) Measure(bool global)
-        {
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: ShaderDirectory, timeProvider: clock);
-            renderer.SelectScene(scene);
-            var parameters = renderer.ActiveShader!.Parameters;
-            var speed = parameters?.Items.FirstOrDefault(p => p.Name == "Quality")?.Children
-                .FirstOrDefault(p => p.Name == "MovementSpeed");
-            if (speed != null) parameters!.SetFloat(speed, 0);
-            var data = new double[Bands * 8];
-            for (int i = 0; i < data.Length; i += 4) data[i + 2] = data[i + 3] = .025;
-            double mean = 0;
-            byte[] pixels = Array.Empty<byte>();
-            for (int frame = 0; frame < 120; frame++)
-            {
-                renderer.PostAudio(new(data, Bands * 4, DateTime.UnixEpoch)
-                    { AnalysisRow = frame, GlobalEvidence = new(global ? .025 : 0, 0, 0, 0, Bands, 13) }, 2);
-                clock.Advance(); renderer.Render(false);
-                if (frame < 90 || frame % 5 != 4) continue;
-                pixels = renderer.ReadPixels(false);
-                mean += pixels.Where((_, i) => i % 4 != 3).Average(v => (double)v) / 6;
-            }
-            var directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "artifacts", "global-artistic");
-            Directory.CreateDirectory(directory);
-            var path = Path.Combine(directory, scene + (global ? "-global-B" : "-local-B") + ".rgba");
-            File.WriteAllBytes(path, pixels);
-            TestContext.AddTestAttachment(path, $"{Width}x{Height} RGBA8, B-only response");
-            return (mean, pixels);
-        }
-    }
-
-    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), Category("GPU")]
-    public void GlobalBackgroundStrengthensFluidMotionWithoutRequiringTonalContrast(string scene)
-    {
-        using var window = new HiddenWindow();
-        double without = Measure(0), with = Measure(.025);
-        TestContext.Progress.WriteLine($"{scene}: B-only velocity RMS {without:G5} -> {with:G5}");
-        Assert.That(with, Is.GreaterThan(Math.Max(1e-6, 1.1 * without)),
-            "Global B must drive the actual fluid field, not only brighten its image.");
-        double Measure(double background)
-        {
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: ShaderDirectory, timeProvider: clock);
-            renderer.SelectScene(scene);
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Quality")
-                .Children.Single(p => p.Name == "MovementSpeed"), 0);
-            var data = new double[Bands * 8];
-            for (int i = 0; i < data.Length; i += 4) data[i + 2] = data[i + 3] = .025;
-            for (int row = 0; row < 120; row++)
-            {
-                renderer.PostAudio(new(data, Bands * 4, DateTime.UnixEpoch)
-                    { AnalysisRow = row, GlobalEvidence = new(background, 0, 0, 0, Bands, 13) }, 2);
-                clock.Advance(); renderer.Render(false);
-            }
-            Assert.That(renderer.Fluid.ReadDye().All(v => float.IsFinite(v) && v >= 0 && v <= 12), Is.True);
-            var velocity = renderer.Fluid.ReadVelocity();
-            Assert.That(velocity.All(float.IsFinite), Is.True);
-            return Math.Sqrt(velocity.Average(v => (double)v * v));
-        }
-    }
-
     [TestCase(960, 540, false), TestCase(540, 960, false), TestCase(1024, 256, false), TestCase(256, 256, false)]
     [TestCase(960, 540, true), TestCase(540, 960, true), TestCase(1024, 256, true), TestCase(256, 256, true), Category("GPU")]
     public void FluidProjectionRemovesDivergenceAndPreservesCurl(int width, int height, bool periodic)
@@ -337,6 +245,138 @@ public class ShaderSilenceTests
         Assert.That(check.Before, Is.GreaterThan(.01), "The fixture needs a divergent velocity field.");
         Assert.That(check.After, Is.LessThan(check.Before * .01), "Remove at least 99% of RMS divergence.");
         Assert.That(check.CurlError, Is.LessThan(1e-4), "Pressure projection must preserve rotational motion.");
+    }
+
+    [TestCase(false), TestCase(true), Category("GPU")]
+    public void MandelFluidV4ProjectionPreservesRotation(bool periodic)
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        var parameters = renderer.ActiveShader!.Parameters!;
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
+            .Single(p => p.Name == "PeriodicBoundary"), periodic);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(renderer.Fluid.Width, Is.EqualTo(512));
+        var check = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
+        TestContext.Progress.WriteLine($"V4 periodic={periodic}: divergence {check.Before:G6} -> {check.After:G6}, curl error {check.CurlError:G6}");
+        Assert.That(check.After, Is.LessThan(.01 * check.Before));
+        Assert.That(check.CurlError, Is.LessThan(1e-4));
+    }
+
+    [TestCase(30), TestCase(60), TestCase(120), Category("GPU")]
+    public void MandelFluidV4RegularClockDoesNotBatchSimulationSteps(int rate)
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new FluidClock(rate);
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        renderer.Audio.Profile = new PipelineProfile();
+        var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
+        for (int frame = 1; frame <= 60; frame++)
+        {
+            renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { AnalysisRow = frame }, 1);
+            clock.Frame = frame; renderer.Render(false);
+            int expected = frame * 60 / rate - (frame - 1) * 60 / rate + (frame == 1 ? 2 : 0);
+            Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(expected), $"Frame {frame}, {rate} Hz");
+        }
+        renderer.ReadPixels(false);
+        renderer.PollGpuTimings();
+        Assert.That(renderer.Audio.Profile.Recent("gpu.fluid_pressure_ms"), Is.Not.Null);
+        Assert.That(renderer.InvalidGpuTimingFrames, Is.Zero);
+    }
+
+    sealed class FluidClock(int rate) : TimeProvider
+    {
+        public long Frame;
+        public override long TimestampFrequency => rate;
+        public override long GetTimestamp() => Frame;
+    }
+
+    [Test, Category("GPU")]
+    public void MandelFluidV4ParameterCopiesFollowEditsAndReset()
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        var parameters = renderer.ActiveShader!.Parameters!;
+        var fluid = parameters.Items.Single(p => p.Name == "Fluid");
+        var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
+        long row = 0;
+        Tick();
+        Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True);
+        parameters.SetFloat(fluid.Children.Single(p => p.Name == "EmissionVelocity"), 0);
+        renderer.Fluid.Clear(); Tick();
+        Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero, "Live changes must reach cached pass parameters.");
+        parameters.Reset();
+        renderer.Fluid.Clear(); Tick();
+        Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True, "Reset must invalidate cached pass parameters.");
+        void Tick()
+        {
+            renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { AnalysisRow = row++ }, 1);
+            clock.Advance(); renderer.Render(false);
+        }
+    }
+
+    [TestCase(false), TestCase(true), Category("GPU")]
+    public void MandelFluidV4ExtremeForcingRemainsFiniteAndBounded(bool periodic)
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        var parameters = renderer.ActiveShader!.Parameters!;
+        foreach (var path in new[] { "Fluid.EmissionVelocity", "Fluid.VelocityGain", "Fluid.Curl",
+            "Fluid.Viscosity", "Emitter.Rate", "Emitter.MaterialGain", "Emitter.Capacity" })
+        {
+            var parts = path.Split('.');
+            parameters.SetFloat(parameters.Items.Single(p => p.Name == parts[0]).Children.Single(p => p.Name == parts[1]), 1);
+        }
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "PeriodicBoundary"), periodic);
+        var samples = Enumerable.Repeat(1e6, Bands * 4).ToArray();
+        for (int frame = 0; frame < 120; frame++)
+        {
+            renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { AnalysisRow = frame }, 1);
+            clock.Advance(); renderer.Render(false);
+            if (frame % 30 != 29) continue;
+            var velocity = renderer.Fluid.ReadVelocity();
+            var dye = renderer.Fluid.ReadDye();
+            var age = renderer.Fluid.ReadAge();
+            Assert.That(velocity.All(v => float.IsFinite(v) && Math.Abs(v) < 1e4), Is.True);
+            Assert.That(dye.All(v => float.IsFinite(v) && v >= 0), Is.True);
+            Assert.That(age.All(float.IsFinite), Is.True);
+            double peak = dye.Where((_, i) => i % 4 == 3).Max();
+            Assert.That(peak, Is.InRange(.01, 100.001), "Extreme forcing must retain material without exceeding capacity.");
+        }
+    }
+
+    [Test, Category("GPU")]
+    public void MandelFluidV4KeepsSingleCellFilamentsWithoutArtificialDiffusion()
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        clock.Advance(); renderer.Render(false);
+        renderer.Fluid.SeedFilamentsForCheck();
+        for (int frame = 0; frame < 60; frame++) { clock.Advance(); renderer.Render(false); }
+        var dye = renderer.Fluid.ReadDye();
+        int width = renderer.Fluid.Width, height = renderer.Fluid.Height;
+        for (int y = height / 3; y < 2 * height / 3; y++)
+        for (int x = width / 4 + 4; x < 3 * width / 4 - 4; x += 4)
+        {
+            int cell = y * width + x;
+            Assert.That(dye[4 * cell + 3], Is.GreaterThan(.99f));
+            Assert.That(dye[4 * (cell + 1) + 3], Is.LessThan(.01f));
+            Assert.That(dye[4 * cell], Is.EqualTo(.2 * Math.Exp(-1 / renderer.Audio.Seconds)).Within(.002));
+        }
     }
 
     [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), Category("GPU")]
@@ -571,8 +611,6 @@ public class ShaderSilenceTests
         for (int frame = 0; frame < 45; frame++) Tick();
         AssertBlack("The cloud must go dark between hits while pigment remains.");
         Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(.001));
-        Tick(globalRise: .1, advance: false);
-        Assert.That(Light(), Is.GreaterThan(1000), "Global T must light the cloud without a local attack.");
         parameters.SetFloat(strobe, 0);
         parameters.SetFloat(ambient, .008f);
         Tick(advance: false);
@@ -584,7 +622,7 @@ public class ShaderSilenceTests
         Assert.That(Light(), Is.GreaterThan(ambientLight), "Ambient intensity must remain configurable.");
         renderer.Fluid.Clear();
         parameters.SetFloat(strobe, .7f);
-        Tick(attackBand: Bands / 4, globalRise: .1, advance: false);
+        Tick(attackBand: Bands / 4, advance: false);
         AssertBlack("Neither ambient nor a strobe may illuminate empty space.");
 
         long Light() => renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Sum(v => (long)v);
@@ -607,7 +645,7 @@ public class ShaderSilenceTests
             File.WriteAllBytes(path, renderer.ReadPixels(false));
             TestContext.AddTestAttachment(path, $"{width}x{height} RGBA8 cloud lighting");
         }
-        void Tick(int toneBand = -1, int attackBand = -1, bool advance = true, double globalRise = 0)
+        void Tick(int toneBand = -1, int attackBand = -1, bool advance = true)
         {
             var data = new double[Bands * 8];
             for (int i = 0; i < data.Length; i += 4)
@@ -620,8 +658,7 @@ public class ShaderSilenceTests
                 data[i + 3] = Math.Max(data[i + 2], Math.Max(data[i], data[i + 1]));
             }
             renderer.PostAudio(new SampleEvent<double>(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                { AnalysisRow = row++, GlobalEvidence = new(toneBand >= 0 ? .08 : 0, globalRise,
-                    toneBand >= 0 ? .15 : 0, toneBand >= 0 ? .03 : 0, Bands, 13) }, 2);
+                { AnalysisRow = row++ }, 2);
             if (advance) clock.Advance();
             renderer.Render(false);
         }
@@ -689,7 +726,7 @@ public class ShaderSilenceTests
         {
             Tick(.3);
             Assert.That(renderer.ReadPixels(false), Is.EqualTo(original),
-                "A settled global level must leave the study's geometry static.");
+                "A settled raw spectral level must leave the study's geometry static.");
         }
         {
             var diagnostics = parameters.Items.Single(p => p.Name == "Jacobian");
@@ -713,8 +750,8 @@ public class ShaderSilenceTests
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero);
         void Tick(double level)
         {
-            renderer.PostAudio(new(new double[Bands * 8], Bands * 4, DateTime.UnixEpoch)
-                { AnalysisRow = row++, GlobalEvidence = new(level, 0, 0, 0, Bands, 13) }, 2);
+            renderer.PostAudio(new(Enumerable.Range(0, Bands * 8).Select(i => i % 4 == 3 ? level : 0).ToArray(), Bands * 4, DateTime.UnixEpoch)
+                { AnalysisRow = row++ }, 2);
             clock.Advance(); renderer.Render(false);
         }
     }
@@ -848,8 +885,7 @@ public class ShaderSilenceTests
         using var renderer = new Renderer(window.Handle, width, height, Bands, 60,
             shaderDirectory: ShaderDirectory, timeProvider: clock);
         renderer.SelectScene("Mandelbench");
-        renderer.PostAudio(new(new double[Bands * 8], Bands * 4, DateTime.UnixEpoch)
-            { GlobalEvidence = new(1, 0, 0, 0, Bands, 13) }, 2);
+        renderer.PostAudio(new(Enumerable.Range(0, Bands * 8).Select(i => i % 4 == 3 ? 1.0 : 0).ToArray(), Bands * 4, DateTime.UnixEpoch), 2);
         var parameters = renderer.ActiveShader!.Parameters!;
         var search = parameters.Items.Single(p => p.Name == "Search");
         var view = parameters.Items.Single(p => p.Name == "View");
@@ -978,7 +1014,7 @@ public class ShaderSilenceTests
 
     [TestCase("Spectrum", 0.0), TestCase("Spectrum", 60.0)]
     [TestCase("Histogram", 0.0), TestCase("Histogram", 60.0), Category("GPU")]
-    public async Task WaveformThroughGlobalDiagnosticsEventuallyTurnsBlack(string scene, double gainDb)
+    public async Task WaveformThroughAnalysisViewsEventuallyTurnsBlack(string scene, double gainDb)
     {
         const int sampleRate = 8000, batch = sampleRate / 60;
         var options = new AnalyzerOptions
@@ -1002,17 +1038,12 @@ public class ShaderSilenceTests
         await analyzer.Completion;
         Assert.That(rows.Count, Is.EqualTo(140));
         Assert.That(rows[^1].Samples, Is.All.Zero);
-        Assert.That(rows[^1].GlobalEvidence.CurrentMean, Is.Zero);
-        Assert.That(rows[^1].GlobalEvidence.Structure, Is.Zero);
-        Assert.That(rows[^1].GlobalEvidence.InteractionRms, Is.Zero);
 
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, options.Domain.Length,
             sampleRate / (double)batch, shaderDirectory: ShaderDirectory, timeProvider: clock);
         renderer.SelectScene(scene);
-        var parameters = renderer.ActiveShader!.Parameters!;
-        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "ShowGlobalSTBR"), true);
         bool lit = false;
         foreach (var row in rows)
         {
@@ -1027,57 +1058,9 @@ public class ShaderSilenceTests
         {
             Tick();
             Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
-                $"Production waveform/DFT/global fit: final frame {frame}.");
+                $"Production waveform/spectrum/local fit: final frame {frame}.");
         }
         void Tick() { clock.Advance(); renderer.Render(false); }
-    }
-
-    [Test, Category("GPU")]
-    public void GlobalShaderInputsRetainSignedLiveAndAlignedHistoricalEvidence()
-    {
-        var temporaryRoot = Path.GetFullPath(Path.GetTempPath());
-        var shaders = Path.Combine(temporaryRoot, "AEther-global-probe-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(shaders, "Common"));
-        Directory.CreateDirectory(Path.Combine(shaders, "Scenes"));
-        try
-        {
-            File.Copy(Path.Combine(ShaderDirectory, "Common", "Inputs.hlsl"), Path.Combine(shaders, "Common", "Inputs.hlsl"));
-            File.Copy(Path.Combine(ShaderDirectory, "Common", "Present.hlsl"), Path.Combine(shaders, "Common", "Present.hlsl"));
-            File.WriteAllText(Path.Combine(shaders, "Scenes", "GlobalProbe.hlsl"), """
-                #include "../Common/Inputs.hlsl"
-                float4 PS(PSin input) : SV_Target
-                {
-                    float age = .05;
-                    float4 g = GlobalSTBRAtAge(age);
-                    float4 local = Histogram0.SampleLevel(Linear,
-                        float2(.5, HistogramShift - age / HistorySeconds * HistorySpan), 0);
-                    float liveError = length(GlobalSTBR - float4(.1225, -.245, .245, .06125));
-                    float historyError = abs(g.b - local.b) + abs(g.g + local.b)
-                        + abs(g.r - .5 * local.b) + abs(g.a - .25 * local.b);
-                    return float4(step(1e-5, liveError), step(1e-5, historyError),
-                        step(g.b, 0), 1);
-                }
-                """);
-            using var window = new HiddenWindow();
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, 1, 60,
-                shaderDirectory: shaders, timeProvider: clock);
-            for (int row = 0; row < 30; row++)
-            {
-                double b = .1 + .005 * row;
-                renderer.PostAudio(new(new[] { 0.0, 0, b, 0 }, 4, DateTime.UnixEpoch)
-                    { AnalysisRow = row, GlobalEvidence = new(b, -b, .5 * b, .25 * b, 1, 3) }, 1);
-                clock.Advance(); renderer.Render(false);
-            }
-            Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
-                "Red: incorrect live packet/layout; green: history misalignment or lost T sign; blue: history missing.");
-        }
-        finally
-        {
-            if (!Path.GetFullPath(shaders).StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Global probe cleanup escaped the temporary directory.");
-            Directory.Delete(shaders, true);
-        }
     }
 
     sealed class RenderClock : TimeProvider

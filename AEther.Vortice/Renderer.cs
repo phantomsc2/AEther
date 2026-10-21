@@ -20,6 +20,7 @@ public sealed partial class Renderer : IDisposable
     ID3D11Device device = null!;
     ID3D11DeviceContext context = null!;
     ColorOutput output = null!;
+    GpuProfiler gpu = null!;
     ID3D11VertexShader vertex = null!;
     Dictionary<string, ShaderScene> scenes = new(StringComparer.Ordinal);
     readonly Dictionary<string, ShaderParameters> savedParameters = new(StringComparer.Ordinal);
@@ -39,8 +40,8 @@ public sealed partial class Renderer : IDisposable
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
     ID3D11Buffer frameBuffer = null!;
-    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[5];
-    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[5];
+    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
+    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
     readonly string shaderDirectory;
     int width, height;
     double previousTime;
@@ -68,9 +69,21 @@ public sealed partial class Renderer : IDisposable
     public string ShaderDirectory => shaderDirectory;
     public bool HighPrecisionOutput => output.HighPrecision;
     public string OutputDescription => output.Description;
-    /// <summary>Wait before each live frame, including the first. Owned by the renderer.</summary>
+    /// <summary>DXGI pacing handle for hosts without compositor-clock pacing. Owned by the renderer.</summary>
     public WaitHandle FrameReady => output.FrameReady;
     public string AdapterDescription { get; } = string.Empty;
+    public bool PreferDisplayAdapter { get; }
+    readonly IntPtr displayMonitor;
+    public bool IsDisplayMonitorCurrent(IntPtr window) => !PreferDisplayAdapter || MonitorFromWindow(window, 2) == displayMonitor;
+    public string FluidWork => fluid == null || ActiveShader?.Fluid == null ? "inactive" : $"{fluid.Width}x{fluid.Height}, {fluid.LastSteps} steps, {fluid.LastDraws} draws";
+    public long SkippedGpuTimingFrames => gpu.SkippedFrames;
+    public long InvalidGpuTimingFrames => gpu.InvalidFrames;
+    internal void PollGpuTimings() => gpu.Poll();
+    internal void GpuMarker(string name, bool begin)
+    {
+        gpu.Marker(name, begin);
+        TransportPassMarker?.Invoke(name, begin);
+    }
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
     // Optional GPU timestamp markers used by the transport profiling tool.
     internal Action<string, bool>? TransportPassMarker { get; set; }
@@ -81,15 +94,23 @@ public sealed partial class Renderer : IDisposable
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
         double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
-        Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null)
+        Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null,
+        string? initialScene = null, bool preferDisplayAdapter = false, AudioHistory? audioHistory = null)
     {
-        Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
+        Audio = audioHistory ?? new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
+        if (initialScene != null) SceneName = initialScene;
+        PreferDisplayAdapter = preferDisplayAdapter;
+        displayMonitor = preferDisplayAdapter ? MonitorFromWindow(window, 2) : IntPtr.Zero;
+        // New textures need the complete retained ring, even if the old GPU
+        // already acknowledged every dirty row before the adapter change.
+        if (audioHistory != null) Audio.InvalidateHistory();
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
         try
         {
             using var factory = CreateDXGIFactory1<IDXGIFactory2>();
-            CreateGraphicsDevice(factory);
+            CreateGraphicsDevice(factory, window);
             Own(device); Own(context);
+            gpu = Own(new GpuProfiler(device, context));
             using (var dxgiDevice = device.QueryInterface<IDXGIDevice>())
             using (var adapter = dxgiDevice.GetAdapter())
                 AdapterDescription = adapter.Description.Description;
@@ -105,11 +126,12 @@ public sealed partial class Renderer : IDisposable
             {
                 textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
                 {
-                    Width = (uint)(i == 4 ? 1 : bands), Height = (uint)(i < 2 ? 1 : Audio.Rows),
+                    Width = (uint)bands, Height = (uint)(i < 2 ? 1 : Audio.Rows),
                     MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
                     SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
                     BindFlags = BindFlags.ShaderResource,
                 }));
+                textures[i].DebugName = i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
                 views[i] = Own(device.CreateShaderResourceView(textures[i]));
             }
             var sampler = Own(device.CreateSamplerState(new SamplerDescription
@@ -133,8 +155,28 @@ public sealed partial class Renderer : IDisposable
 
     public void PostAudio(SampleEvent<double> input, int channelCount) => Audio.Post(input, channelCount);
 
-    void CreateGraphicsDevice(IDXGIFactory2 factory)
+    void CreateGraphicsDevice(IDXGIFactory2 factory, IntPtr window)
     {
+        bool TryCreate(IDXGIAdapter1 adapter)
+        {
+            if ((adapter.Description1.Flags & AdapterFlags.Software) != 0) return false;
+            var result = D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport,
+                [FeatureLevel.Level_11_0], out ID3D11Device candidateDevice, out ID3D11DeviceContext candidateContext);
+            if (result.Success) { device = candidateDevice; context = candidateContext; return true; }
+            candidateContext?.Dispose(); candidateDevice?.Dispose();
+            return false;
+        }
+        if (PreferDisplayAdapter)
+        {
+            // Small scenes cost less than copying a native FP16 frame between GPUs.
+            // Match the actual monitor rather than assuming an integrated adapter index.
+            var monitor = displayMonitor;
+            for (uint a = 0; factory.EnumAdapters1(a, out var adapter).Success; a++)
+            using (adapter)
+                for (uint o = 0; adapter.EnumOutputs(o, out var output).Success; o++)
+                using (output)
+                    if (output.Description.Monitor == monitor && TryCreate(adapter)) return;
+        }
         // DXGI supplies performance order: no assumption about adapter positions,
         // vendor IDs, memory sizes or whether the display is wired to the GPU.
         using var preferred = factory.QueryInterfaceOrNull<IDXGIFactory6>();
@@ -144,21 +186,16 @@ public sealed partial class Renderer : IDisposable
                      out var candidate).Success; i++)
             {
                 using var adapter = candidate;
-                if (adapter == null || (adapter.Description1.Flags & AdapterFlags.Software) != 0) continue;
-                var result = D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport,
-                    [FeatureLevel.Level_11_0], out ID3D11Device candidateDevice, out ID3D11DeviceContext candidateContext);
-                if (result.Success)
-                {
-                    device = candidateDevice; context = candidateContext;
-                    return;
-                }
-                candidateContext?.Dispose(); candidateDevice?.Dispose();
+                if (adapter != null && TryCreate(adapter)) return;
             }
         }
         // Older Windows versions, or no usable adapter in the preferred list.
         D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
             [FeatureLevel.Level_11_0], out device, out context).CheckError();
     }
+
+    [DllImport("user32.dll")]
+    static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
 
     static string FindShaderDirectory()
     {
@@ -336,45 +373,32 @@ public sealed partial class Renderer : IDisposable
     unsafe void RenderCore(bool present, uint syncInterval)
     {
         if (output.SceneTarget == null) return;
+        using var gpuFrame = gpu.BeginFrame(Audio.Profile);
         var frameStart = Stopwatch.GetTimestamp();
         if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
         previousFrame = frameStart;
         var now = Audio.Now;
         var dt = Math.Max(0, now - previousTime);
         Audio.Advance(dt);
-        var global = Audio.GlobalSTBR;
-        static float Response(float value, float sensitivity) => value > 0 ? 1 / (1 + sensitivity / value) : 0;
-        var bed = Response(global.Z, .01f);
-        var structure = Response(global.X, .035f);
-        var interaction = Response(global.W, .02f);
-        var rise = Response(global.Y, .02f);
         // Material evolution follows sustained components. Onsets can pulse a
         // silhouette without permanently advancing its underlying shape.
         shapeTime += Math.Clamp(dt, 0, .05)
-            * Math.Max(Audio.Components.X + .7 * Audio.Components.Z, .55 * structure + .65 * bed);
+            * (Audio.Components.X + .7 * Audio.Components.Z);
         // A passage builds deformation over sustained energy/noise, then coasts
         // through brief gaps rather than changing strength on every analysis row.
         var passageEnergy = 1 - Math.Exp(-2.5 * Math.Max(0, Audio.Energy));
-        var distortionTarget = Math.Clamp(Math.Max(.55 * Audio.Components.Z + .45 * passageEnergy,
-            .55 * bed + .25 * interaction + .2 * structure), 0, 1);
+        var distortionTarget = Math.Clamp(.55 * Audio.Components.Z + .45 * passageEnergy, 0, 1);
         var distortionResponse = 1 - Math.Exp(-Math.Clamp(dt, 0, .05)
             / (distortionTarget > distortionMomentum ? .85 : 3.2));
         distortionMomentum += (distortionTarget - distortionMomentum) * distortionResponse;
         var activity = Math.Clamp((Audio.Components.Z + .2f * Audio.Components.Y - .02f) / .53f, 0, 1);
-        activity = Math.Clamp(Math.Max(activity, .8f * bed + .2f * structure + .25f * rise), 0, 1);
         var mobility = ActiveShader?.Fluid != null ? activity * activity * (3 - 2 * activity) : 1;
         movementTime += (Audio.MusicalTime - previousMusicalTime) * mobility;
         previousMusicalTime = Audio.MusicalTime;
         previousTime = now;
-        // Upload after draining the mailbox; capture/analysis never touches a graphics lock.
-        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
-        for (var i = 0; i < textures.Length; i++)
-        {
-            var source = i == 4 ? Audio.GlobalHistory : i < 2 ? Audio.Spectrum[i] : Audio.History[i - 2];
-            fixed (float* data = source)
-                context.UpdateSubresource(textures[i], 0, null, (IntPtr)data, (uint)((i == 4 ? 1 : Audio.Bands) * 16), 0);
-        }
+        GpuMarker("Audio upload", true);
+        UploadAudio();
+        GpuMarker("Audio upload", false);
         var frame = new Frame
         {
             A = new((float)now, (float)dt, Audio.Shift, width / (float)height),
@@ -384,7 +408,6 @@ public sealed partial class Renderer : IDisposable
             E = new((float)Audio.MusicalTime, Audio.AvailableSpan, Audio.NewestAge,
                 Audio.FractalDepth),
             F = new(width, height, (float)movementTime, (float)Audio.Seconds),
-            GlobalSTBR = Audio.GlobalSTBR,
         };
         context.UpdateSubresource(frame, frameBuffer);
         context.RSSetViewport(0, 0, width, height);
@@ -403,7 +426,7 @@ public sealed partial class Renderer : IDisposable
             namedBuffers["RasterLightConstants"] = rasterTransport.LightBuffer;
             namedBuffers["RasterAirlightConstants"] = rasterTransport.AirlightBuffer;
             namedSamplers["RasterLutSampler"] = rasterTransport.LookupSampler;
-            rasterTransport.PassMarker = TransportPassMarker;
+            rasterTransport.PassMarker = GpuMarker;
             rasterTransport.Prepare(active.Raster, active.Parameters!, Audio, (float)now, width, height,
                 namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
@@ -413,7 +436,7 @@ public sealed partial class Renderer : IDisposable
         if (active.FourierShadow != null)
         {
             fourierTransport ??= new(device, context);
-            fourierTransport.PassMarker = TransportPassMarker;
+            fourierTransport.PassMarker = GpuMarker;
             fourierTransport.Prepare(active.FourierShadow, active.Parameters!, (float)now,
                 namedBuffers, namedBuffers, namedTextures);
             context.RSSetViewport(0, 0, width, height);
@@ -421,7 +444,7 @@ public sealed partial class Renderer : IDisposable
         if (active.Atmosphere != null)
         {
             lightTransport ??= new(device, context);
-            lightTransport.PassMarker = TransportPassMarker;
+            lightTransport.PassMarker = GpuMarker;
             lightTransport.PrecalculateAtmosphere(active.Atmosphere, active.Parameters!, namedBuffers);
             bool atmosphereOnly = ReadBoolean("View.ShowAtmosphereLookup");
             if (active.CameraTransport != null)
@@ -442,10 +465,14 @@ public sealed partial class Renderer : IDisposable
         }
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
-        namedTextures["GlobalHistogram"] = views[4];
         // Compatibility names now refer to the core evidence; there is no scene filter pass.
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
-        if (active.GeometryVertex != null) DrawGeometry(active);
+        if (active.GeometryVertex != null)
+        {
+            GpuMarker("Geometry", true);
+            DrawGeometry(active);
+            GpuMarker("Geometry", false);
+        }
         if (active.Fluid != null)
         {
             int gridLimit = SceneName switch
@@ -458,9 +485,13 @@ public sealed partial class Renderer : IDisposable
             if (fluid != null && (fluid.GridLimit != gridLimit || fluid.SquareGrid != squareGrid))
             { fluid.Dispose(); fluid = null; }
             fluid ??= new(device, context, width, height, gridLimit, squareGrid);
+            fluid.PassMarker = GpuMarker;
+            fluid.DrawMarker = gpu.Annotate;
             if (previousScene != SceneName || dt > .5) fluid.Clear();
+            GpuMarker("Fluid", true);
             fluid.Advance(dt, Audio, active.Fluid,
                 active.Parameters, namedBuffers, namedTextures, namedSamplers);
+            GpuMarker("Fluid", false);
             namedTextures["FluidDye"] = fluid.Dye;
             if (fluid.Age != null) namedTextures["FluidAge"] = fluid.Age;
             namedSamplers["FluidSampler"] = fluid.Sampler;
@@ -470,25 +501,34 @@ public sealed partial class Renderer : IDisposable
         {
             feedback ??= new(device, context, width, height);
             if (previousScene != SceneName || dt > .5) feedback.Clear();
+            GpuMarker("Feedback", true);
             feedback.Advance(dt, active, namedBuffers, namedTextures, namedSamplers);
+            GpuMarker("Feedback", false);
         }
         previousScene = SceneName;
         if (active.Distance != null)
         {
             distanceField ??= new(device, context, width, height);
+            GpuMarker("Distance field", true);
             distanceField.Update(active.Distance, active.Parameters!, namedBuffers);
+            GpuMarker("Distance field", false);
             namedTextures["DistanceField"] = distanceField.Field;
             namedSamplers["DistanceSampler"] = distanceField.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
         context.OMSetRenderTargets(output.SceneTarget);
+        GpuMarker("Scene", true);
         (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
-        if (active.FourierShadow != null) TransportPassMarker?.Invoke("Fourier camera", true);
-        if (active.Raster != null) TransportPassMarker?.Invoke("Raster composite", true);
+        if (active.FourierShadow != null) GpuMarker("Fourier camera", true);
+        if (active.Raster != null) GpuMarker("Raster composite", true);
         context.Draw(3, 0);
-        if (active.Raster != null) TransportPassMarker?.Invoke("Raster composite", false);
-        if (active.FourierShadow != null) TransportPassMarker?.Invoke("Fourier camera", false);
+        if (active.Raster != null) GpuMarker("Raster composite", false);
+        if (active.FourierShadow != null) GpuMarker("Fourier camera", false);
+        GpuMarker("Scene", false);
+        GpuMarker("Output", true);
         output.Draw(outputPixel, now);
+        GpuMarker("Output", false);
+        gpu.EndFrame();
         Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
         if (Audio.LatestCaptureTimestamp != 0)
             Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
@@ -506,7 +546,7 @@ public sealed partial class Renderer : IDisposable
     public void SetCompositionScale(float x, float y) { lock (graphicsGate) output.SetCompositionScale(x, y); }
 
     [StructLayout(LayoutKind.Sequential)]
-    struct Frame { public Vector4 A, B, C, D, E, F, GlobalSTBR; }
+    struct Frame { public Vector4 A, B, C, D, E, F; }
 
 
     public void Dispose()

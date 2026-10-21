@@ -30,10 +30,9 @@ invented as zeros. Explicitly silent packets override their buffer contents with
 
 The renderer follows the newest completed source interval at or before its presentation target.
 The default added presentation delay is **zero**. Explicit delay applies to all audio fields.
-Live spectrum and global fields use a duration-weighted arithmetic mean over the same audio
+Live spectral fields use a duration-weighted arithmetic mean over the audio
 interval; missing intervals contribute zero and partial intersections receive fractional weight.
-Individual historical rows retain their original values. The global transient remains signed;
-support counts/ranks describe the last contributing row rather than an averaged statistical fit.
+Individual historical rows retain their original values.
 
 No new packet does not mean a silent frame. The last aggregate can survive up to 50 ms of source
 age, then live values clear and history continues aging. A discontinuity cancels retention.
@@ -53,6 +52,12 @@ audio duration, discontinuities and visual drops. Useful stages are:
 | `capture.dropped_audio_ms` | Discarded/missing audio duration per loss operation |
 | `analysis.source_age_ms` | Completed source boundary to publication |
 | `analysis.total_ms` | Batch CPU/wait time including synchronous subscribers |
+| `render.audio_upload_ms` | CPU time submitting current spectrum and dirty history uploads |
+| `gpu.frame_ms` | Delayed GPU elapsed time across frame commands, excluding Present |
+| `gpu.fluid_ms` | Fluid work including all simulation steps in that frame |
+| `gpu.fluid_pressure_ms` | Pressure divergence, multigrid cycles and projection, accumulated across steps |
+| `gpu.fluid_velocity_ms` / `gpu.fluid_material_ms` | Velocity transport/viscosity and pigment/age transport |
+| `gpu.scene_ms` / `gpu.output_ms` | Final scene draw and display conversion |
 | `render.presented_audio_age_ms` | Frame preparation time minus selected source cursor |
 | `render.source_to_submission_ms` | Latest consumed source boundary to CPU draw submission |
 | `render.capture_to_submission_ms` | Callback arrival to CPU draw submission; excludes earlier packet age |
@@ -60,9 +65,69 @@ audio duration, discontinuities and visual drops. Useful stages are:
 Timing scopes are nested; do not add them all together. Mean/p95 describe the latest 256 values;
 saved profiles retain individual measurements. Metadata records timestamp quality and discontinuities.
 Neither CPU submission nor `Present` completion establishes visible-pixel or speaker arrival time.
-The DFT window's frequency-dependent response is unchanged. Physical audio/display calibration and
-GPU history-upload optimization are separate work. Rendering performance comparisons must use 720p
+The UI labels its source-cursor age "Audio age at frame start"; the historical CSV key remains
+`render.presented_audio_age_ms`. It is neither the mean age of the aggregated spectrum nor scanout age.
+The DFT window's frequency-dependent response is unchanged. Physical audio/display calibration
+remains separate work. Rendering performance comparisons must use 720p
 or higher; low-resolution GPU silence tests are correctness checks, not timing benchmarks.
+
+### Live GPU diagnostics and RenderDoc
+
+The timing panel now includes GPU frame, fluid, pressure, velocity/material, scene and output
+mean/p95 timings, plus the current fluid grid, velocity-step count (including startup warmup),
+and draw count. GPU stages nest: pressure is inside fluid, and fluid is inside frame. Do not sum
+these values. The timestamp intervals can include GPU idle gaps while CPU commands arrive;
+they are elapsed command intervals, not shader occupancy measurements.
+
+Eight reusable timestamp-query sets are read on later frames with `DoNotFlush`. If the GPU has
+not completed a set, rendering continues without waiting; a saturated pool skips timing samples.
+Disjoint timestamps and samples exceeding the bounded event capacity are discarded. The panel
+shows skipped/invalid sample counts. Valid results feed the same F9 CSV profiler as CPU timings.
+No GPU/CPU clock correlation or physical audio/display synchronization is implied.
+
+RenderDoc captures show named frame, audio upload, simulation, pressure, material, scene and output
+events. Individual fluid draws include their pass name and grid dimensions. Shader entry points
+and spectrum/histogram resources are also named. Annotation calls run only while a graphics tool
+reports an active capture/debugging connection; live GPU timing does not require RenderDoc.
+
+See [MandelFluidv4 measurements](mandelfluidv4-performance.md) for the deterministic 720p profiling
+command, solver tradeoffs, and before/after timings.
+
+### Incremental histogram uploads
+
+The CPU and GPU histories use the same physical ring slots. The render thread uploads only
+changed rows, including cleared gaps, after consuming analysis events. Adjacent rows are batched;
+a wrap needs at most two region updates per stereo channel. Startup and complete history clears
+upload the full ring once. Frames without history changes upload no histogram data. The two
+small current-spectrum textures still upload every frame, with their existing averaging behavior.
+Direct edits to `AudioHistory.History` must call `InvalidateHistory()` on the render thread before
+rendering. Analysis events invalidate their own rows automatically.
+
+`render.audio_upload_ms` measures CPU time for unbinding audio shader resources and submitting
+current-spectrum and histogram updates. It excludes GPU completion and physical presentation.
+The `HistoryUploadTests.CompareFullAndIncrementalUploadsAt720p` comparison uses identical
+deterministic input, a lightweight history-sampling scene, and 1280x720 output. GPU readback bounds
+outstanding work outside the CPU timing scopes; frame submission timings are not display cadence
+or GPU execution times. It checks identical final pixels and reports histogram payload separately.
+
+Measured on 2026-10-21 in Release on an NVIDIA GeForce RTX 4070 Laptop GPU, with 97 bins,
+1000 analysis rows/second and 2002 history slots. Each mode ran three blocks with 16 warmup
+frames and 96 measured frames per block; mode order alternated. Logical audio advanced at 60 Hz;
+the benchmark rendered offscreen without Present or vsync. All compared final pixels matched.
+
+| Measurement | Full uploads | Incremental uploads |
+| --- | ---: | ---: |
+| Audio upload CPU median / p95 | 0.7100 / 1.2243 ms | 0.0418 / 0.0891 ms |
+| Frame submission CPU median / p95 | 0.8217 / 1.3978 ms | 0.1462 / 0.3196 ms |
+| Histogram payload per measured frame | 6,214,208 bytes | 51,733 bytes |
+
+Histogram payload decreased about 120 times. These results isolate transport in the lightweight
+test scene; they do not establish an equivalent frame-rate or audio-to-photon improvement in
+expensive production scenes. Run the comparison again with:
+
+```powershell
+dotnet test AEther.Tests/AEther.Tests.csproj --configuration Release --filter 'FullyQualifiedName~CompareFullAndIncrementalUploadsAt720p' --verbosity normal
+```
 
 ## Historical profiling notes
 

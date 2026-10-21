@@ -11,17 +11,13 @@ layer, comet tail, ray layer or illuminated empty background.
   Stereo determines its placement. Separated tonal bands strengthen shear.
 - **Local B** also emits and stirs material, controlled by **Fluid.Background**.
   It preserves local spectral and stereo contrast.
-- **Global B** supplies passage-wide flow, curl and confinement, even when local
-  tonal contrast is weak. It also strengthens the small ambient illumination.
-- **Global S** drives core evolution and strengthens emitted tonal pigment.
-- **Local attacks and positive global T** light existing clouds with a central
+- **Local attacks** light existing clouds with a central
   strobe. The spectral attack envelope has a 45 ms release. Illumination falls
   off with distance from the core and responds to the actual density gradient.
   All pigment colors can be revealed by any hit, including old clouds returning
   through the periodic boundary. Residence age does not weaken a new flash.
-  Negative global T eases expansion; transients never inject pigment.
-- **Global interaction** strengthens turbulent motion, confinement and optional
-  mixing. It is spectral/time interaction, not a noise classifier.
+  Transients never inject pigment. Core evolution and transport use the existing
+  envelopes derived from local components; ambient strength is constant.
 
 Every light term requires transported pigment. After capture stops or packets
 become silent, emission stops and the existing fluid decays naturally to black.

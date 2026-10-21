@@ -216,9 +216,7 @@ float4 PS(StarVertex input) : SV_Target
     float pan = .5 + (Hash(input.Seed*113+7)-.5)*Orbits.StereoWidth;
     float bandFrequency;
     float4 audio=AudioAt(input.Frequency,input.Trail ? input.UV.y : 0,pan,bandFrequency);
-    float4 global=MusicAtAge(input.Trail ? input.UV.y : 0,.025);
-    float bed=MusicBody(global), structure=MusicStructure(global);
-    float rise=MusicRise(global), interaction=MusicInteraction(global);
+    float bed=audio.z, structure=audio.x, rise=audio.y;
     float3 bandColor=Palette(bandFrequency);
     // A band's tone/noise deepens its hue; its transients add a pale flash.
     // All modulation uses the same mapped band and the same history age.
@@ -236,7 +234,7 @@ float4 PS(StarVertex input) : SV_Target
     }
     float2 p=input.UV; float r=length(p); clip(2.95-r);
     float cloud=Noise(p*2+float2(input.Seed*71,MusicalMovementTime*.09));
-    float gas=Layers.Gas ? max(audio.z,.15*bed)*cloud*exp(-r*r*.65)*Appearance.Gas*(1+.5*interaction) : 0;
+    float gas=Layers.Gas ? bed*cloud*exp(-r*r*.65)*Appearance.Gas : 0;
     float rays=pow(saturate(.5+.5*cos(atan2(p.y,p.x)*(6+floor(input.Frequency*18))+input.Seed*17)),18);
     if(Layers.NoteRays) gas*=1+audio.x*rays*(3+24*Appearance.Rays);
     float3 light=color*gas;
@@ -261,9 +259,8 @@ float4 AfterglowPS(PSin input) : SV_Target
     {
         float2 p=input.UV*float2(AspectRatio,1)*150;
         float seed=Hash(dot(floor(p),float2(1,157)));
-        light+=float3(.25,.35,.5)*exp(-180*dot(frac(p)-.5,frac(p)-.5))*step(.996,seed)*MusicBody(GlobalSTBR);
+        light+=float3(.25,.35,.5)*exp(-180*dot(frac(p)-.5,frac(p)-.5))*step(.996,seed)*saturate(VisualBreath);
     }
     return float4(pow(saturate(1-exp(-max(0,light)*(1+3*Appearance.Exposure))),1/2.2),1);
 }
-
 
