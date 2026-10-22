@@ -273,6 +273,8 @@ DyeOutput AdvectDye(PSin input)
 
     // Refresh both representations together at an active inlet, at any capacity.
     float inlet = Emitter.Rate > 0 && materialDrive > 0 ? emitter : 0;
+    // Preserve the 60 Hz inlet response when transport follows a faster display.
+    inlet = 1 - pow(1 - saturate(inlet), 60 * StepSeconds);
     birthMass = lerp(birthMass, emittedAt * density, inlet);
     frequencyMass = lerp(frequencyMass, emittedFrequency * density, inlet);
     signalMass = lerp(signalMass, emittedMaterial * density, inlet);

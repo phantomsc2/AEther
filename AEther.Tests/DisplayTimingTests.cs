@@ -78,6 +78,36 @@ public class DisplayTimingTests
         Assert.That(Math.Abs(lead), Is.LessThan(1), "Verify the native struct, clock units and COM call.");
     }
 
+    [Test]
+    public void PresentationTimelineRejectsEstimateSpurtsButRetainsRealMissedFrames()
+    {
+        var timeline = new PresentationTimeline();
+        double period = System.Diagnostics.Stopwatch.Frequency / 165.0;
+        long start = Ms(1000), anchor = Ms(1018);
+        Assert.That(timeline.Estimate(start, anchor, period), Is.EqualTo(anchor));
+        for (int frame = 1; frame <= 100; frame++)
+        {
+            // Real wakes stay at 165 Hz; the API alternates a repeated estimate
+            // with a two-refresh jump. Neither should enter the animation clock.
+            long now = start + (long)Math.Round(frame * period) + Ms(frame % 2 == 0 ? .1 : -.1);
+            long raw = anchor + (long)Math.Round((frame - frame % 2) * period);
+            Assert.That(timeline.Estimate(now, raw, period),
+                Is.EqualTo(anchor + (long)Math.Round(frame * period)));
+        }
+        Assert.That(timeline.Estimate(start + (long)Math.Round(104 * period), anchor + (long)Math.Round(104 * period), period),
+            Is.EqualTo(anchor + (long)Math.Round(104 * period)), "A real four-frame gap must advance by four frames.");
+    }
+
+    [Test]
+    public void PresentationTimelineReanchorsOnRefreshChangeAndRestore()
+    {
+        var timeline = new PresentationTimeline();
+        double period = System.Diagnostics.Stopwatch.Frequency / 165.0;
+        timeline.Estimate(Ms(1000), Ms(1018), period);
+        Assert.That(timeline.Estimate(Ms(2000), Ms(2012), period), Is.EqualTo(Ms(2012)));
+        Assert.That(timeline.Estimate(Ms(2006), Ms(2020), System.Diagnostics.Stopwatch.Frequency / 120.0), Is.EqualTo(Ms(2020)));
+    }
+
     [Test, Category("GPU")]
     public void HistogramPixelsFollowDisplayTimeAndExpireWithStoppedCaptureAt720p()
     {
@@ -164,6 +194,43 @@ public class DisplayTimingTests
     }
 
     [Test, Category("GPU")]
+    public void HistogramFractionalPixelCoverageScrollsWithoutCatchupSteps()
+    {
+        const int width = 1280, height = 720;
+        using var window = new Window();
+        using var renderer = new Renderer(window.Handle, width, height, 1, 100,
+            initialScene: "Histogram", timeProvider: new Clock());
+        for (int row = 0; row < 12; row++)
+        {
+            double value = row == 2 ? .8 : 0;
+            renderer.PostAudio(new(new[] { 0.0, value, 0, value }, 4, DateTime.UnixEpoch)
+            {
+                AnalysisRow = row, StreamClock = new(0, 0, 8000),
+                SampleStartTimestamp = Ms(row * 10), SampleEndTimestamp = Ms((row + 1) * 10),
+            }, 1);
+        }
+        double first = 0;
+        for (int frame = 0; frame < 20; frame++)
+        {
+            double time = 100 + frame * 1000.0 / 165;
+            renderer.Render(false, presentationTimestamp: Ms(time));
+            var pixels = renderer.ReadPixels(false);
+            double mass = 0, weighted = 0;
+            for (int x = 0; x < width / 2; x++)
+            {
+                double value = pixels[((height / 2) * width + x) * 4 + 1];
+                mass += value; weighted += (x + .5) * value;
+            }
+            Assert.That(mass, Is.EqualTo(.8 * 255 * width * .5 * .01 / renderer.Audio.Seconds).Within(3),
+                "A fractional shift must conserve event brightness/area.");
+            double center = weighted / mass;
+            if (frame == 0) first = center;
+            Assert.That(center, Is.EqualTo(first - frame * width * .5 / (165 * renderer.Audio.Seconds)).Within(.09),
+                "Event motion must follow fractional display time, without whole-pixel holds and jumps.");
+        }
+    }
+
+    [Test, Category("GPU")]
     public void SpectrumShowsNewBlocksWithoutAveragingOrHoldingAcrossGapsAt720p()
     {
         const int width = 1280, height = 720;
@@ -191,15 +258,15 @@ public class DisplayTimingTests
             "A display frame without a new block shows a gap, including the residual outline.");
     }
 
-    [TestCase(1280, 720, false), TestCase(1280, 720, true)]
-    [TestCase(3200, 2000, false), TestCase(3200, 2000, true)]
+    [TestCase(1280, 720)]
+    [TestCase(3200, 2000)]
     [Category("GPU"), Category("Performance")]
-    public void MeasureHistogramGpuCostByResolutionAndAdapter(int width, int height, bool displayAdapter)
+    public void MeasureHistogramGpuCostByResolution(int width, int height)
     {
         using var window = new Window();
         var clock = new Clock();
         using var renderer = new Renderer(window.Handle, width, height, 97, 160,
-            initialScene: "Histogram", timeProvider: clock, preferDisplayAdapter: displayAdapter);
+            initialScene: "Histogram", timeProvider: clock);
         var samples = Enumerable.Range(0, 97 * 8).Select(i => (i % 17 + 1) / 32.0).ToArray();
         long next = 0;
         for (; next < 320; next++) Post();
@@ -209,7 +276,7 @@ public class DisplayTimingTests
         renderer.Audio.Profile = profile;
         profile.Describe("Adapter", renderer.AdapterDescription);
         profile.Describe("Resolution", $"{width}x{height}");
-        profile.Describe("Path", displayAdapter ? "display adapter" : "high performance adapter");
+        profile.Describe("Path", "Global Arc default; normal hardware fallback when Arc is absent");
         profile.Describe("Scope", "GPU rendering only; excludes live compositor and cross-adapter presentation");
         profile.Start();
         for (int frame = 16; frame < 112; frame++)
@@ -224,7 +291,7 @@ public class DisplayTimingTests
                 TestContext.Out.WriteLine(profile.Save(Path.Combine(dir.FullName, "artifacts", "fullscreen-histogram")));
                 break;
             }
-        TestContext.Out.WriteLine($"{width}x{height}, {renderer.AdapterDescription}, display={displayAdapter}");
+        TestContext.Out.WriteLine($"{width}x{height}, {renderer.AdapterDescription}");
         foreach (string stage in new[] { "gpu.scene_ms", "gpu.output_ms", "gpu.frame_ms", "render.draw_cpu_ms" })
         {
             var stat = profile.Recent(stage);

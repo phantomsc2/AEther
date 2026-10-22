@@ -8,7 +8,7 @@ public sealed class AudioHistory
 {
     const double Retention = .05, HandoffSeconds = .1;
     sealed record Row(long Index, long Capture, long Completed, double Start, double End,
-        double Arrival, float[] Samples, float[] Residual, long Generation, bool Live, AudioStreamClock? Clock);
+        double Arrival, float[] Samples, float[] Residual, float[] Momentary, long Generation, bool Live, AudioStreamClock? Clock);
     readonly Channel<Row> pending, offline;
     readonly Queue<Row> scheduled = new(), recent = new();
     readonly TimeProvider timeProvider;
@@ -66,6 +66,7 @@ public sealed class AudioHistory
     /// <summary>Newest analysis block consumed this display frame; zero when no new block became due.</summary>
     internal float[][] BlockSpectrum { get; }
     internal float[][] BlockResidualSpectrum { get; }
+    internal float[][] BlockMomentaryResidual { get; }
     /// <summary>Residual RMS averaged over the same rows as Spectrum.</summary>
     public float[][] ResidualSpectrum { get; }
     public Vector3 Components { get; private set; }
@@ -99,6 +100,8 @@ public sealed class AudioHistory
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
         BlockSpectrum = [new float[4 * bands], new float[4 * bands]];
+        // RGBA row for upload into the existing spectrum textures.
+        BlockMomentaryResidual = [new float[4 * bands], new float[4 * bands]];
         BlockResidualSpectrum = [new float[bands], new float[bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
         InvalidateHistory();
@@ -127,6 +130,9 @@ public sealed class AudioHistory
             throw new ArgumentException("A timed row must have a positive source interval.");
         if (!input.ResidualRms.IsEmpty && input.ResidualRms.Length != Bands * channelCount)
             throw new ArgumentException("Residual dimensions do not match the renderer.");
+        if (!input.MomentaryResidual.IsEmpty && input.MomentaryResidual.Length != Bands * channelCount)
+            throw new ArgumentException("Momentary residual dimensions do not match the renderer.");
+        var momentary = new float[Bands * 2];
         var residual = new float[Bands * 2];
         var owned = new float[Bands * 8];
         for (var c = 0; c < 2; c++)
@@ -138,6 +144,12 @@ public sealed class AudioHistory
                     double value = input.ResidualRms.Span[channel * Bands + k];
                     residual[c * Bands + k] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
                 }
+            if (!input.MomentaryResidual.IsEmpty)
+                for (int k = 0; k < Bands; k++)
+                {
+                    double value = input.MomentaryResidual.Span[channel * Bands + k];
+                    momentary[c * Bands + k] = double.IsFinite(value) ? (float)Math.Clamp(value, -float.MaxValue, float.MaxValue) : 0;
+                }
             var src = input.GetChannel(channel).Span;
             for (var i = 0; i < src.Length; i++)
                 owned[c * Bands * 4 + i] = double.IsFinite(src[i]) ? (float)Math.Clamp(src[i], 0, float.MaxValue) : 0;
@@ -145,13 +157,14 @@ public sealed class AudioHistory
         var row = new Row(input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp,
             timed ? AudioClock.Seconds(input.SampleStartTimestamp!.Value) : input.AnalysisRow / rate,
             timed ? AudioClock.Seconds(input.SampleEndTimestamp!.Value) : (input.AnalysisRow + 1) / rate,
-            HostNow, owned, residual, input.DiscontinuityGeneration, timed, input.StreamClock);
+            HostNow, owned, residual, momentary, input.DiscontinuityGeneration, timed, input.StreamClock);
         (timed ? pending : offline).Writer.TryWrite(row);
     }
 
     public void Advance(double dt, long? presentationTimestamp = null)
     {
         foreach (var channel in BlockSpectrum) Array.Clear(channel);
+        foreach (var channel in BlockMomentaryResidual) Array.Clear(channel);
         foreach (var channel in BlockResidualSpectrum) Array.Clear(channel);
         long hostTicks = AudioClock.Now(timeProvider);
         double host = AudioClock.Seconds(hostTicks);
@@ -274,6 +287,8 @@ public sealed class AudioHistory
             {
                 row.Samples.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockSpectrum[channel]);
                 row.Residual.AsSpan(channel * Bands, Bands).CopyTo(BlockResidualSpectrum[channel]);
+                for (int k = 0; k < Bands; k++)
+                    BlockMomentaryResidual[channel][k * 4] = row.Momentary[channel * Bands + k];
             }
         LatestCaptureTimestamp = row.Capture;
         LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;

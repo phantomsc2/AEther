@@ -21,7 +21,7 @@ public sealed class MainWindow : Window
     Session? session;
     RenderWorker? renderWorker;
     FileSystemWatcher? watcher;
-    bool loaded, closing, shutdownComplete, fullscreen, visible = true, rendererChangeQueued;
+    bool loaded, closing, shutdownComplete, fullscreen, visible = true;
     RectInt32 windowBounds;
 
     public MainWindow(Func<SampleSource>? createSource = null, string? shaderDirectory = null)
@@ -39,7 +39,6 @@ public sealed class MainWindow : Window
         {
             Title = $"AEther - {shaders.SelectedScene}";
             settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [], shaders.SelectedScene);
-            QueueRendererChange();
         };
         settings.SettingsChanged += async (_, _) => await RestartAsync();
         settings.ShaderWindowRequested += (_, _) => shaders.Toggle();
@@ -60,7 +59,7 @@ public sealed class MainWindow : Window
         ToolWindow.AddShortcut(root, VirtualKey.F5, () => _ = RestartAsync());
         ToolWindow.AddShortcut(root, VirtualKey.Escape, RequestClose);
         ToolWindow.AddShortcut(root, VirtualKey.R, () => { if (session != null) { session.Renderer.CombinedLevel ^= true; shaders.RefreshParameters(); } });
-        ToolWindow.AddShortcut(root, VirtualKey.I, () => { if (session != null) { session.Renderer.Intensity ^= true; shaders.RefreshParameters(); } });
+        ToolWindow.AddShortcut(root, VirtualKey.I, () => { if (session != null) { session.Renderer.ShowSum ^= true; shaders.RefreshParameters(); } });
         ToolWindow.AddShortcut(root, (VirtualKey)219, () => ChangeSlice(-.05f));
         ToolWindow.AddShortcut(root, (VirtualKey)221, () => ChangeSlice(.05f));
         canvas.Loaded += async (_, _) =>
@@ -96,7 +95,7 @@ public sealed class MainWindow : Window
         timingTimer.Tick += (_, _) => { if (!closing && settings.IsVisible) settings.SetTiming(session); };
         timingTimer.Start();
         VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
-        AppWindow.Changed += (_, _) => { UpdateRendering(); QueueRendererChange(); };
+        AppWindow.Changed += (_, _) => UpdateRendering();
         AppWindow.Closing += OnClosing;
     }
 
@@ -163,7 +162,7 @@ public sealed class MainWindow : Window
                 watcher.Renamed += ShaderChanged;
                 watcher.Deleted += ShaderChanged;
                 watcher.EnableRaisingEvents = true;
-                settings.SetStatus("Running. Space: settings · F6: shaders · F11: fullscreen\nF5: restart · R: level · I: intensity · [ / ]: slice");
+                settings.SetStatus("Running. Space: settings · F6: shaders · F11: fullscreen\nF5: restart · R: level · I: sum · [ / ]: slice");
                 StartRenderWorker(next);
                 UpdateRendering();
             }
@@ -213,34 +212,6 @@ public sealed class MainWindow : Window
             error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)),
             waitForTick: compositorPacing ? CompositorClock.Wait : null,
             waited: milliseconds => current.Analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
-    }
-
-    void QueueRendererChange()
-    {
-        if (closing || session == null || rendererChangeQueued) return;
-        var handle = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        if (!session.NeedsRendererChange(shaders.SelectedScene, handle)) return;
-        rendererChangeQueued = true;
-        DispatcherQueue.TryEnqueue(async () =>
-        {
-            await sessionGate.WaitAsync();
-            try
-            {
-                var current = session;
-                if (closing || current == null || !current.NeedsRendererChange(shaders.SelectedScene, handle)) return;
-                renderWorker?.Dispose(); renderWorker = null;
-                shaders.Attach(null);
-                var size = CanvasSize;
-                current.RecreateRenderer(WinRT.Interop.WindowNative.GetWindowHandle(this), size.Width, size.Height,
-                    chain => SwapChainHost.Attach(canvas, chain), shaders.SelectedScene);
-                current.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
-                shaders.Attach(current.Renderer);
-                StartRenderWorker(current);
-                UpdateRendering();
-            }
-            catch (Exception error) { RenderFailed(error); }
-            finally { rendererChangeQueued = false; sessionGate.Release(); }
-        });
     }
 
     string? pendingShaderPath;

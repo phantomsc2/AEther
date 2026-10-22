@@ -11,9 +11,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
 {
     readonly SampleSource source;
     public Analyzer Analyzer { get; }
-    public Renderer Renderer { get; private set; }
-    readonly AnalyzerOptions options;
-    readonly double analysisRate;
+    public Renderer Renderer { get; }
     Task? stopTask;
     int stopping;
     public event EventHandler<Exception?>? CaptureStopped;
@@ -22,12 +20,12 @@ public sealed class Session : IDisposable, IAsyncDisposable
         string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null, string? initialScene = null)
     {
         this.source = source;
-        this.options = options;
         Analyzer = new(source.Format, options);
         try
         {
-            analysisRate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
-            Renderer = CreateRenderer(handle, width, height, shaderDirectory, attachSwapChain, initialScene);
+            double analysisRate = source.Format.SampleRate / (double)(source.Format.SampleRate / options.TimeResolution);
+            Renderer = new(handle, width, height, options.Domain.Length, analysisRate, options.HistorySeconds, shaderDirectory,
+                attachSwapChain: attachSwapChain, initialScene: initialScene);
             Renderer.Audio.Profile = Analyzer.Profile;
         }
         catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
@@ -35,29 +33,6 @@ public sealed class Session : IDisposable, IAsyncDisposable
         else source.DataAvailable += OnAudio;
         source.Stopped += OnStopped;
         Analyzer.SamplesAnalyzed += OnAnalysis;
-    }
-
-    // These diagnostic scenes cost less to render on the scanout GPU than to
-    // transfer a native-resolution FP16 frame from a separate performance GPU.
-    static bool PreferDisplay(string? scene) => scene is "Spectrum" or "Histogram";
-    public bool NeedsRendererChange(string scene, IntPtr window) => Renderer.PreferDisplayAdapter != PreferDisplay(scene)
-        || (PreferDisplay(scene) && !Renderer.IsDisplayMonitorCurrent(window));
-
-    Renderer CreateRenderer(IntPtr handle, int width, int height, string? shaderDirectory,
-        Action<IDXGISwapChain1?>? attachSwapChain, string? scene, AudioHistory? audio = null) =>
-        new(handle, width, height, options.Domain.Length, analysisRate, options.HistorySeconds, shaderDirectory,
-            attachSwapChain: attachSwapChain, initialScene: scene, preferDisplayAdapter: PreferDisplay(scene), audioHistory: audio);
-
-    // The host stops the render worker first and calls this on the composition UI thread.
-    // Analysis continues posting to the same history while graphics resources are replaced.
-    public void RecreateRenderer(IntPtr handle, int width, int height,
-        Action<IDXGISwapChain1?> attachSwapChain, string scene)
-    {
-        var audio = Renderer.Audio;
-        var directory = Renderer.ShaderDirectory;
-        Renderer.Dispose();
-        Renderer = CreateRenderer(handle, width, height, directory, attachSwapChain, scene, audio);
-        Renderer.Audio.Profile = Analyzer.Profile;
     }
 
     void OnAudio(object? sender, ReadOnlySpan<byte> data) => Analyzer.PostSampleSpan(data,

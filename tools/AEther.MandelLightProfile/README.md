@@ -1,5 +1,8 @@
 # MandelLight GPU profile
 
+All modes use the renderer's global Intel Arc default. There are no adapter selection
+flags. Machines without Arc use normal hardware; a present but unusable Arc is an error.
+
 For a one-source comparison of point, cone and filament ring lights at 1280x720:
 
 ```powershell

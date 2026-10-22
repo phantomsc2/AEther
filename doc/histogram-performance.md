@@ -1,6 +1,7 @@
 # Histogram at native resolution
 
-Measured with `DisplayTimingTests.MeasureHistogramGpuCostByResolutionAndAdapter`:
+Historical adapter comparison (before the global Arc policy), measured with the
+former `DisplayTimingTests.MeasureHistogramGpuCostByResolutionAndAdapter`:
 16 warmup frames, then 96 measured frames, 97 audio bands, 160 analysis rows/second,
 two seconds of history and FP16 scRGB output. GPU timestamps include the scene and
 output conversion. Small histogram readbacks outside the timings bound queued work.
@@ -22,8 +23,10 @@ display through another adapter. A 3200x2000 FP16 RGBA surface is 51.2 MB; at 16
 per second its uncompressed payload alone is 8.45 GB/s. This is a transfer-size estimate,
 not a measured transfer bandwidth.
 
-The WinUI session now chooses the display GPU for both Histogram and Spectrum. This
-avoids that adapter crossing while keeping native-resolution rendering, discrete audio
-events, and the original audio clock. Heavy scenes continue selecting the performance GPU.
-Adapter-change tests preserve the existing audio history across graphics recreation.
-Fullscreen presentation smoothness must still be evaluated in the running application.
+All scenes and tools now use the global Arc default, with normal hardware fallback only
+when Arc is absent. Scene changes and monitor moves retain the same renderer and history.
+The current `DisplayTimingTests.MeasureHistogramGpuCostByResolution` benchmark runs that
+single policy at 720p and 3200x2000. Histogram pixels integrate fractional coverage of
+actual block intervals, conserving event area while avoiding whole-pixel holds/jumps.
+The live presentation profiler records monitor identity and display mode separately from
+render resolution; its timestamps describe submissions, not measured physical scanout.

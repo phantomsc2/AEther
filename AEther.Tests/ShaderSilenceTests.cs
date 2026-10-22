@@ -18,35 +18,50 @@ public class ShaderSilenceTests
     // original generous upper bound, but dark scenes need not render it all.
     const int MinimumDecayFrames = 1200, DecayFrames = 10000, FinalFrames = 60;
 
-    [TestCase(false, false), TestCase(true, false), TestCase(false, true), TestCase(true, true), Category("GPU")]
-    public void SpectrumResidualDrawsGreyOutlineAtLinearAmplitude(bool combined, bool intensity)
+    [Test, Category("GPU")]
+    public void SpectrumLayerVisibilityAndRawFallback([Range(0, 15)] int layers, [Values(false, true)] bool showSum)
     {
         using var shaders = new SceneShaders("Spectrum");
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, preferDisplayAdapter: true);
+            shaderDirectory: shaders.Path, timeProvider: clock);
         renderer.SelectScene("Spectrum");
         var parameters = renderer.ActiveShader!.Parameters!;
-        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), combined);
-        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Intensity"), intensity);
-        var residual = Enumerable.Repeat(.5, Bands).Concat(Enumerable.Repeat(.25, Bands)).ToArray();
-        renderer.PostAudio(new(new double[Bands * 8], Bands * 4, DateTime.UnixEpoch)
-            { ResidualRms = residual }, 2);
+        string[] names = ["ShowS", "ShowT", "ShowB", "ShowR"];
+        for (int layer = 0; layer < names.Length; layer++)
+            parameters.SetBoolean(parameters.Items.Single(p => p.Name == names[layer]), (layers & (1 << layer)) != 0);
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "ShowSum"), showSum);
+        var samples = new double[Bands * 8];
+        for (int i = 0; i < samples.Length; i += 4)
+        {
+            samples[i] = .25; samples[i + 1] = .5; samples[i + 2] = .75; samples[i + 3] = .875;
+        }
+        // Different stereo magnitudes and a negative residual exercise packing and absolute value.
+        var residual = Enumerable.Repeat(-.625, Bands).Concat(Enumerable.Repeat(.375, Bands)).ToArray();
+        renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { MomentaryResidual = residual }, 2);
         clock.Advance(); renderer.Render(false);
         var pixels = renderer.ReadPixels(false);
-        // Left boundary is x=24, right boundary x=60. Only their antialiased outlines may light up.
+        double[] amplitude = [.25, .5, .75];
         for (int y = 0; y < Height; y++)
             for (int x = 0; x < Width; x++)
-            {
-                int i = (y * Width + x) * 4;
-                Assert.That(pixels[i], Is.EqualTo(pixels[i + 1]));
-                Assert.That(pixels[i], Is.EqualTo(pixels[i + 2]));
-                if (x is 23 or 24 or 59 or 60)
-                    Assert.That(pixels[i], Is.GreaterThan(20), $"Expected grey outline at {x},{y}.");
-                else
-                    Assert.That(pixels[i], Is.Zero, $"Unexpected fill at {x},{y}.");
-            }
+                for (int c = 0; c < 3; c++)
+                {
+                    double position = 2 * Math.Abs((x + .5) / Width - .5);
+                    double value = layers == 0 ? .875 : (layers & (1 << c)) != 0 ? amplitude[c] : 0;
+                    if (showSum && layers != 0)
+                    {
+                        value = 0;
+                        for (int layer = 0; layer < 3; layer++)
+                            if ((layers & (1 << layer)) != 0) value += amplitude[layer];
+                        if ((layers & 8) != 0) value += x < Width / 2 ? .625 : .375;
+                    }
+                    value = position < value ? 1 : 0;
+                    if (!showSum && (layers & 8) != 0 && position < (x < Width / 2 ? .625 : .375))
+                        value = Math.Max(value, .25);
+                    Assert.That(pixels[(y * Width + x) * 4 + c],
+                        Is.EqualTo((int)Math.Round(value * 255)).Within(1), $"layers {layers}, pixel {x},{y}, channel {c}");
+                }
     }
 
     static string ShaderDirectory
@@ -84,7 +99,7 @@ public class ShaderSilenceTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, preferDisplayAdapter: scene == "Spectrum");
+            shaderDirectory: shaders.Path, timeProvider: clock);
         renderer.SelectScene(scene);
         if (IsFluidScene(scene))
         {
@@ -154,7 +169,11 @@ public class ShaderSilenceTests
                     samples[i + 3] = gain * .9;
                 }
             renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                { AnalysisRow = row++, ResidualRms = Enumerable.Repeat(music ? gain * .4 : 0, Bands * 2).ToArray() }, 2);
+                {
+                    AnalysisRow = row++,
+                    ResidualRms = Enumerable.Repeat(music ? gain * .4 : 0, Bands * 2).ToArray(),
+                    MomentaryResidual = Enumerable.Repeat(music ? -gain * .4 : 0, Bands * 2).ToArray(),
+                }, 2);
         }
         void AssertBlack(string stage)
         {
@@ -181,7 +200,7 @@ public class ShaderSilenceTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, preferDisplayAdapter: scene == "Spectrum");
+            shaderDirectory: shaders.Path, timeProvider: clock);
         renderer.SelectScene(scene);
         var input = new double[block]; var magnitudes = new double[Bands * 2];
         var output = new double[Bands * 8];
@@ -297,7 +316,7 @@ public class ShaderSilenceTests
         Assert.That(check.CurlError, Is.LessThan(1e-4));
     }
 
-    [TestCase(30), TestCase(60), TestCase(120), Category("GPU")]
+    [TestCase(30), TestCase(60), TestCase(120), TestCase(165), Category("GPU")]
     public void MandelFluidV4RegularClockDoesNotBatchSimulationSteps(int rate)
     {
         using var shaders = new SceneShaders("MandelFluidv4");
@@ -313,6 +332,7 @@ public class ShaderSilenceTests
             clock.Frame = frame; renderer.Render(false);
             int expected = frame * 60 / rate - (frame - 1) * 60 / rate + (frame == 1 ? 2 : 0);
             Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(expected), $"Frame {frame}, {rate} Hz");
+            Assert.That(renderer.Fluid.LastMaterialSteps, Is.EqualTo(1), "Pigment must advance on every display frame.");
         }
         renderer.ReadPixels(false);
         renderer.PollGpuTimings();
@@ -320,11 +340,82 @@ public class ShaderSilenceTests
         Assert.That(renderer.InvalidGpuTimingFrames, Is.Zero);
     }
 
+    [TestCase(60), TestCase(1000), Category("GPU")]
+    public void MandelFluidV4EmitsAndFlowsWithNormalPresentationLatency(int analysisRate)
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new FluidClock(1000) { Frame = 1000 };
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, analysisRate,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
+        long row = analysisRate - 1;
+        // Timestamped live rows end 8 ms behind presentation, like loopback audio
+        // rendered for the next compositor tick. Keep that delay at both analysis rates.
+        for (int frame = 1; frame <= 12; frame++)
+        {
+            clock.Frame = 1000 + frame * 17;
+            double newestEnd = (clock.Frame - 8) / 1000.0;
+            while ((row + 1.0) / analysisRate <= newestEnd)
+            {
+                renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch)
+                {
+                    AnalysisRow = row,
+                    SampleStartTimestamp = AudioClock.Frames(row, analysisRate),
+                    SampleEndTimestamp = AudioClock.Frames(row + 1, analysisRate),
+                }, 1);
+                row++;
+            }
+            renderer.Render(false);
+        }
+        Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True,
+            "Ordinary capture/display delay must not disable the inlet velocity.");
+        Assert.That(renderer.Fluid.ReadDye().Where((_, i) => i % 4 == 3).Max(), Is.GreaterThan(.01),
+            "Live S must emit material even when analysis rows are shorter than presentation latency.");
+        Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Max(), Is.GreaterThan(10));
+
+        // Once the last row is genuinely stale, fresh material and inlet forcing stop.
+        clock.Frame += 100;
+        renderer.Fluid.Clear();
+        renderer.Render(false);
+        Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero);
+        Assert.That(renderer.Fluid.ReadDye(), Is.All.Zero);
+    }
+
     sealed class FluidClock(int rate) : TimeProvider
     {
         public long Frame;
         public override long TimestampFrequency => rate;
         public override long GetTimestamp() => Frame;
+    }
+
+    [TestCase(120), TestCase(165), Category("GPU")]
+    public void MandelFluidV4FastMaterialMovesBetweenPressureUpdates(int rate)
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new FluidClock(rate);
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 1000,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        clock.Frame = 1; renderer.Render(false);
+        renderer.Fluid.SeedFilamentsForCheck(speed: 10);
+        var previous = renderer.Fluid.ReadDye();
+        bool movedWithoutPressure = false;
+        for (int frame = 2; frame <= 14; frame++)
+        {
+            clock.Frame = frame; renderer.Render(false);
+            Assert.That(renderer.Fluid.LastMaterialSteps, Is.EqualTo(1));
+            var current = renderer.Fluid.ReadDye();
+            Assert.That(current.All(v => float.IsFinite(v) && v >= 0), Is.True);
+            if (renderer.Fluid.LastSteps == 0)
+            {
+                Assert.That(current.Zip(previous, (a, b) => Math.Abs(a - b)).Max(), Is.GreaterThan(.001),
+                    "High-speed transport must not freeze on frames without a pressure solve.");
+                movedWithoutPressure = true;
+            }
+            previous = current;
+        }
+        Assert.That(movedWithoutPressure, Is.True);
     }
 
     [Test, Category("GPU")]

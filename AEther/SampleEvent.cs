@@ -12,6 +12,8 @@ namespace AEther
         /// <summary>Optional channel-major residual RMS in linear amplitude units, one value per band.
         /// Like Samples, pooled analyzer storage is valid only during the event callback.</summary>
         public ReadOnlyMemory<double> ResidualRms { get; init; }
+        /// <summary>Signed current residual A - B - S - T; callback lifetime matches Samples.</summary>
+        public ReadOnlyMemory<double> MomentaryResidual { get; init; }
         public long SampleIndex { get; init; }
         /// <summary>Device-frame/QPC correlation shared by all rows in this stream epoch.</summary>
         public AudioStreamClock? StreamClock { get; init; }

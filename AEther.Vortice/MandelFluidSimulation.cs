@@ -102,6 +102,7 @@ internal sealed class MandelFluidSimulation : IDisposable
     internal Action<string, bool>? PassMarker { get; set; }
     internal Action<string, bool>? DrawMarker { get; set; }
     internal int LastSteps { get; private set; }
+    internal int LastMaterialSteps { get; private set; }
     internal int LastDraws { get; private set; }
 
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
@@ -168,10 +169,10 @@ internal sealed class MandelFluidSimulation : IDisposable
     public void Advance(double dt, AudioHistory audio, Programs shaders, ShaderParameters? sceneParameters = null,
         IReadOnlyDictionary<string, ID3D11Buffer>? buffers = null,
         IReadOnlyDictionary<string, ID3D11ShaderResourceView>? textures = null,
-        IReadOnlyDictionary<string, ID3D11SamplerState>? samplers = null)
+        IReadOnlyDictionary<string, ID3D11SamplerState>? samplers = null, bool displayMaterial = true)
     {
         programs = shaders;
-        LastSteps = LastDraws = 0;
+        LastSteps = LastDraws = LastMaterialSteps = 0;
         EnsureMaterial();
         EnsureAge();
         this.sceneParameters = sceneParameters;
@@ -203,8 +204,21 @@ internal sealed class MandelFluidSimulation : IDisposable
         {
             accumulator -= TimeStep;
             parameters.B.Y = (float)(Math.Max(0, accumulator) / audio.Seconds) * audio.TimeScale;
-            Step();
-            parameters.C.X = 0;
+            if (programs.RingFluid && displayMaterial) StepVelocity();
+            else
+            {
+                Step();
+                parameters.C.X = 0;
+            }
+        }
+        if (programs.RingFluid && displayMaterial && dt > 0)
+        {
+            // Pressure/velocity keeps its bounded 60 Hz budget. Transport pigment
+            // every displayed frame using that velocity, so 165 Hz lighting and
+            // visible motion do not repeat the same 60 Hz material snapshots.
+            parameters.B.X = (float)Math.Clamp(dt, 0, .05);
+            parameters.B.Y = 0;
+            StepMaterial();
         }
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
@@ -347,7 +361,13 @@ internal sealed class MandelFluidSimulation : IDisposable
         EnsureMaterial();
         EnsureAge();
         StepVelocity();
+        StepMaterial();
+    }
+    void StepMaterial()
+    {
+        LastMaterialSteps++;
         PassMarker?.Invoke("Fluid material", true);
+        Grid(dye);
         if (programs.CorrectedAdvection)
         {
             predictedDye ??= Create(Width, Height, dye.Texture.Description.Format);
@@ -420,11 +440,13 @@ internal sealed class MandelFluidSimulation : IDisposable
     }
 
     internal float[] ReadVelocity() => ReadFloatSurface(velocity, 2);
-    internal unsafe void SeedFilamentsForCheck()
+    internal unsafe void SeedFilamentsForCheck(float speed = 0)
     {
         Clear();
         var pigment = new float[Width * Height * 4];
         var material = new float[Width * Height * 2];
+        var flow = new float[Width * Height * 2];
+        for (int i = 0; i < flow.Length; i += 2) flow[i] = speed;
         for (int y = Height / 4; y < 3 * Height / 4; y++)
         for (int x = Width / 4; x < 3 * Width / 4; x += 4)
         {
@@ -437,6 +459,7 @@ internal sealed class MandelFluidSimulation : IDisposable
         }
         fixed (float* p = pigment) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 16), 0);
         fixed (float* p = material) context.UpdateSubresource(age!.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+        fixed (float* p = flow) context.UpdateSubresource(velocity.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
     }
     /// <summary>GPU transport fixture: a small dyed patch near the right edge in a uniform current.</summary>
     internal unsafe void SeedRecirculationForCheck(float densityScale = 1, float speed = .8f)

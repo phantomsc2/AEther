@@ -198,19 +198,38 @@ namespace AEther
                             if (packetPosition < expectedPosition.Value) streamClock = null;
                         }
                         positionOffset = packetPosition - input.ByteIndex;
+                        // Loopback capture can stop during silence without marking a discontinuity.
+                        // If device frames resume consecutively after a real pause, the old frame/QPC
+                        // mapping is stale forever. Require both an arrival gap and a large clock
+                        // mismatch so ordinary timestamp jitter and device drift keep their epoch.
+                        double pauseThreshold = Math.Max(.05, 2.0 * input.SampleCount / Format.Size / Format.SampleRate);
+                        bool capturePaused = lastPacketArrival.HasValue
+                            && AudioClock.Seconds(packet.Arrival - lastPacketArrival.Value) > pauseThreshold;
+                        if (capturePaused && device.HasValue && sourceStart.HasValue && streamClock is { } previousClock)
+                        {
+                            long predicted = previousClock.Timestamp
+                                + AudioClock.Frames(device.Value - previousClock.FramePosition, Format.SampleRate);
+                            if (Math.Abs(AudioClock.Seconds(sourceStart.Value - predicted)) > pauseThreshold)
+                            {
+                                streamClock = null;
+                                gap = true;
+                            }
+                        }
                         if (device.HasValue && sourceStart.HasValue && streamClock == null)
                             streamClock = new(device.Value, sourceStart.Value, Format.SampleRate);
                         if (timing.HasValue && !sourceStart.HasValue)
                         {
                             // Untimestamped capture can stop emitting packets during a pause. Extrapolating
                             // forever would leave every resumed packet permanently beyond the age budget.
-                            bool paused = byteGap == 0 && lastPacketArrival.HasValue
-                                && AudioClock.Seconds(packet.Arrival - lastPacketArrival.Value)
-                                    > Math.Max(.05, 2.0 * input.SampleCount / Format.Size / Format.SampleRate);
+                            bool paused = byteGap == 0 && capturePaused;
                             sourceStart = expectedTime.HasValue && !paused && timing?.Flags.HasFlag(AudioPacketFlags.Discontinuity) != true
                                 ? expectedTime.Value + AudioClock.Frames(Math.Max(0, byteGap) / Format.Size, Format.SampleRate)
                                 : packet.Arrival - AudioClock.Frames(input.SampleCount / Format.Size, Format.SampleRate);
-                            if (paused) gap = true;
+                            if (paused)
+                            {
+                                streamClock = null;
+                                gap = true;
+                            }
                         }
                         // Valid device stamps anchor the source clock. Its rate can differ slightly
                         // from the nominal sample rate, so adjacent packet intervals may overlap.
@@ -309,6 +328,7 @@ namespace AEther
             var spectrum = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var output = RentEvent<double>(AEther.Splitter.OutputStride * Domain.Length, Format.ChannelCount, time);
             var residual = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
+            var momentary = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var jointEvidence = JointEvidenceAvailable is not null
                 ? RentEvent<JointEvidence>(Domain.Length, Format.ChannelCount, time) : null;
             try
@@ -346,12 +366,18 @@ namespace AEther
                         Splitters[c].ProcessLinear(spectrum.GetChannel(c), output.GetChannel(c));
                         var estimates = Splitters[c].Estimates.Span;
                         var residualChannel = residual.GetChannel(c).Span;
-                        for (var k = 0; k < estimates.Length; k++) residualChannel[k] = estimates[k].ResidualRms;
+                        for (var k = 0; k < estimates.Length; k++)
+                        {
+                            var e = estimates[k];
+                            residualChannel[k] = e.ResidualRms;
+                            momentary.GetChannel(c).Span[k] = e.Amplitude - e.Background - e.Sine - e.Transient;
+                        }
                         if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
                     }
                 }
                 // Publish immediately; render pacing belongs to the renderer.
-                output = output with { ResidualRms = residual.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
+                output = output with { MomentaryResidual = momentary.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
+                    ResidualRms = residual.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
                     SampleIndex = row * BatchSize, AnalysisRow = row,
                     StreamClock = streamClock,
                     CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
@@ -378,6 +404,7 @@ namespace AEther
                 ReturnEvent(samples);
                 ReturnEvent(spectrum);
                 ReturnEvent(residual);
+                ReturnEvent(momentary);
                 ReturnEvent(output);
                 if (jointEvidence is not null) ReturnEvent(jointEvidence);
             }

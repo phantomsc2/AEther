@@ -22,15 +22,16 @@ public sealed partial class Renderer
         uint pitch = (uint)(Audio.Bands * 16);
         bool blocks = SceneName == "Spectrum";
         var spectrum = blocks ? Audio.BlockSpectrum : Audio.Spectrum;
-        var residual = blocks ? Audio.BlockResidualSpectrum : Audio.ResidualSpectrum;
         for (int channel = 0; channel < 2; channel++)
             fixed (float* data = spectrum[channel])
-                context.UpdateSubresource(textures[channel], 0, null, (IntPtr)data, pitch, 0);
+                context.UpdateSubresource(textures[channel], 0, new Box(0, 0, 0, Audio.Bands, 1, 1), (IntPtr)data, pitch, 0);
 
-        for (int channel = 0; channel < 2; channel++)
-            fixed (float* data = residual[channel])
-                context.UpdateSubresource(textures[4], 0, new Box(0, channel, 0, Audio.Bands, channel + 1, 1),
-                    (IntPtr)data, (uint)(Audio.Bands * sizeof(float)), 0);
+
+        if (blocks)
+            for (int channel = 0; channel < 2; channel++)
+                fixed (float* data = Audio.BlockMomentaryResidual[channel])
+                    context.UpdateSubresource(textures[channel], 0, new Box(0, 1, 0, Audio.Bands, 2, 1),
+                        (IntPtr)data, pitch, 0);
 
         Span<AudioHistory.HistoryRange> ranges = stackalloc AudioHistory.HistoryRange[2];
         int count = Audio.GetHistoryUpdates(ranges);

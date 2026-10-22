@@ -62,7 +62,12 @@ interval; missing intervals contribute zero and partial intersections receive fr
 Individual historical rows retain their original values.
 
 The Spectrum scene displays the latest new analysis block consumed in each display frame,
-including its residual outline, without averaging blocks or holding the previous frame.
+including faint solid bars for the absolute momentary residual, without averaging blocks
+or holding the previous frame. S/T/B/R visibility controls fall back to raw amplitude
+when all four layers are disabled.
+ShowSum replaces intensity display with one white bar whose length is the sum of
+the selected layer amplitudes, including the full absolute residual amplitude.
+With no selected layers it continues to show raw amplitude. The I shortcut toggles ShowSum.
 No newly consumed block means black. When multiple blocks arrive before one refresh, Spectrum
 shows the newest eligible block and Histogram retains each at its original position; they
 are never played back across later refreshes to catch up. Blocks older than the existing
@@ -79,15 +84,20 @@ timestamps and an injected `TimeProvider` for synchronization tests.
 WinUI continues pacing its render thread with the compositor heartbeat (`Present(0)`),
 or the DXGI frame-ready signal (`Present(1)`) on older systems. For visible rendering,
 `IDCompositionDevice::GetFrameStatistics().nextEstimatedFrameTime` supplies the estimated
-display timestamp. Both scene time and the histogram cursor use that timestamp, rather
-than CPU wake time. Missing compositor statistics explicitly fall back to host QPC.
+display timestamp and composition rate. The first estimate anchors a continuous
+timeline at that rate; isolated repeated/two-frame estimates cannot freeze and then
+jump the histogram or simulation. Actual missed refreshes still advance elapsed time.
+Refresh changes and pauses longer than 500 ms establish a fresh anchor. Both scene
+time and the histogram cursor use this timeline. Missing compositor statistics fall back to host QPC.
 Offline rendering uses the injected clock or an explicit presentation timestamp.
 The timing panel identifies the active frame clock and reports display-target intervals.
 These are display estimates, not proof that each submitted frame actually reached scanout.
-Spectrum and Histogram select the GPU that owns the window's display, avoiding full-frame
-transfers between adapters on hybrid laptops. Heavy scenes retain the performance GPU.
-Moving a diagnostic window between displays recreates graphics resources while preserving
-the same audio history and stream clock.
+Intel Arc is the global target for all scenes, tests and profiling tools. Selection is
+independent of scene and monitor; an available Arc that cannot initialize is an error.
+Only machines without Arc fall back to normal hardware creation. Scene changes and
+monitor moves do not replace the renderer or restart capture. Monitor queries remain
+for HDR/color management. On the development laptop Arc owns the built-in display,
+avoiding full-frame transfers from the 4070 for every scene.
 
 F9 records CSV stage timings and metadata. The status panel reports source quality, discarded
 audio duration, discontinuities and visual drops. Useful stages are:
@@ -101,6 +111,7 @@ audio duration, discontinuities and visual drops. Useful stages are:
 | `analysis.total_ms` | Batch CPU/wait time including synchronous subscribers |
 | `render.audio_upload_ms` | CPU time submitting current spectrum and dirty history uploads |
 | `render.display_interval_ms` | Difference between compositor display-target timestamps |
+| `render.raw_display_interval_ms` | Unstabilized compositor estimates; exposes repeated/skipped predictions |
 | `render.display_lead_ms` | Estimated next display time minus CPU frame start |
 | `gpu.frame_ms` | Delayed GPU elapsed time across frame commands, excluding Present |
 | `gpu.fluid_ms` | Fluid work including all simulation steps in that frame |
@@ -124,7 +135,7 @@ or higher; low-resolution GPU silence tests are correctness checks, not timing b
 
 `AudioTimingTests` covers nonzero and unaligned driver positions, packet fragmentation,
 QPC steps without frame insertion, invalid-position recovery, missing frames and new epochs.
-`DisplayTimingTests` checks the actual compositor API and uses the RTX 4070 at 1280x720
+`DisplayTimingTests` checks the actual compositor API and uses the global Arc default at 1280x720
 to verify histogram impulse displacement at explicit display times despite irregular CPU
 timing, followed by strict zero checks on every RGB channel across 60 final silent frames.
 The capture probe additionally writes `.positions.csv` timing metadata with driver frame

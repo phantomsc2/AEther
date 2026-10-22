@@ -12,6 +12,9 @@ internal static partial class Program
         string source = Path.GetFullPath(Option("--shader-root", "AEther.Vortice/Shaders"));
         string output = Path.GetFullPath(Option("--output", "artifacts/fluid-v4/current"));
         int count = int.Parse(Option("--frames", "48"), System.Globalization.CultureInfo.InvariantCulture);
+        int rate = int.Parse(Option("--hz", "60"));
+        int width = int.Parse(Option("--width", "1280")), height = int.Parse(Option("--height", "720"));
+        if (width < 1280 || height < 720 || rate < 1 || count < 1) throw new ArgumentOutOfRangeException(nameof(args));
         Directory.CreateDirectory(output);
         string tree = Path.Combine(output, "Shaders");
         Directory.CreateDirectory(Path.Combine(tree, "Scenes"));
@@ -29,9 +32,10 @@ internal static partial class Program
             (Name: "low", Low: true, Periodic: true, Viscosity: 0f) })
         {
             if (Option("--case", "all") is var selected && selected != "all" && selected != item.Name) continue;
-            using var window = new Form { ClientSize = new(1280, 720), ShowInTaskbar = false };
-            var clock = new Clock();
-            using var renderer = new Renderer(window.Handle, 1280, 720, 97, 1000, shaderDirectory: tree, timeProvider: clock);
+            using var window = new Form { ClientSize = new(width, height), ShowInTaskbar = false };
+            var clock = new FluidProfileClock(rate);
+            using var renderer = new Renderer(window.Handle, width, height, 97, 1000, shaderDirectory: tree,
+                timeProvider: clock);
             renderer.SelectScene("MandelFluidv4");
             Set(renderer, "Fluid.LowQuality", item.Low);
             Set(renderer, "Fluid.PeriodicBoundary", item.Periodic);
@@ -41,6 +45,12 @@ internal static partial class Program
                 Set(renderer, "Fluid.VelocityGain", .5f);
                 Set(renderer, "Fluid.Curl", .25f);
             }
+            if (args.Contains("--fast"))
+            {
+                Set(renderer, "Fluid.EmissionVelocity", 1f);
+                Set(renderer, "Fluid.VelocityGain", .75f);
+                Set(renderer, "Fluid.Curl", .75f);
+            }
             var device = Field<ID3D11Device>(renderer, "device");
             var context = Field<ID3D11DeviceContext>(renderer, "context");
             using var timer = new Timestamps(device, context);
@@ -48,7 +58,7 @@ internal static partial class Program
             int frame = 0;
             Dictionary<string, double> Tick()
             {
-                long end = ++frame * 1000L / 60;
+                long end = ++frame * 1000L / rate;
                 while (nextRow < end)
                 {
                     var values = new double[97 * 8];
@@ -83,13 +93,13 @@ internal static partial class Program
             var samples = Enumerable.Range(0, count).Select(_ => Tick()).ToArray();
             var summaries = samples.SelectMany(f => f.Keys).Distinct().ToDictionary(k => k,
                 k => new { Median = Quantile(samples.Select(f => f.GetValueOrDefault(k)), .5), P95 = Quantile(samples.Select(f => f.GetValueOrDefault(k)), .95) });
-            Console.WriteLine($"{item.Name}, {renderer.AdapterDescription}, 1280x720, {renderer.FluidWork}: " +
+            Console.WriteLine($"{item.Name}, {renderer.AdapterDescription}, {width}x{height}, {rate} Hz, {renderer.FluidWork}: " +
                 string.Join(", ", summaries.Select(p => $"{p.Key}={p.Value.Median:F3}/{p.Value.P95:F3}")));
             var pixels = renderer.ReadPixels(false);
             File.WriteAllBytes(Path.Combine(output, item.Name + ".rgba"), pixels);
-            Save(pixels, 1280, 720, Path.Combine(output, item.Name + ".png"));
+            Save(pixels, width, height, Path.Combine(output, item.Name + ".png"));
             var projection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
-            results.Add(new { item.Name, Adapter = renderer.AdapterDescription, Width = 1280, Height = 720,
+            results.Add(new { item.Name, Adapter = renderer.AdapterDescription, Width = width, Height = height, Rate = rate,
                 Frames = count, Startup = startup, Timing = summaries, Samples = samples,
                 ProjectionBefore = projection.Before, ProjectionAfter = projection.After, projection.CurlError });
             File.WriteAllText(Path.Combine(output, "profile.json"), JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true }));
@@ -98,5 +108,13 @@ internal static partial class Program
         {
             var sorted = values.Order().ToArray(); return sorted[(int)Math.Ceiling(q * (sorted.Length - 1))];
         }
+    }
+
+    sealed class FluidProfileClock(int rate) : TimeProvider
+    {
+        long frame;
+        public override long TimestampFrequency => rate;
+        public override long GetTimestamp() => frame;
+        public void Advance() => frame++;
     }
 }

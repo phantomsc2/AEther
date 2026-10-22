@@ -289,6 +289,45 @@ public class AudioTimingTests
         Assert.That(rows[1].AnalysisRow, Is.EqualTo(1), "Elapsed host time must not invent device frames.");
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task LongCapturePauseReanchorsConsecutiveFramesAndRestoresSpectrum(bool timestampError)
+    {
+        var clock = new Clock();
+        var analyzer = new Analyzer(Format, Options(), clock);
+        var history = new AudioHistory(analyzer.Domain.Length, 100, timeProvider: clock);
+        var rows = Collect(analyzer);
+        analyzer.SamplesAnalyzed += (_, row) => history.Post(row, 1);
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        analyzer.SamplesAnalyzed += (_, _) => first.TrySetResult();
+        analyzer.Start();
+        analyzer.PostSampleSpan(Audio(80), new(Ms(990), 0, AudioTimestampQuality.Device));
+        await first.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        history.Advance(0);
+        Assert.That(history.BlockSpectrum[0].Max(), Is.GreaterThan(0));
+
+        clock.Milliseconds = 4000;
+        history.Advance(3);
+        Assert.That(history.BlockSpectrum[0], Is.All.Zero);
+        analyzer.PostSampleSpan(Audio(80), timestampError
+            ? new(0, 99999, AudioTimestampQuality.Device, AudioPacketFlags.TimestampError)
+            : new(Ms(3990), 80, AudioTimestampQuality.Device));
+        // Keep the following packet fresh too: recovery must survive subsequent packets.
+        analyzer.PostSampleSpan(Audio(80), new(Ms(4000), 160, AudioTimestampQuality.Device));
+        analyzer.Stop();
+        await analyzer.Completion;
+        clock.Milliseconds = 4010;
+        history.Advance(.01);
+
+        Assert.That(rows.Select(r => r.AnalysisRow), Is.EqualTo(new long[] { 0, 1, 2 }));
+        Assert.That(rows[1].SampleStartTimestamp, Is.EqualTo(Ms(3990)));
+        Assert.That(rows[2].SampleEndTimestamp, Is.EqualTo(Ms(4010)));
+        Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
+        Assert.That(history.BlockSpectrum[0].Max(), Is.GreaterThan(0));
+        Assert.That(history.Spectrum[0].Max(), Is.GreaterThan(0));
+        Assert.That(history.NewestAge, Is.Zero.Within(1e-6));
+    }
+
     [Test]
     public void ResetMatchesFreshProcessor([Values] DFTWindow window, [Values] bool simd)
     {

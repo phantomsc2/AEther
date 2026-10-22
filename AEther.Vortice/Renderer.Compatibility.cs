@@ -35,7 +35,7 @@ public sealed partial class Renderer
         if (parameter != null) values!.SetBoolean(parameter, value);
     }
     public bool CombinedLevel { get => ReadBoolean("CombinedLevel"); set => WriteBoolean("CombinedLevel", value); }
-    public bool Intensity { get => ReadBoolean("Intensity"); set => WriteBoolean("Intensity", value); }
+    public bool ShowSum { get => ReadBoolean("ShowSum"); set => WriteBoolean("ShowSum", value); }
     public float SliceDepth { get => ReadValue("Geometry.SliceDepth", .5f) * 4 - 2; set => WriteValue("Geometry.SliceDepth", (value + 2) / 4); }
     public bool MandelboxAntialiasing { get => ReadBoolean("Quality.Antialiasing"); set => WriteBoolean("Quality.Antialiasing", value); }
     public int MandelboxIterations { get => 1 + (int)Math.Round(ReadValue("Quality.MaximumIterations") * 29); set => WriteValue("Quality.MaximumIterations", (value - 1) / 29f); }

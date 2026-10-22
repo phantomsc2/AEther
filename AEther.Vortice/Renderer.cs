@@ -40,8 +40,8 @@ public sealed partial class Renderer : IDisposable
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
     ID3D11Buffer frameBuffer = null!;
-    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[5];
-    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[5];
+    readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
+    readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
     readonly string shaderDirectory;
     int width, height;
     double previousTime;
@@ -52,6 +52,9 @@ public sealed partial class Renderer : IDisposable
     long previousFrame;
     CompositionClock? displayClock;
     public long? LastPresentationTimestamp { get; private set; }
+    internal bool RawPresentationClock { get; set; }
+    // Reference cadence for repeatable before/after developer profiling only.
+    internal bool FixedFluidMaterialCadence { get; set; }
     public AudioHistory Audio { get; }
     public string SceneName { get; private set; } = "Mandelbox";
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
@@ -74,10 +77,8 @@ public sealed partial class Renderer : IDisposable
     /// <summary>DXGI pacing handle for hosts without compositor-clock pacing. Owned by the renderer.</summary>
     public WaitHandle FrameReady => output.FrameReady;
     public string AdapterDescription { get; } = string.Empty;
-    public bool PreferDisplayAdapter { get; }
-    readonly IntPtr displayMonitor;
-    public bool IsDisplayMonitorCurrent(IntPtr window) => !PreferDisplayAdapter || MonitorFromWindow(window, 2) == displayMonitor;
-    public string FluidWork => fluid == null || ActiveShader?.Fluid == null ? "inactive" : $"{fluid.Width}x{fluid.Height}, {fluid.LastSteps} steps, {fluid.LastDraws} draws";
+    public string FluidWork => fluid == null || ActiveShader?.Fluid == null ? "inactive"
+        : $"{fluid.Width}x{fluid.Height}, {fluid.LastSteps} velocity / {fluid.LastMaterialSteps} material steps, {fluid.LastDraws} draws";
     public long SkippedGpuTimingFrames => gpu.SkippedFrames;
     public long InvalidGpuTimingFrames => gpu.InvalidFrames;
     internal void PollGpuTimings() => gpu.Poll();
@@ -97,20 +98,15 @@ public sealed partial class Renderer : IDisposable
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
         double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
         Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null,
-        string? initialScene = null, bool preferDisplayAdapter = false, AudioHistory? audioHistory = null)
+        string? initialScene = null)
     {
-        Audio = audioHistory ?? new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
+        Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
         if (initialScene != null) SceneName = initialScene;
-        PreferDisplayAdapter = preferDisplayAdapter;
-        displayMonitor = preferDisplayAdapter ? MonitorFromWindow(window, 2) : IntPtr.Zero;
-        // New textures need the complete retained ring, even if the old GPU
-        // already acknowledged every dirty row before the adapter change.
-        if (audioHistory != null) Audio.InvalidateHistory();
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
         try
         {
             using var factory = CreateDXGIFactory1<IDXGIFactory2>();
-            CreateGraphicsDevice(factory, window);
+            CreateGraphicsDevice(factory);
             Own(device); Own(context);
             gpu = Own(new GpuProfiler(device, context));
             using (var dxgiDevice = device.QueryInterface<IDXGIDevice>())
@@ -128,12 +124,12 @@ public sealed partial class Renderer : IDisposable
             {
                 textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
                 {
-                    Width = (uint)bands, Height = (uint)(i == 4 ? 2 : i < 2 ? 1 : Audio.Rows),
-                    MipLevels = 1, ArraySize = 1, Format = i == 4 ? Format.R32_Float : Format.R32G32B32A32_Float,
+                    Width = (uint)bands, Height = (uint)(i < 2 ? 2 : Audio.Rows),
+                    MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
                     SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
                     BindFlags = BindFlags.ShaderResource,
                 }));
-                textures[i].DebugName = i == 4 ? "ResidualSpectrum" : i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
+                textures[i].DebugName = i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
                 views[i] = Own(device.CreateShaderResourceView(textures[i]));
             }
             var sampler = Own(device.CreateSamplerState(new SamplerDescription
@@ -157,47 +153,35 @@ public sealed partial class Renderer : IDisposable
 
     public void PostAudio(SampleEvent<double> input, int channelCount) => Audio.Post(input, channelCount);
 
-    void CreateGraphicsDevice(IDXGIFactory2 factory, IntPtr window)
+    void CreateGraphicsDevice(IDXGIFactory2 factory)
     {
-        bool TryCreate(IDXGIAdapter1 adapter)
+        // Arc is the common development/performance target for every scene and tool.
+        // Never silently hide an Arc initialization failure by using a faster GPU.
+        for (uint i = 0; factory.EnumAdapters1(i, out var adapter).Success; i++)
         {
-            if ((adapter.Description1.Flags & AdapterFlags.Software) != 0) return false;
-            var result = D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport,
-                [FeatureLevel.Level_11_0], out ID3D11Device candidateDevice, out ID3D11DeviceContext candidateContext);
-            if (result.Success) { device = candidateDevice; context = candidateContext; return true; }
-            candidateContext?.Dispose(); candidateDevice?.Dispose();
-            return false;
-        }
-        if (PreferDisplayAdapter)
-        {
-            // Small scenes cost less than copying a native FP16 frame between GPUs.
-            // Match the actual monitor rather than assuming an integrated adapter index.
-            var monitor = displayMonitor;
-            for (uint a = 0; factory.EnumAdapters1(a, out var adapter).Success; a++)
             using (adapter)
-                for (uint o = 0; adapter.EnumOutputs(o, out var output).Success; o++)
-                using (output)
-                    if (output.Description.Monitor == monitor && TryCreate(adapter)) return;
-        }
-        // DXGI supplies performance order: no assumption about adapter positions,
-        // vendor IDs, memory sizes or whether the display is wired to the GPU.
-        using var preferred = factory.QueryInterfaceOrNull<IDXGIFactory6>();
-        if (preferred != null)
-        {
-            for (uint i = 0; preferred.EnumAdapterByGpuPreference<IDXGIAdapter1>(i, GpuPreference.HighPerformance,
-                     out var candidate).Success; i++)
             {
-                using var adapter = candidate;
-                if (adapter != null && TryCreate(adapter)) return;
+                var description = adapter.Description1;
+                if (!IsArcAdapter(description.VendorId, description.Description,
+                    (description.Flags & AdapterFlags.Software) != 0)) continue;
+                var result = D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport,
+                    [FeatureLevel.Level_11_0], out ID3D11Device candidateDevice, out ID3D11DeviceContext candidateContext);
+                if (result.Failure)
+                {
+                    candidateContext?.Dispose(); candidateDevice?.Dispose();
+                    throw new InvalidOperationException($"Cannot initialize Intel Arc ({description.Description}): {result}");
+                }
+                device = candidateDevice; context = candidateContext;
+                return;
             }
         }
-        // Older Windows versions, or no usable adapter in the preferred list.
+        // Portable fallback only when no Arc hardware is present.
         D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
             [FeatureLevel.Level_11_0], out device, out context).CheckError();
     }
 
-    [DllImport("user32.dll")]
-    static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+    internal static bool IsArcAdapter(uint vendor, string description, bool software) =>
+        !software && vendor == 0x8086 && description.Contains("Arc", StringComparison.OrdinalIgnoreCase);
 
     static string FindShaderDirectory()
     {
@@ -380,7 +364,7 @@ public sealed partial class Renderer : IDisposable
         if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
         previousFrame = frameStart;
         if (present && !presentationTimestamp.HasValue)
-            presentationTimestamp = (displayClock ??= Own(new CompositionClock())).NextFrameTimestamp();
+            presentationTimestamp = (displayClock ??= Own(new CompositionClock())).NextFrameTimestamp(Audio.Profile, !RawPresentationClock);
         // Rasterize for the compositor's next display time rather than this thread's
         // jittery wake-up time. Offline renders retain their injected host clock.
         if (presentationTimestamp.HasValue && LastPresentationTimestamp.HasValue)
@@ -479,7 +463,7 @@ public sealed partial class Renderer : IDisposable
             namedSamplers["AtmosphereSampler"] = lightTransport.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
-        namedTextures["ResidualSpectrum"] = views[4];
+
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
         // Compatibility names now refer to the core evidence; there is no scene filter pass.
@@ -507,7 +491,7 @@ public sealed partial class Renderer : IDisposable
             if (previousScene != SceneName || dt > .5) fluid.Clear();
             GpuMarker("Fluid", true);
             fluid.Advance(dt, Audio, active.Fluid,
-                active.Parameters, namedBuffers, namedTextures, namedSamplers);
+                active.Parameters, namedBuffers, namedTextures, namedSamplers, !FixedFluidMaterialCadence);
             GpuMarker("Fluid", false);
             namedTextures["FluidDye"] = fluid.Dye;
             if (fluid.Age != null) namedTextures["FluidAge"] = fluid.Age;

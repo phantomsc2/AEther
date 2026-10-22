@@ -23,7 +23,11 @@ bool RingEmissionSample(float2 p, float sourceAge, out float3 stb)
     stb = 0;
     uint bands, rows;
     Histogram0.GetDimensions(bands, rows);
-    if (HistoryNewestAge > sourceAge + 2.0 / rows) return false;
+    // Match the renderer's 50 ms live retention window. Two rows alone shrink
+    // to 2 ms at 1000 Hz, suppressing flow during normal capture/display delay.
+    // Keep a finite cutoff so paused loopback cannot replenish fluid forever.
+    float liveSpan = max(2.0 / rows, .05 * HistorySpan / max(HistorySeconds, 1e-6));
+    if (HistoryNewestAge > sourceAge + liveSpan) return false;
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
     return RingHistorySample(frequency, max(sourceAge, HistoryNewestAge), p, stb);
 }

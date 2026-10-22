@@ -38,49 +38,33 @@ public class TimedSessionTests
         MaxInputAgeMilliseconds = 1000 };
 
     [Test, Category("GPU")]
-    public async Task RendererChangePreservesAudioAndReuploadsRetainedHistory()
+    public async Task SceneChangesPreserveRendererAudioHistoryAndCaptureSubscription()
     {
         using var window = new Window();
         var source = new Source();
         await using var session = new Session(window.Handle, 1280, 720, source, Options());
-        var old = session.Renderer;
-        var audio = old.Audio;
-        int bands = audio.Bands;
-        var samples = Enumerable.Repeat(.5, bands * 8).ToArray();
-        old.SelectScene("Histogram");
+        var renderer = session.Renderer;
+        var audio = renderer.Audio;
+        var adapter = renderer.AdapterDescription;
+        var samples = Enumerable.Repeat(.5, audio.Bands * 8).ToArray();
+        renderer.SelectScene("Histogram");
         for (long row = 0; row < 100; row++)
-            old.PostAudio(new(samples, bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = row }, 2);
-        old.Render(false);
-        Assert.That(old.ReadHistogram(0).Any(v => v > 0), Is.True);
-        Assert.That(session.NeedsRendererChange("Spectrum", window.Handle), Is.True);
-
-        session.RecreateRenderer(window.Handle, 1280, 720, _ => { }, "Spectrum");
-        Assert.That(session.Renderer, Is.Not.SameAs(old));
-        Assert.That(session.Renderer.Audio, Is.SameAs(audio));
-        Assert.That(session.Renderer.Audio.Profile, Is.SameAs(session.Analyzer.Profile));
-        Assert.That(session.Renderer.PreferDisplayAdapter, Is.True);
-        Assert.That(session.NeedsRendererChange("Spectrum", window.Handle), Is.False);
-        Assert.That(session.NeedsRendererChange("Histogram", window.Handle), Is.False,
-            "Both diagnostic scenes should render on the display adapter.");
-        Assert.That(source.TimedSubscribers, Is.EqualTo(1), "Keep the existing capture subscription.");
-        session.Renderer.Render(false);
-        Assert.That(session.Renderer.LastHistoryUpload.Rows, Is.EqualTo(audio.Rows));
-        Assert.That(session.Renderer.ReadHistogram(0), Is.EqualTo(audio.History[0]));
-
-        session.RecreateRenderer(window.Handle, 1280, 720, _ => { }, "Histogram");
-        Assert.That(session.Renderer.Audio, Is.SameAs(audio));
-        Assert.That(session.Renderer.PreferDisplayAdapter, Is.True);
-        session.Renderer.Render(false);
-        Assert.That(session.Renderer.LastHistoryUpload.Rows, Is.EqualTo(audio.Rows));
-        Assert.That(session.Renderer.ReadHistogram(0), Is.EqualTo(audio.History[0]),
-            "New GPU textures must receive the retained history after switching back.");
-
-        session.RecreateRenderer(window.Handle, 1280, 720, _ => { }, "Mandelbox");
-        Assert.That(session.Renderer.Audio, Is.SameAs(audio));
-        Assert.That(session.Renderer.PreferDisplayAdapter, Is.False,
-            "Heavy scenes retain performance-GPU selection.");
+            renderer.PostAudio(new(samples, audio.Bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = row }, 2);
+        renderer.Render(false);
+        Assert.That(renderer.ReadHistogram(0).Any(v => v > 0), Is.True);
+        foreach (var scene in new[] { "Spectrum", "Histogram", "MandelFluidv4", "Mandelbox" })
+        {
+            renderer.SelectScene(scene);
+            renderer.Render(false);
+            Assert.That(session.Renderer, Is.SameAs(renderer), scene);
+            Assert.That(renderer.Audio, Is.SameAs(audio), scene);
+            Assert.That(renderer.AdapterDescription, Is.EqualTo(adapter), scene);
+            Assert.That(audio.Profile, Is.SameAs(session.Analyzer.Profile));
+            Assert.That(renderer.ReadHistogram(0), Is.EqualTo(audio.History[0]));
+            Assert.That(renderer.LastHistoryUpload.Rows, Is.Zero, "Scene changes must not rebuild GPU history.");
+            Assert.That(source.TimedSubscribers, Is.EqualTo(1), "Keep the existing capture subscription.");
+        }
     }
-
     [Test, Category("GPU")]
     public async Task SessionConsumesTimedPacketsOnceAndUnsubscribesOnStop()
     {

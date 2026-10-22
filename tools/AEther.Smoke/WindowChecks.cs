@@ -101,10 +101,10 @@ internal static partial class Program
                                 stage++;
                                 break;
                             case 3:
-                                var checkbox = Descendants(shaderWindow.Content).OfType<CheckBox>().Single(c => c.Content?.ToString() == "CombinedLevel");
-                                checkbox.IsChecked = true;
+                                var checkbox = Descendants(shaderWindow.Content).OfType<CheckBox>().Single(c => c.Content?.ToString() == "ShowS");
+                                checkbox.IsChecked = false;
                                 var spectrum = current.Renderer.ActiveShader!.Parameters!;
-                                if (!spectrum.GetBoolean(Find(spectrum, "CombinedLevel")))
+                                if (spectrum.GetBoolean(Find(spectrum, "ShowS")))
                                     throw new Exception("Checkbox did not update the shader.");
                                 shaderWindow.Hide();
                                 if (added != null) File.WriteAllText(added, "float4 PS(PSin i):SV_TARGET { return float4(0.2,0.3,0.4,1); }");
@@ -140,7 +140,7 @@ internal static partial class Program
                                 if (started != 2 || ReferenceEquals(current, original) || !original!.Analyzer.Completion.IsCompleted)
                                     throw new Exception("Session restart did not stop the previous analysis worker.");
                                 var restored = current.Renderer.ActiveShader!.Parameters!;
-                                if (current.Renderer.SceneName != "Spectrum" || !restored.GetBoolean(Find(restored, "CombinedLevel")))
+                                if (current.Renderer.SceneName != "Spectrum" || restored.GetBoolean(Find(restored, "ShowS")))
                                     throw new Exception("Session restart lost the selected scene or parameter values.");
                                 shaderWindow.SelectScene("Mandelbox");
                                 restored = current.Renderer.ActiveShader!.Parameters!;
