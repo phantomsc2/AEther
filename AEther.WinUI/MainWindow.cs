@@ -204,8 +204,9 @@ public sealed class MainWindow : Window
 
     void StartRenderWorker(Session current)
     {
-        // Present(1) can follow the slower primary monitor. On Windows 11 the
-        // compositor clock supplies the cadence; DXGI must not add another wait.
+        // Present(1) can follow the slower primary monitor. On Windows 11 use
+        // compositor cadence with Present(0), retaining swap-chain backpressure
+        // before sampling audio rather than stalling on the output draw afterward.
         bool compositorPacing = CompositorClock.IsSupported;
         renderWorker = new(current.Renderer.FrameReady,
             () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u),
