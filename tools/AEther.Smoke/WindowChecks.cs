@@ -38,13 +38,19 @@ internal static partial class Program
                 T Field<T>(string name) => (T)typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
                 var settings = Field<SettingsPanel>("settings");
                 var canvasWindow = Field<CanvasWindow>("canvasWindow");
-                var audio = Field<AudioWindow>("audio");
+                var analysis = Field<AnalysisView>("analysis");
+                var audio = Field<AudioPanel>("audio");
                 var debug = Field<DebugWindow>("debug");
-                var shaderWindow = Field<ShaderWindow>("shaders");
+                var shaderPanel = Field<ShaderPanel>("shaders");
+                bool shadersVisible() => shaderPanel.Visibility == Visibility.Visible;
                 Session? original = null;
                 Task? restart = null;
                 string? editedPath = null;
                 PointInt32 canvasPosition = default;
+                long debugDraws = 0;
+                int hubWidth = 0, hubHeight = 0;
+                double inputTop = 0, sceneTop = 0;
+                double Top(FrameworkElement element) => element.TransformToVisual(settings).TransformPoint(default).Y;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
                 int stage = 0;
                 var deadline = DateTime.UtcNow.AddSeconds(40);
@@ -53,7 +59,7 @@ internal static partial class Program
                 {
                     timer.Stop();
                     if (added != null && File.Exists(added)) File.Delete(added);
-                    finished = stage == 7;
+                    finished = stage == 13;
                 };
                 timer.Tick += (_, _) =>
                 {
@@ -66,6 +72,14 @@ internal static partial class Program
                         {
                             case 0:
                                 original = current;
+                                var launchScene = Environment.GetCommandLineArgs()
+                                    .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..];
+                                if (launchScene != null)
+                                {
+                                    if (!canvasWindow.IsVisible || current.Renderer.SceneName != launchScene)
+                                        throw new Exception("Explicit scene launch did not open the requested canvas.");
+                                    NativeClose(canvasWindow);
+                                }
                                 if (host.Content != settings || !host.AppWindow.IsShownInSwitchers
                                     || canvasWindow.AppWindow.IsShownInSwitchers || canvasWindow.Title != ""
                                     || canvasWindow.AppWindow.Presenter is not Microsoft.UI.Windowing.OverlappedPresenter
@@ -76,62 +90,78 @@ internal static partial class Program
                                 if (((UserControl)canvasWindow.Content).KeyboardAccelerators.Count != 9)
                                     throw new Exception("Render-window shortcuts are missing.");
                                 host.Activate();
-                                audio.Show(); debug.Show(); shaderWindow.Show();
+                                if (canvasWindow.IsVisible || shadersVisible() || settings.AudioSettings.IsExpanded)
+                                    throw new Exception("Startup must leave canvas, shader settings and Audio collapsed.");
+                                settings.AudioSettings.IsExpanded = true;
+                                debug.Show();
                                 stage++;
                                 break;
                             case 1:
+                                if (current.Renderer.DebugDrawCount == 0) return;
+                                if (!analysis.CanRender || !Descendants(settings.Content).OfType<SwapChainPanel>().Any() || Descendants(debug.Content).OfType<SwapChainPanel>().Any())
+                                    throw new Exception("The hub must contain the shared analysis graph; Debug must contain only text diagnostics.");
+                                if (analysis.ActualHeight <= 0 || analysis.ActualHeight > analysis.PreferredHeight)
+                                    throw new Exception("The analysis graph cannot visually resolve every frequency band.");
                                 if (!host.AppWindow.IsVisible) throw new Exception("Settings did not open.");
-                                var hub = (StackPanel)((Grid)settings.Content).Children.Single();
-                                var buttons = ((StackPanel)hub.Children.Last()).Children.OfType<Button>()
-                                    .Select(b => b.Content?.ToString()).ToArray();
-                                if (!buttons.SequenceEqual(new[] { "Canvas", "Audio", "Scene", "Debug" })
-                                    || Descendants(settings.Content).OfType<ComboBox>().Count() != 2)
-                                    throw new Exception("Hub must contain four buttons and the Input/Scene selectors.");
-                                if (!audio.IsVisible || !debug.IsVisible)
-                                    throw new Exception("Tool windows did not open.");
+                                if (settings.Content is not Grid || Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
+                                    throw new Exception("The hub must have two equal-width columns without an outer scroller.");
+                                if (settings.Columns.Children.OfType<Button>().Single().Content?.ToString() != "Debug")
+                                    throw new Exception("Only Debug remains a separate-window button.");
                                 var selector = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
-                                if (selector.Header != null || hub.Children[2] != selector
-                                    || Descendants(shaderWindow.Content).OfType<ComboBox>().Any())
-                                    throw new Exception("Scene picker must follow Gain in the hub, without a visible label.");
+                                if (selector.Header != null || selector.SelectedItem != null || shadersVisible()
+                                    || settings.AudioColumn.Children[2] != analysis || settings.SceneColumn.Children[0] != selector)
+                                    throw new Exception("Scene must start empty on the right, with analysis pinned on the left.");
                                 if (!Descendants(audio.Content).OfType<NumberBox>().Any())
                                     throw new Exception("Analyzer property editor is missing.");
                                 if (!Descendants(settings.Content).OfType<ComboBox>().Any(c => c.Header?.ToString() == "Input")
                                     || !Descendants(settings.Content).OfType<NumberBox>().Any(n => n.Header?.ToString() == "Gain")
                                     || Descendants(audio.Content).OfType<NumberBox>().Any(n => n.Header?.ToString() == "Gain"))
                                     throw new Exception("Input and Gain must live in the hub.");
-                                shaderWindow.Hide();
                                 selector.SelectedItem = "Spectrum";
                                 selector.SelectedItem = "Mandelbox";
                                 stage++;
                                 break;
                             case 2:
-                                if (shaderWindow.IsVisible || current.Renderer.SceneName != "Mandelbox")
-                                    throw new Exception("Scene selection must update rendering without opening its properties window.");
-                                shaderWindow.Show();
-                                if (!Descendants(shaderWindow.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
-                                    || !Descendants(shaderWindow.Content).OfType<Slider>().Any())
+                                if (!shadersVisible() || !canvasWindow.IsVisible || current.Renderer.SceneName != "Mandelbox")
+                                    throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
+                                if (!Descendants(shaderPanel.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
+                                    || !Descendants(shaderPanel.Content).OfType<Slider>().Any())
                                     throw new Exception("Dynamic shader parameter tree is missing.");
-                                var number = Descendants(shaderWindow.Content).OfType<NumberBox>().First();
+                                var audioScroll = (ScrollViewer)settings.AudioSettings.Content;
+                                var shaderScroll = ((Grid)shaderPanel.Content).Children.OfType<ScrollViewer>().Single();
+                                if (audioScroll.ViewportHeight <= 32 || audioScroll.ScrollableHeight <= 0
+                                    || audioScroll.ViewportHeight > settings.AudioColumn.ActualHeight
+                                    || shaderScroll.ViewportHeight > settings.SceneColumn.ActualHeight)
+                                    throw new Exception("Only settings panels must scroll within bounded column space.");
+                                inputTop = Top((FrameworkElement)settings.AudioColumn.Children[0]);
+                                sceneTop = Top((FrameworkElement)settings.SceneColumn.Children[0]);
+                                audioScroll.ChangeView(null, audioScroll.ScrollableHeight, null, true);
+                                shaderScroll.ChangeView(null, shaderScroll.ScrollableHeight, null, true);
+                                var number = Descendants(shaderPanel.Content).OfType<NumberBox>().First();
                                 number.Value = .75;
                                 var row = (FrameworkElement)VisualTreeHelper.GetParent(number);
                                 editedPath = (string)row.Tag;
                                 var values = current.Renderer.ActiveShader!.Parameters!;
+                                var debugValues = current.Renderer.GetSceneParameters("Debug")!;
+                                debugValues.SetBoolean(Find(debugValues, "CombinedLevel"), true);
                                 if (values.GetFloat(Find(values, (string)row.Tag)) != .75f)
                                     throw new Exception("Numeric editor did not update the shader.");
-                                NativeClose(shaderWindow);
-                                if (shaderWindow.IsVisible) throw new Exception("Closing shader window did not hide it.");
-                                shaderWindow.Show();
                                 var scenes = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
                                 scenes.SelectedItem = "Spectrum";
                                 stage++;
                                 break;
                             case 3:
-                                var checkbox = Descendants(shaderWindow.Content).OfType<CheckBox>().Single(c => c.Content?.ToString() == "ShowS");
+                                if (Math.Abs(inputTop - Top((FrameworkElement)settings.AudioColumn.Children[0])) > .5
+                                    || Math.Abs(sceneTop - Top((FrameworkElement)settings.SceneColumn.Children[0])) > .5)
+                                    throw new Exception("Scrolling settings moved the pinned input or scene picker.");
+                                settings.AudioSettings.IsExpanded = false;
+                                settings.AudioSettings.IsExpanded = true;
+                                if (started != 1) throw new Exception("Expanding Audio restarted capture.");
+                                var checkbox = Descendants(shaderPanel.Content).OfType<CheckBox>().Single(c => c.Content?.ToString() == "ShowS");
                                 checkbox.IsChecked = false;
                                 var spectrum = current.Renderer.ActiveShader!.Parameters!;
                                 if (spectrum.GetBoolean(Find(spectrum, "ShowS")))
                                     throw new Exception("Checkbox did not update the shader.");
-                                shaderWindow.Hide();
                                 if (added != null) File.WriteAllText(added, "float4 PS(PSin i):SV_TARGET { return float4(0.2,0.3,0.4,1); }");
                                 canvasWindow.AppWindow.Resize(new SizeInt32(800, 600));
                                 canvasWindow.AppWindow.Move(new PointInt32(canvasWindow.AppWindow.Position.X + 30,
@@ -156,7 +186,7 @@ internal static partial class Program
                             case 4:
                                 if (added != null && !current.Renderer.Scenes.Any(s => s.Name == "WatcherProbe")) return;
                                 if (started != 1 || current != original) throw new Exception("Shader editing restarted audio capture.");
-                                if (shaderWindow.IsVisible) throw new Exception("Shader reload reopened a hidden window.");
+                                if (!shadersVisible()) throw new Exception("Shader reload hid the inline settings.");
                                 if (added != null)
                                 {
                                     var dropdown = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
@@ -177,9 +207,10 @@ internal static partial class Program
                                 NativeClose(canvasWindow);
                                 if (canvasWindow.IsVisible || !host.AppWindow.IsVisible)
                                     throw new Exception("Closing canvas must leave the hub open.");
-                                canvasWindow.Show();
+                                if (Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene").SelectedItem != null)
+                                    throw new Exception("Closing canvas must clear scene selection.");
                                 host.Activate();
-                                foreach (var tool in new ToolWindow[] { audio, debug })
+                                foreach (var tool in new ToolWindow[] { debug })
                                 {
                                     NativeClose(tool);
                                     if (tool.IsVisible) throw new Exception("Closing a tool window did not hide it.");
@@ -202,6 +233,12 @@ internal static partial class Program
                                 var retained = current.Renderer.ActiveShader!.Parameters!;
                                 if (current.Renderer.SceneName != "Spectrum" || retained.GetBoolean(Find(retained, "ShowS")))
                                     throw new Exception("Audio edit lost shader state.");
+                                var closedPicker = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
+                                if (closedPicker.SelectedItem != null || canvasWindow.IsVisible || shadersVisible())
+                                    throw new Exception("Audio edits and watcher reloads must preserve the dismissed canvas.");
+                                closedPicker.SelectedItem = "Spectrum";
+                                if (!canvasWindow.IsVisible || current.Renderer.SceneName != "Spectrum" || started != 2)
+                                    throw new Exception("Reselecting the same scene must reopen canvas without restarting capture.");
                                 stage++;
                                 restart = (Task)typeof(MainWindow).GetMethod("RestartAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(host, null)!;
                                 break;
@@ -218,12 +255,64 @@ internal static partial class Program
                                     throw new Exception("Session restart did not synchronize the hub scene picker.");
                                 if (current.Renderer.SceneName != "Spectrum" || restored.GetBoolean(Find(restored, "ShowS")))
                                     throw new Exception("Session restart lost the selected scene or parameter values.");
-                                shaderWindow.SelectScene("Mandelbox");
+                                shaderPanel.SelectScene("Mandelbox");
                                 if (restoredPicker.SelectedItem?.ToString() != "Mandelbox")
                                     throw new Exception("Programmatic selection did not synchronize the hub scene picker.");
                                 restored = current.Renderer.ActiveShader!.Parameters!;
                                 if (restored.GetFloat(Find(restored, editedPath!)) != .75f)
                                     throw new Exception("Session restart lost another scene's parameter values.");
+                                debugDraws = current.Renderer.DebugDrawCount;
+                                canvasWindow.Hide();
+                                stage++;
+                                break;
+                            case 7:
+                                if (current.Renderer.DebugDrawCount <= debugDraws) return;
+                                if (current.Renderer.SceneName != "Mandelbox" || started != 3)
+                                    throw new Exception("Debug-only rendering changed the canvas scene or restarted capture.");
+                                debug.Hide();
+                                debugDraws = current.Renderer.DebugDrawCount;
+                                stage++;
+                                break;
+                            case 8:
+                                if (current.Renderer.DebugDrawCount <= debugDraws)
+                                    throw new Exception("Closing text diagnostics stopped the hub graph.");
+                                host.AppWindow.Hide();
+                                debugDraws = current.Renderer.DebugDrawCount;
+                                stage++;
+                                break;
+                            case 9:
+                                if (current.Renderer.DebugDrawCount != debugDraws)
+                                    throw new Exception("The hidden hub continued drawing its graph.");
+                                host.Activate(); canvasWindow.Show();
+                                stage++;
+                                break;
+                            case 10:
+                                if (current.Renderer.DebugDrawCount <= debugDraws) return;
+                                var restoredDebug = current.Renderer.GetSceneParameters("Debug")!;
+                                if (!restoredDebug.GetBoolean(Find(restoredDebug, "CombinedLevel")))
+                                    throw new Exception("Full session restart lost the embedded Debug parameters.");
+                                if (!analysis.CanRender || current.Renderer.DebugOutputError != null)
+                                    throw new Exception("The hub analysis graph failed to reconnect after reopen/resize.");
+                                hubWidth = host.AppWindow.Size.Width;
+                                hubHeight = host.AppWindow.Size.Height;
+                                host.AppWindow.Resize(new SizeInt32(hubWidth + 80, hubHeight - 80));
+                                hubWidth += 80; hubHeight -= 80;
+                                Descendants(audio.Content).OfType<NumberBox>().Single(n => n.Header?.ToString() == "FrequencyResolution").Value = 48;
+                                stage++;
+                                break;
+                            case 11:
+                                if (started != 4 || analysis.PreferredHeight < current.Renderer.Audio.Bands * 2) return;
+                                if (current.Renderer.Audio.Bands < 300 || host.AppWindow.Size.Width != hubWidth || host.AppWindow.Size.Height != hubHeight || analysis.ActualHeight > settings.AudioColumn.RowDefinitions[2].ActualHeight + 1)
+                                    throw new Exception("More bands must fit the pinned analysis area without resizing the window or adding scrolling.");
+                                if (Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
+                                    throw new Exception("Resizing the hub changed the equal column widths.");
+                                Descendants(audio.Content).OfType<NumberBox>().Single(n => n.Header?.ToString() == "FrequencyResolution").Value = 12;
+                                stage++;
+                                break;
+                            case 12:
+                                if (started != 5 || analysis.PreferredHeight != 220) return;
+                                if (host.AppWindow.Size.Width != hubWidth)
+                                    throw new Exception("Restoring the band count changed the hub width.");
                                 debug.Hide();
                                 typeof(MainWindow).GetMethod("RenderFailed", BindingFlags.Instance | BindingFlags.NonPublic)!
                                     .Invoke(host, new object[] { new Exception("Window smoke diagnostic") });

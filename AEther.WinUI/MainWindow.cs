@@ -2,6 +2,7 @@ using AEther.NAudio;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Vortice.DXGI;
 using Windows.Graphics;
 using Windows.System;
 
@@ -12,10 +13,11 @@ public sealed class MainWindow : Window
     readonly SwapChainPanel canvas = new();
     readonly UserControl root;
     readonly SettingsPanel settings;
+    readonly AnalysisView analysis;
     readonly CanvasWindow canvasWindow;
-    readonly AudioWindow audio = new();
+    readonly AudioPanel audio = new();
     readonly DebugWindow debug = new();
-    readonly ShaderWindow shaders = new();
+    readonly ShaderPanel shaders = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
     readonly DispatcherTimer reloadTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly DispatcherTimer timingTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -24,7 +26,9 @@ public sealed class MainWindow : Window
     Session? session;
     RenderWorker? renderWorker;
     FileSystemWatcher? watcher;
-    bool loaded, closing, shutdownComplete, fullscreen, visible = true;
+    IDXGISwapChain1? canvasChain;
+    bool loaded, closing, shutdownComplete, fullscreen, visible;
+    bool changingSession, renderCanvas, renderDebug, canvasDismissed;
     long restartVersion;
     RectInt32 windowBounds;
 
@@ -33,17 +37,18 @@ public sealed class MainWindow : Window
         this.createSource = createSource;
         this.shaderDirectory = shaderDirectory;
         Title = "AEther";
+        canvasDismissed = !Environment.GetCommandLineArgs().Any(argument => argument.StartsWith("--scene=", StringComparison.Ordinal));
         // A focusable host routes keyboard input without adding anything over the canvas.
         root = new UserControl { Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false };
         canvasWindow = new(root);
-        settings = new(audio, shaders, debug, canvasWindow);
+        analysis = new(this);
+        settings = new(audio, shaders, debug, analysis);
         Content = settings;
-        settings.Loaded += (_, _) =>
+        settings.Loaded += async (_, _) =>
         {
-            settings.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-            var scale = settings.XamlRoot.RasterizationScale;
-            AppWindow.ResizeClient(new SizeInt32((int)Math.Ceiling(settings.DesiredSize.Width * scale),
-                (int)Math.Ceiling(settings.DesiredSize.Height * scale)));
+            if (loaded) return;
+            loaded = true;
+            InitializeHubSize();
             // Place the initial canvas beside the hub when there is room. Subsequent
             // moves, edits and restarts leave the user's window placement alone.
             var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
@@ -53,49 +58,52 @@ public sealed class MainWindow : Window
                 : left >= area.X ? left : area.X;
             canvasWindow.AppWindow.Move(new PointInt32(x, Math.Clamp(AppWindow.Position.Y,
                 area.Y, Math.Max(area.Y, area.Y + area.Height - canvasWindow.AppWindow.Size.Height))));
-            canvasWindow.AppWindow.Show(false);
+            await RestartAsync();
+            if (!closing && !canvasDismissed && session != null) canvasWindow.Show();
         };
-        foreach (var window in new ToolWindow[] { audio, debug })
-        {
-            window.SetOwner(this);
-            window.ShortcutRequested += HandleToolShortcut;
-        }
+        debug.SetOwner(this);
+        debug.ShortcutRequested += HandleToolShortcut;
         if (settings.DeviceError is { } error) { debug.SetStatus(error); debug.Show(); }
         canvasWindow.SetOwner(this);
-        shaders.SetOwner(this);
-        shaders.SceneChanged += (_, _) =>
+        shaders.SceneChanged += (_, _) => RefreshScenePicker();
+        canvasWindow.Dismissed += (_, _) =>
         {
-            Title = $"AEther - {shaders.SelectedScene}";
-            settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [], shaders.SelectedScene);
+            if (closing) return;
+            canvasDismissed = true;
+            RefreshScenePicker();
         };
         settings.SceneSelected += name =>
         {
-            if (session?.Renderer.SceneName != name) shaders.SelectScene(name);
+            try
+            {
+                if (session?.Renderer.SceneName != name) shaders.SelectScene(name);
+                OpenCanvas();
+            }
+            catch (Exception error)
+            {
+                RefreshScenePicker();
+                shaders.SetStatus(error.Message);
+                debug.SetStatus(error.Message);
+                debug.Show();
+            }
         };
         settings.InputChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
         audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
         foreach (var key in new[] { VirtualKey.F5, VirtualKey.F6, VirtualKey.F11 })
             ToolWindow.AddShortcut(settings, key, () => HandleToolShortcut(key));
-        shaders.ShortcutRequested += key =>
-        {
-            if (key == VirtualKey.F6) shaders.Hide();
-            else HandleToolShortcut(key);
-        };
         ToolWindow.AddShortcut(root, VirtualKey.Space, Activate);
-        ToolWindow.AddShortcut(root, VirtualKey.F6, shaders.Toggle);
+        ToolWindow.AddShortcut(root, VirtualKey.F6, FocusScene);
         ToolWindow.AddShortcut(root, VirtualKey.F11, ToggleFullscreen);
         ToolWindow.AddShortcut(root, VirtualKey.F5, () => _ = RestartAsync());
-        ToolWindow.AddShortcut(root, VirtualKey.Escape, canvasWindow.Hide);
+        ToolWindow.AddShortcut(root, VirtualKey.Escape, canvasWindow.Dismiss);
         ToolWindow.AddShortcut(root, VirtualKey.R, () => { if (session != null) { session.Renderer.CombinedLevel ^= true; shaders.RefreshParameters(); } });
         ToolWindow.AddShortcut(root, VirtualKey.I, () => { if (session != null) { session.Renderer.ShowSum ^= true; shaders.RefreshParameters(); } });
         ToolWindow.AddShortcut(root, (VirtualKey)219, () => ChangeSlice(-.05f));
         ToolWindow.AddShortcut(root, (VirtualKey)221, () => ChangeSlice(.05f));
-        canvas.Loaded += async (_, _) =>
+        canvas.Loaded += (_, _) =>
         {
-            if (loaded) return;
-            loaded = true;
-            root.Focus(FocusState.Programmatic);
-            await RestartAsync();
+            SwapChainHost.Attach(canvas, canvasChain);
+            ResizeRenderer();
         };
         canvasWindow.Activated += (_, e) =>
         {
@@ -122,23 +130,54 @@ public sealed class MainWindow : Window
             }
             else if (changedPath != null && session.Renderer.ReloadActiveScene()) shaders.RefreshParameters();
             else shaders.Reload();
+            analysis.RefreshOutput(resetError: true);
             if (session.Renderer.ShaderError is { } error)
             {
                 shaders.SetStatus(error);
-                shaders.Show();
+                debug.SetStatus(error);
+                debug.Show();
             }
         };
         // A Tick already queued before Stop can still arrive during window teardown.
-        timingTimer.Tick += (_, _) => { if (!closing && debug.IsVisible) debug.SetTiming(session); };
+        timingTimer.Tick += (_, _) =>
+        {
+            if (closing) return;
+            if (analysis.Error is { } error) debug.SetStatus($"Analysis view: {error}");
+            if (debug.IsVisible) debug.SetTiming(session);
+            UpdateRendering();
+        };
         timingTimer.Start();
         canvasWindow.VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
         canvasWindow.AppWindow.Changed += (_, _) => UpdateRendering();
+        analysis.OutputChanged += (_, _) => UpdateRendering();
         AppWindow.Closing += OnClosing;
+    }
+
+    void InitializeHubSize()
+    {
+        var scale = settings.XamlRoot.RasterizationScale;
+        var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+        var chrome = Math.Max(0, AppWindow.Size.Height - AppWindow.ClientSize.Height);
+        var available = work.Y + work.Height - Math.Max(work.Y, AppWindow.Position.Y) - chrome;
+        AppWindow.ResizeClient(new SizeInt32(Math.Min((int)Math.Ceiling(768 * scale), work.Width),
+            Math.Min((int)Math.Ceiling(800 * scale), Math.Max(1, available))));
+    }
+
+    void FocusScene()
+    {
+        Activate();
+        settings.FocusScene();
+    }
+
+    void AttachCanvasSwapChain(IDXGISwapChain1? chain)
+    {
+        canvasChain = chain;
+        if (canvas.IsLoaded || chain == null) SwapChainHost.Attach(canvas, chain);
     }
 
     void HandleToolShortcut(VirtualKey key)
     {
-        if (key == VirtualKey.F6) shaders.Toggle();
+        if (key == VirtualKey.F6) FocusScene();
         if (key == VirtualKey.F11) ToggleFullscreen();
         if (key == VirtualKey.F5) _ = RestartAsync();
     }
@@ -151,8 +190,8 @@ public sealed class MainWindow : Window
     }
 
     (int Width, int Height) CanvasSize =>
-        (Math.Max(1, (int)Math.Round(canvas.ActualWidth * canvas.CompositionScaleX)),
-         Math.Max(1, (int)Math.Round(canvas.ActualHeight * canvas.CompositionScaleY)));
+        (canvas.ActualWidth > 0 ? Math.Max(1, (int)Math.Round(canvas.ActualWidth * canvas.CompositionScaleX)) : 1280,
+         canvas.ActualHeight > 0 ? Math.Max(1, (int)Math.Round(canvas.ActualHeight * canvas.CompositionScaleY)) : 720);
 
     void ResizeRenderer()
     {
@@ -176,6 +215,7 @@ public sealed class MainWindow : Window
         if (closing || !loaded) return;
         var version = ++restartVersion;
         await sessionGate.WaitAsync();
+        changingSession = true;
         try
         {
             if (closing || version != restartVersion) return;
@@ -190,6 +230,7 @@ public sealed class MainWindow : Window
                     replacement = null; // Session now owns the new source.
                     if (closing) return;
                     ResizeRenderer();
+                    analysis.RefreshOutput();
                     current.Start();
                     StartRenderWorker(current);
                     UpdateRendering();
@@ -214,11 +255,12 @@ public sealed class MainWindow : Window
             {
                 var size = CanvasSize;
                 next = new(WinRT.Interop.WindowNative.GetWindowHandle(canvasWindow), size.Width, size.Height,
-                    source, audio.Options, shaderDirectory, chain => SwapChainHost.Attach(canvas, chain), shaders.SelectedScene);
+                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene);
                 next.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
+                analysis.Attach(next.Renderer);
                 shaders.Attach(next.Renderer);
                 watcher = new(next.Renderer.ShaderDirectory, "*.hlsl")
                 {
@@ -238,6 +280,7 @@ public sealed class MainWindow : Window
             {
                 renderWorker?.Dispose(); renderWorker = null;
                 session = null;
+                analysis.Attach(null);
                 shaders.Attach(null);
                 if (next != null) await next.DisposeAsync();
                 else source.Dispose();
@@ -245,7 +288,7 @@ public sealed class MainWindow : Window
             }
         }
         catch (Exception error) { debug.SetStatus(error.Message); debug.Show(); }
-        finally { sessionGate.Release(); }
+        finally { changingSession = false; sessionGate.Release(); UpdateRendering(); }
     }
 
     void CaptureStopped(object? sender, Exception? error)
@@ -272,12 +315,18 @@ public sealed class MainWindow : Window
 
     void StartRenderWorker(Session current)
     {
+        renderWorker?.Dispose();
+        renderCanvas = CanvasVisible;
+        renderDebug = analysis.CanRender;
+        var drawCanvas = renderCanvas;
+        var drawDebug = renderDebug;
         // Present(1) can follow the slower primary monitor. On Windows 11 use
         // compositor cadence with Present(0), retaining swap-chain backpressure
         // before sampling audio rather than stalling on the output draw afterward.
         bool compositorPacing = CompositorClock.IsSupported;
-        renderWorker = new(current.Renderer.FrameReady,
-            () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u),
+        renderWorker = new(!drawCanvas && drawDebug ? current.Renderer.DebugFrameReady! : current.Renderer.FrameReady,
+            () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u,
+                renderCanvas: drawCanvas, renderDebug: drawDebug),
             error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)),
             waitForTick: compositorPacing ? CompositorClock.Wait : null,
             waited: milliseconds => current.Analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
@@ -291,6 +340,7 @@ public sealed class MainWindow : Window
         watcher?.Dispose(); watcher = null;
         var previous = session; session = null;
         renderWorker?.Dispose(); renderWorker = null;
+        analysis.Attach(null);
         shaders.Attach(null);
         if (previous == null) return;
         previous.CaptureStopped -= CaptureStopped;
@@ -299,7 +349,8 @@ public sealed class MainWindow : Window
 
     void ToggleFullscreen()
     {
-        if (!canvasWindow.IsVisible) canvasWindow.Show();
+        if (canvasDismissed) { FocusScene(); return; }
+        if (!canvasWindow.IsVisible) OpenCanvas();
         if (!fullscreen)
         {
             windowBounds = new RectInt32(canvasWindow.AppWindow.Position.X, canvasWindow.AppWindow.Position.Y, canvasWindow.AppWindow.Size.Width, canvasWindow.AppWindow.Size.Height);
@@ -314,10 +365,33 @@ public sealed class MainWindow : Window
         }
     }
 
+    void RefreshScenePicker()
+    {
+        Title = canvasDismissed ? "AEther" : $"AEther - {shaders.SelectedScene}";
+        settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [],
+            canvasDismissed ? null : shaders.SelectedScene);
+    }
+
+    void OpenCanvas()
+    {
+        canvasDismissed = false;
+        canvasWindow.Show();
+        RefreshScenePicker();
+    }
+
+    bool CanvasVisible => visible && canvasWindow.AppWindow.Presenter is not OverlappedPresenter
+        { State: OverlappedPresenterState.Minimized };
+
     void UpdateRendering()
     {
-        renderWorker?.SetEnabled(!closing && visible && session != null
-            && canvasWindow.AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized });
+        if (closing || changingSession || session == null)
+        {
+            renderWorker?.SetEnabled(false);
+            return;
+        }
+        if (renderWorker == null || renderCanvas != CanvasVisible || renderDebug != analysis.CanRender)
+            StartRenderWorker(session);
+        renderWorker?.SetEnabled(renderCanvas || renderDebug);
     }
 
     void RenderFailed(Exception error)
@@ -356,9 +430,7 @@ public sealed class MainWindow : Window
         finally
         {
             sessionGate.Release();
-            shaders.Destroy();
             canvasWindow.Destroy();
-            audio.Destroy();
             debug.Destroy();
             shutdownComplete = true;
             // Closing can finish synchronously; do not reenter WinUI's Closing event.

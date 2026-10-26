@@ -30,33 +30,47 @@ Install the .NET 10 SDK and Windows SDK/build tools, then run
 The app is unpackaged and includes its Windows App SDK runtime, so no MSIX
 installation or separate Windows App Runtime installation is needed. The .NET 10
 desktop runtime is required when running a build without the SDK.
-The app starts windowed, captures the default system audio output and displays Mandelbox.
-The main window is the settings hub. A separate untitled, resizable window with a
-standard title bar contains only a Direct3D `SwapChainPanel`. Settings and shader
+The app starts with the settings hub, captures the default system audio output,
+and runs its analysis view with no scene selected. Selecting a scene opens an
+untitled, resizable canvas window with a standard title bar. Its content is a
+Direct3D `SwapChainPanel`. Settings and shader
 properties use standard WinUI controls with the system's default appearance.
 
 - **Space** (render window): activate the hub. Closing the hub exits the application.
-- **F6**: toggle the shader window.
+- **F6**: activate the hub and focus the scene picker.
 - **F11**: explicitly toggle fullscreen on the canvas window's current display.
 - **F5**: rebuild the capture/analysis/render session.
 - **R**: toggle combined level view in Spectrum and Histogram.
 - **I**: toggle Spectrum intensity view.
 - **[ / ]**: move the Mandelbox slice.
-- **Escape**: hide the canvas or focused tool window. The hub's Canvas button reopens the canvas.
+- **Escape**: dismiss the canvas or hide the focused tool window. Select a scene in the hub to reopen the canvas.
 
-The hub selects audio input, gain and scene. Audio opens the remaining analyzer
-options. Audio edits restart analysis while retaining graphics. Drag the canvas to
-choose its display; monitor settings follow its location, and restarts leave it there.
-The Scene selector switches scenes without opening the separate shader window,
-which contains dynamic parameter trees, Reload and Reset defaults.
-**F6** toggles that window. Scene selection
-and parameter edits keep capture, analysis and history running. Closing a side
+The resizable hub has two equal-width columns. Input, Gain and the live analysis
+view are pinned on the left; Audio expands the remaining analyzer options below
+them. The right column starts with an empty Scene picker. Selection opens the
+canvas and reveals dynamic shader parameters, Reload and Reset defaults below it.
+Only the Audio settings and shader settings scroll, independently inside their
+panels. The overall window and analysis view never scroll. Debug remains a separate
+window for status and timing text.
+
+Audio edits restart analysis while retaining graphics. Drag the canvas to choose
+its display; monitor settings follow its location, and restarts leave it there.
+Scene selection and parameter edits keep capture, analysis and history running. Closing a side
 window hides it; closing the hub shuts down all windows and capture.
+Closing the canvas clears the scene picker. Selecting the same scene again reopens
+it with retained parameters and without restarting capture. Audio edits and shader
+reloads leave the picker empty while the canvas is dismissed.
+
+The analysis view shares the renderer and history while the canvas keeps its
+selected scene. It prefers enough height for two logical pixels per band, and fits
+the available space with thinner bands at high density. It remains live with the
+canvas closed; hiding or minimizing the hub stops its drawing work. An explicit
+`--scene=Name` argument opts into launching a scene on startup.
 
 Scenes are the top-level files in `AEther.Vortice/Shaders/Scenes/*.hlsl`. Shared code
 lives in `Shaders/Common`. Save source files in the IDE to reload without a .NET build;
 adding or deleting a scene updates the shader selector. Failed reloads retain the
-previous programs and controls, with diagnostics in the shader window. Published apps
+previous programs and controls, with diagnostics in the shader panel and Debug window. Published apps
 use the `Shaders` tree beside the executable.
 
 Editable values are reflected from `cbuffer Parameters`; nested structs become groups,

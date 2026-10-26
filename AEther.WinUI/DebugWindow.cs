@@ -16,7 +16,6 @@ public sealed class DebugWindow : ToolWindow
         Layout.Children.Add(new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         SetTiming(null);
     }
-
     public void SetStatus(string text) => status.Text = text;
 
     public void SetTiming(Session? session)
@@ -53,6 +52,7 @@ public sealed class DebugWindow : ToolWindow
             + $"GPU pressure: {Stat("gpu.fluid_pressure_ms")}\n"
             + $"GPU velocity / material: {Stat("gpu.fluid_velocity_ms")} | {Stat("gpu.fluid_material_ms")}\n"
             + $"GPU scene / output: {Stat("gpu.scene_ms")} | {Stat("gpu.output_ms")}\n"
+            + $"GPU analysis view: {Stat("gpu.debug_ms")}\n"
             + $"Fluid work: {session.Renderer.FluidWork}\n"
             + $"GPU timing delivery: {Stat("gpu.timing_delivery_ms")}\n"
             + $"GPU timing samples: nonblocking; skipped {session.Renderer.SkippedGpuTimingFrames}, invalid {session.Renderer.InvalidGpuTimingFrames} (not texture/frame drops)\n"
@@ -67,4 +67,3 @@ public sealed class DebugWindow : ToolWindow
             + "GPU stages are nested; do not sum them. Source ages end at CPU submission; speaker/display delay is not calibrated.";
     }
 }
-

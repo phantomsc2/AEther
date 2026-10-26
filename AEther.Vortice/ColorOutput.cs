@@ -174,6 +174,14 @@ internal sealed partial class ColorOutput : IDisposable
 
     public void Present(uint syncInterval) => swapChain.Present(syncInterval, PresentFlags.None).CheckError();
 
+    public bool TryPresent()
+    {
+        var result = swapChain.Present(0, PresentFlags.DoNotWait);
+        if (result.Code == unchecked((int)0x887A000A)) return false; // DXGI_ERROR_WAS_STILL_DRAWING
+        result.CheckError();
+        return true;
+    }
+
     /// <summary>Display-encoded RGBA8 for PNGs/tests, before monitor-specific white scaling.</summary>
     public byte[] ReadPixels(bool dither)
     {

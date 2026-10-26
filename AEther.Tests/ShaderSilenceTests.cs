@@ -14,6 +14,97 @@ namespace AEther.Tests;
 [TestFixture, NonParallelizable, Apartment(ApartmentState.STA)]
 public class ShaderSilenceTests
 {
+    [TestCase(true), TestCase(false), Category("GPU")]
+    public void EmbeddedDebugSharesAudioWithoutChangingTheCanvas(bool drawCanvas)
+    {
+        using var shaders = new SceneShaders("Spectrum");
+        File.Copy(Path.Combine(ShaderDirectory, "Scenes", "Debug.hlsl"), Path.Combine(shaders.Path, "Scenes", "Debug.hlsl"));
+        using var window = new HiddenWindow();
+        using var debugWindow = new HiddenWindow();
+        using var referenceWindow = new HiddenWindow();
+        using var canvasReferenceWindow = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 160, 90, 8, 60, 1,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Spectrum");
+        using var reference = new Renderer(referenceWindow.Handle, 300, 80, 8, 60, 1,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Debug");
+        using var canvasReference = new Renderer(canvasReferenceWindow.Handle, 160, 90, 8, 60, 1,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Spectrum");
+        var canvasParameters = renderer.ActiveShader!.Parameters;
+        renderer.AttachDebugOutput(debugWindow.Handle, 300, 80);
+        renderer.Render(false);
+        var initialCanvas = renderer.ReadPixels(false);
+        for (int frame = 0; frame < 90; frame++)
+        {
+            if (frame < 60)
+            {
+                var samples = new double[8 * 8];
+                for (int i = 0; i < samples.Length; i += 4)
+                {
+                    samples[i] = .2 + .5 * (i % 16) / 16.0;
+                    samples[i + 1] = frame % 3 == 0 ? .7 : 0;
+                    samples[i + 2] = .3;
+                    samples[i + 3] = .8;
+                }
+                foreach (var target in new[] { renderer, reference, canvasReference })
+                    target.PostAudio(new SampleEvent<double>(samples, 32, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
+            }
+            clock.Advance();
+            renderer.Render(false, renderCanvas: drawCanvas, renderDebug: true);
+            reference.Render(false);
+            canvasReference.Render(false);
+            Assert.That(renderer.DebugOutputError, Is.Null);
+            Assert.That(renderer.ReadDebugPixels(), Is.EqualTo(reference.ReadPixels(false)), $"shared audio frame {frame}");
+            Assert.That(renderer.SceneName, Is.EqualTo("Spectrum"));
+            Assert.That(renderer.ActiveShader!.Parameters, Is.SameAs(canvasParameters));
+            if (!drawCanvas) Assert.That(renderer.ReadPixels(false), Is.EqualTo(initialCanvas));
+            else Assert.That(renderer.ReadPixels(false), Is.EqualTo(canvasReference.ReadPixels(false)), "Debug must not alter canvas rendering.");
+            if (frame == 20)
+            {
+                // Reload the inactive Debug scene and preserve the shared checkbox.
+                foreach (var target in new[] { renderer, reference })
+                {
+                    var parameters = target.Scenes.Single(s => s.Name == "Debug").Parameters!;
+                    parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), true);
+                }
+                Assert.That(renderer.ReloadScene("Debug"), Is.True);
+            }
+        }
+        var draws = renderer.DebugDrawCount;
+        clock.Advance(); renderer.Render(false);
+        Assert.That(renderer.DebugDrawCount, Is.EqualTo(draws), "Hidden Debug must do no drawing.");
+        for (int frame = 0; frame < MinimumDecayFrames; frame++)
+        {
+            clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
+        }
+        for (int frame = 0; frame < FinalFrames; frame++)
+        {
+            clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
+            Assert.That(renderer.ReadDebugPixels().Where((_, i) => i % 4 != 3), Is.All.Zero);
+        }
+        renderer.ResizeDebugOutput(200, 100);
+        clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
+        Assert.That(renderer.ReadDebugPixels().Length, Is.EqualTo(200 * 100 * 4));
+        renderer.RestartAudio(new(new Domain(30, 12, 8), 60, 1));
+        clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
+        Assert.That(renderer.ReadDebugPixels().Where((_, i) => i % 4 != 3), Is.All.Zero);
+        var path = Path.Combine(shaders.Path, "Scenes", "Debug.hlsl");
+        var source = File.ReadAllText(path);
+        File.WriteAllText(path, "THIS IS INVALID HLSL");
+        Assert.That(renderer.ReloadScene("Debug"), Is.True, "Inactive scenes compile lazily.");
+        clock.Advance();
+        Assert.DoesNotThrow(() => renderer.Render(false, renderDebug: true));
+        Assert.That(renderer.DebugOutputError, Is.Not.Null, "A diagnostic shader failure must be isolated from the canvas.");
+        Assert.That(renderer.SceneName, Is.EqualTo("Spectrum"));
+        File.WriteAllText(path, source);
+        Assert.That(renderer.ReloadScene("Debug"), Is.True);
+        renderer.ClearDebugOutputError();
+        clock.Advance(); renderer.Render(false, renderDebug: true);
+        Assert.That(renderer.DebugOutputError, Is.Null);
+        renderer.DetachDebugOutput();
+        Assert.That(renderer.HasDebugOutput, Is.False);
+    }
+
     [TestCase(false), TestCase(true), Category("GPU")]
     public void DebugCombinesLiveStereoBarsWithUnchangedHistory(bool combined)
     {

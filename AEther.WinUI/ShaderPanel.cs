@@ -6,8 +6,9 @@ using Windows.Globalization.NumberFormatting;
 
 namespace AEther.WinUI;
 
-public sealed class ShaderWindow : ToolWindow
+public sealed class ShaderPanel : UserControl
 {
+    readonly Grid layout = new() { RowSpacing = 12 };
     readonly StackPanel parameters = new() { Spacing = 12 };
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     readonly Dictionary<string, ShaderParameters> saved = new(StringComparer.Ordinal);
@@ -17,11 +18,12 @@ public sealed class ShaderWindow : ToolWindow
         .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..] ?? "Mandelbox";
     public event EventHandler? SceneChanged;
 
-    public ShaderWindow() : base("AEther scene", 520, 800)
+    public ShaderPanel()
     {
-        Layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        Layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        Layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Content = layout;
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var reload = new Button { Content = "Reload" };
         var reset = new Button { Content = "Reset defaults" };
@@ -30,8 +32,7 @@ public sealed class ShaderWindow : ToolWindow
         reset.Click += (_, _) => { renderer?.ActiveShader?.Parameters?.Reset(); RefreshParameters(); };
         var scroll = new ScrollViewer { Content = parameters, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); Grid.SetRow(status, 2);
-        Layout.Children.Add(buttons); Layout.Children.Add(scroll); Layout.Children.Add(status);
-        Closed += (_, _) => { if (renderer != null) renderer.ShadersChanged -= ShadersChanged; };
+        layout.Children.Add(buttons); layout.Children.Add(scroll); layout.Children.Add(status);
     }
 
     public void Attach(Renderer? value)
@@ -40,13 +41,13 @@ public sealed class ShaderWindow : ToolWindow
         {
             renderer.ShadersChanged -= ShadersChanged;
             foreach (var scene in renderer.Scenes)
-                if (scene.Parameters != null) saved[scene.Name] = scene.Parameters;
+                if (renderer.GetSceneParameters(scene.Name) is { } parameters) saved[scene.Name] = parameters;
         }
         renderer = value;
         if (renderer != null)
         {
             foreach (var scene in renderer.Scenes)
-                if (scene.Parameters != null && saved.TryGetValue(scene.Name, out var previous)) scene.Parameters.Restore(previous);
+                if (saved.TryGetValue(scene.Name, out var previous)) renderer.RestoreSceneParameters(scene.Name, previous);
             if (renderer.Scenes.Any(s => s.Name == SelectedScene)) renderer.SelectScene(SelectedScene);
             renderer.ShadersChanged += ShadersChanged;
         }
@@ -84,7 +85,6 @@ public sealed class ShaderWindow : ToolWindow
             status.Text = renderer.ShaderDirectory;
         }
         else status.Text = "No active rendering session.";
-        Title = $"AEther scene - {SelectedScene}";
         RefreshParameters();
         SceneChanged?.Invoke(this, EventArgs.Empty);
     }

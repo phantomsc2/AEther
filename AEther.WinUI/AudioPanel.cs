@@ -7,18 +7,13 @@ using Windows.Globalization.NumberFormatting;
 
 namespace AEther.WinUI;
 
-public sealed class AudioWindow : ToolWindow
+public sealed class AudioPanel : UserControl
 {
     public AnalyzerOptions Options { get; } = new();
-    internal UIElement GainEditor { get; private set; } = null!;
+    internal FrameworkElement GainEditor { get; private set; } = null!;
     public event EventHandler? SettingsChanged;
 
-    public AudioWindow() : base("AEther audio", 480, 840)
-    {
-        var content = new StackPanel { Spacing = 16 };
-        content.Children.Add(BuildOptions());
-        Layout.Children.Add(new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
-    }
+    public AudioPanel() => Content = BuildOptions();
 
     UIElement BuildOptions()
     {

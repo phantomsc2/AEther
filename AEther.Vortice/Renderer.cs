@@ -61,12 +61,31 @@ public sealed partial class Renderer : IDisposable
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
     public ShaderScene? ActiveShader { get { lock (graphicsGate) return scenes.GetValueOrDefault(SceneName); } }
     public event EventHandler? ShadersChanged;
+    public ShaderParameters? GetSceneParameters(string name)
+    {
+        lock (graphicsGate) return scenes.GetValueOrDefault(name)?.Parameters ?? savedParameters.GetValueOrDefault(name);
+    }
+
+    /// <summary>Restore visited scene values, including programs that are still compiled lazily.</summary>
+    public void RestoreSceneParameters(string name, ShaderParameters parameters)
+    {
+        lock (graphicsGate)
+        {
+            if (!scenes.TryGetValue(name, out var scene)) return;
+            savedParameters[name] = parameters;
+            scene.Parameters?.Restore(parameters);
+        }
+    }
+
     public void SelectScene(string name)
     {
         lock (graphicsGate)
         {
             if (!scenes.TryGetValue(name, out var scene)) throw new ArgumentException("Unknown scene.", nameof(name));
+            bool firstCompilation = !scene.ProgramReady;
             scene.EnsureCompiled();
+            if (firstCompilation && scene.Parameters != null && savedParameters.TryGetValue(name, out var saved))
+                scene.Parameters.Restore(saved);
             if (!scene.ProgramReady) throw new InvalidOperationException($"Scene '{name}' did not compile.");
             SceneName = name;
         }
@@ -274,7 +293,7 @@ public sealed partial class Renderer : IDisposable
             replacement.EnsureCompiled();
             if (scene.Parameters is { } old && replacement.Parameters is { } parameters) parameters.Restore(old);
         }
-        else if (scene.Parameters is { } old && savedParameters.ContainsKey(name)) savedParameters[name] = old;
+        else if (scene.Parameters is { } old) savedParameters[name] = old;
         scenes[name] = replacement;
         scene.Dispose();
         if (StringComparer.Ordinal.Equals(SceneName, name))
@@ -354,15 +373,16 @@ public sealed partial class Renderer : IDisposable
         feedback?.Dispose(); feedback = null;
     }
 
-    public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null)
+    public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null,
+        bool renderCanvas = true, bool renderDebug = false)
     {
         if (syncInterval > 4) throw new ArgumentOutOfRangeException(nameof(syncInterval));
-        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp);
+        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp, renderCanvas, renderDebug);
     }
 
-    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp)
+    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug)
     {
-        if (output.SceneTarget == null) return;
+        if (output.SceneTarget == null || (!renderCanvas && !renderDebug)) return;
         using var gpuFrame = gpu.BeginFrame(Audio.Profile);
         var frameStart = Stopwatch.GetTimestamp();
         if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
@@ -420,6 +440,28 @@ public sealed partial class Renderer : IDisposable
 
 
 
+        if (renderCanvas) DrawCanvas(now, dt);
+        bool debugDrawn = false;
+        if (renderDebug)
+        {
+            GpuMarker("Debug", true);
+            debugDrawn = DrawDebug(frame, now, present, renderCanvas);
+            GpuMarker("Debug", false);
+        }
+        gpu.EndFrame();
+        Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
+        if (Audio.LatestCaptureTimestamp != 0)
+            Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
+        if (Audio.LatestSourceTimestamp.HasValue)
+            Audio.Profile?.Elapsed("render.source_to_submission_ms", Audio.LatestSourceTimestamp.Value);
+        var presentStart = Stopwatch.GetTimestamp();
+        if (present && debugDrawn) PresentDebug(renderCanvas, syncInterval);
+        if (present && renderCanvas) output.Present(syncInterval);
+        if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
+    }
+
+    void DrawCanvas(double now, double dt)
+    {
         var active = ActiveShader!;
         if (!active.ProgramReady && !CompileScene(active.Name)) throw new InvalidOperationException(ShaderError);
         active = ActiveShader!;
@@ -521,7 +563,7 @@ public sealed partial class Renderer : IDisposable
             namedSamplers["DistanceSampler"] = distanceField.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
-        context.OMSetRenderTargets(output.SceneTarget);
+        context.OMSetRenderTargets(output.SceneTarget!);
         GpuMarker("Scene", true);
         (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         if (active.FourierShadow != null) GpuMarker("Fourier camera", true);
@@ -533,15 +575,6 @@ public sealed partial class Renderer : IDisposable
         GpuMarker("Output", true);
         output.Draw(outputPixel, now);
         GpuMarker("Output", false);
-        gpu.EndFrame();
-        Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
-        if (Audio.LatestCaptureTimestamp != 0)
-            Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
-        if (Audio.LatestSourceTimestamp.HasValue)
-            Audio.Profile?.Elapsed("render.source_to_submission_ms", Audio.LatestSourceTimestamp.Value);
-        var presentStart = Stopwatch.GetTimestamp();
-        if (present) output.Present(syncInterval);
-        if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
     }
 
     /// <summary>Display-encoded RGBA8 export; dithering avoids reintroducing bands in PNGs.</summary>
@@ -564,6 +597,7 @@ public sealed partial class Renderer : IDisposable
         if (disposed) return;
         disposed = true;
         context?.ClearState(); context?.Flush();
+        DetachDebugOutput();
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();

@@ -32,8 +32,21 @@ History integrates piecewise-constant observations over each pixel's time
 footprint, preserving smooth subpixel scrolling without inventing intermediate
 observations. Missing rows remain black. Live bars use the newest block consumed
 this display frame and are black when no new block became due, matching `Spectrum`.
-The view uses the existing analysis stream and scene picker; the text diagnostics
-window is unchanged. With stopped or silent audio, all scene RGB eventually turns
+The main hub embeds this view below Gain in its left column, exposing the
+audio-to-scene dataflow beside the scene controls in the equal-width right column.
+Debug contains the separate timing and status text. The view prefers a height of
+at least 220 logical pixels or two logical pixels per frequency band, whichever
+is greater, but fits the available space with thinner bands at high density.
+Neither the analysis view nor the overall hub scrolls. Only the expanded Audio
+settings and shader settings scroll independently inside their own bounded panels.
+It shares the canvas renderer's device, audio textures, history, and rendering
+thread; it does not start another capture or analyzer. The selected canvas scene
+and its parameters stay unchanged. The graph continues updating when the canvas is
+hidden, while a hidden or minimized hub performs no analysis-view drawing.
+Both outputs use their own resolution, DPI, and monitor white level. Resize,
+shader reloads, and session restarts reconnect the view automatically. The
+Debug scene remains available in the scene picker, with shared shader parameters.
+With stopped or silent audio, all scene RGB eventually turns
 black as history scrolls out. Residual and smoother comparisons remain in `Spectrum`.
 
 GPU timestamp comparison at 1280x720 on Intel Arc Graphics (128 bands, 60 analysis
@@ -618,21 +631,26 @@ spanning orders of magnitude, and rounding for discrete choices.
 
 ## Reload and UI behavior
 
-The application opens a primary hub with Input, Gain (dB), and Scene controls,
-plus Canvas, Audio, Scene and Debug buttons. Audio contains the remaining generated
-analyzer controls. Debug shows timing and application status/errors. Each button
-toggles its owned window, and closing a side window hides it without losing state.
-Closing the hub stops the session and exits the application.
+The application opens a resizable hub with two equal-width columns. Input, Gain
+(dB), and Analysis are pinned on the left, with a collapsed Audio expander below.
+Audio reveals the generated analyzer settings in a bounded scroller. The unlabeled
+Scene picker is pinned on the right and starts empty. Selecting a scene opens the
+canvas and shows Reload, Reset defaults, the parameter tree and shader diagnostics
+below the picker. Shader settings scroll independently of Audio settings; the hub
+and Analysis view do not scroll. Debug remains a separate status/timing window.
+Closing the hub stops the session and exits the application. An explicit
+`--scene=Name` argument opts into selecting and opening a scene at startup.
 
-The unlabeled Scene picker sits directly below Gain. Selection updates rendering
-without opening the properties window. The Scene button opens Reload, Reset defaults,
-the current parameter tree and shader diagnostics. F6 toggles Scene from the render
-window or other tools, and hides it when Scene has focus. Escape hides the focused tool.
+F6 activates the hub and focuses the Scene picker. Escape dismisses the canvas or
+hides the focused Debug window. Collapsing Audio affects only layout.
 Scene selection and controls operate on the existing renderer without restarting audio.
 Audio edits restart analysis while retaining graphics. The untitled canvas has a
 normal title bar and resizable border. Move it to the desired monitor; F11 explicitly
 toggles fullscreen on that monitor. Restarts preserve its placement. Space in the
-canvas activates the hub; Escape hides the canvas, and Canvas in the hub reopens it.
+canvas activates the hub. Closing the canvas or pressing Escape clears the scene
+picker. Selecting a scene, including the same one, reopens the canvas with retained
+parameters and without restarting capture. Audio edits and shader reloads preserve
+the empty picker while the canvas is dismissed. Minimizing a window keeps its selection.
 Monitor-specific white level and DPI follow the canvas window automatically.
 
 A reload builds a complete candidate set before swapping programs, parameter layouts,

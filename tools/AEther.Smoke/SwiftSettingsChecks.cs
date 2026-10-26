@@ -23,17 +23,24 @@ internal static partial class Program
             var app = new WindowCheckApplication();
             app.StartChecks = () =>
             {
-                var settings = new AudioWindow { Title = "Slider commits: 0" };
+                var settings = new AudioPanel();
+                var host = new AudioProbeWindow(settings);
                 int commits = 0;
                 settings.SettingsChanged += (_, _) =>
                 {
-                    settings.Title = $"Slider commits: {++commits}";
+                    host.Title = $"Slider commits: {++commits}";
                     Console.WriteLine($"Commit {commits}: min frequency {settings.Options.MinFrequency:G17}");
                 };
-                settings.ShortcutRequested += _ => { settings.Destroy(); app.Exit(); };
-                settings.Activate();
+                host.ShortcutRequested += _ => { host.Destroy(); app.Exit(); };
+                host.Activate();
             };
         });
+    }
+
+    sealed class AudioProbeWindow : ToolWindow
+    {
+        public AudioProbeWindow(AudioPanel panel) : base("Slider commits: 0", 480, 840) =>
+            Layout.Children.Add(new ScrollViewer { Content = panel, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
     }
 
     static void CheckSwiftSettings()
@@ -51,7 +58,7 @@ internal static partial class Program
                 try
                 {
                     // Construct the real controls without activating or displaying a window.
-                    var settings = new AudioWindow();
+                    var settings = new AudioPanel();
                     var elements = LogicalChildren((DependencyObject)settings.Content).ToArray();
                     var numbers = elements.OfType<NumberBox>().ToArray();
                     var width = numbers.Single(n => n.Header?.ToString() == "SWIFT width");
