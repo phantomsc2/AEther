@@ -12,8 +12,13 @@ namespace AEther
         /// <summary>Optional channel-major residual RMS in linear amplitude units, one value per band.
         /// Like Samples, pooled analyzer storage is valid only during the event callback.</summary>
         public ReadOnlyMemory<double> ResidualRms { get; init; }
-        /// <summary>Signed current residual A - B - S - T; callback lifetime matches Samples.</summary>
+        /// <summary>Optional diagnostic plane. Log-polar analysis supplies the fourth
+        /// squashed coordinate here for the existing Spectrum ShowR control.
+        /// Legacy STBR callers supply A-B-S-T. Callback lifetime matches Samples.</summary>
         public ReadOnlyMemory<double> MomentaryResidual { get; init; }
+        /// <summary>Optional coherent observed magnitude before tracking, one value per
+        /// band/channel. Used for same-frame raw versus inferred Spectrum diagnostics.</summary>
+        public ReadOnlyMemory<double> ObservedAmplitude { get; init; }
         public long SampleIndex { get; init; }
         /// <summary>Device-frame/QPC correlation shared by all rows in this stream epoch.</summary>
         public AudioStreamClock? StreamClock { get; init; }

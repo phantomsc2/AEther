@@ -43,9 +43,9 @@ namespace AEther.Tests
             var rows = new List<long>();
             var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var support = new List<int>();
-            analyzer.JointEvidenceAvailable += (_, evt) =>
+            analyzer.TrackerStatesAvailable += (_, evt) =>
             {
-                support.Add(evt.GetChannel(0).Span[0].TimeSamples);
+                support.Add(evt.GetChannel(0).Span[0].Observations);
             };
             analyzer.SamplesAnalyzed += (_, evt) =>
             {
@@ -66,7 +66,7 @@ namespace AEther.Tests
                 await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             }
             Assert.That(rows, Is.EqualTo(new long[] { 4, 5, 6 }), "Overflow keeps the newest queued audio.");
-            Assert.That(support, Is.EqualTo(new[] { 1, 2, 3 }), "Fits start fresh after the dropped prefix.");
+            Assert.That(support, Is.EqualTo(new[] { 1, 2, 3 }), "Trackers start fresh after the dropped prefix.");
         }
 
         [Test]
@@ -79,7 +79,7 @@ namespace AEther.Tests
             {
                 analyzer.Start();
                 analyzer.PostSamples(Audio(80));
-                Assert.That(await received.Task.WaitAsync(TimeSpan.FromSeconds(5)), Is.EqualTo(Splitter.OutputStride * analyzer.Domain.Length));
+                Assert.That(await received.Task.WaitAsync(TimeSpan.FromSeconds(5)), Is.EqualTo(LogPolarTracker.OutputStride * analyzer.Domain.Length));
             }
             finally
             {
@@ -174,21 +174,21 @@ namespace AEther.Tests
         }
 
         [Test]
-        public async Task PublishedResidualMatchesLinearSplitterEstimates()
+        public async Task FourthTrackerCoordinateReachesExistingSpectrumDiagnosticPlane()
         {
             var analyzer = new Analyzer(Format, Options());
-            double[] expected = null!;
             int count = 0;
-            analyzer.JointEvidenceAvailable += (_, e) =>
-            {
-                expected = new double[e.SampleCount * Format.ChannelCount];
-                for (int c = 0; c < Format.ChannelCount; c++)
-                    for (int k = 0; k < e.SampleCount; k++)
-                        expected[c * e.SampleCount + k] = e.GetChannel(c).Span[k].ResidualRms;
-            };
+            double[] observed = null!;
+            analyzer.TrackerStatesAvailable += (_, e) => observed = Enumerable.Range(0, Format.ChannelCount)
+                .SelectMany(c => e.GetChannel(c).ToArray().Select(s => s.ObservedAmplitude)).ToArray();
             analyzer.SamplesAnalyzed += (_, e) =>
             {
-                Assert.That(e.ResidualRms.ToArray(), Is.EqualTo(expected));
+                Assert.That(e.ResidualRms.IsEmpty, Is.True);
+                Assert.That(e.ObservedAmplitude.ToArray(), Is.EqualTo(observed));
+                for (int c = 0; c < Format.ChannelCount; c++)
+                    for (int k = 0; k < analyzer.Domain.Length; k++)
+                        Assert.That(e.MomentaryResidual.Span[c * analyzer.Domain.Length + k],
+                            Is.EqualTo(e.GetChannel(c).Span[4 * k + 3]));
                 count++;
             };
             analyzer.PostSamples(Audio(160));
@@ -212,6 +212,9 @@ namespace AEther.Tests
             options.SwiftImbalance = .5;
             var analyzer = new Analyzer(Format, options);
             var rows = Collect(analyzer);
+            LogPolarState[][] states = null!;
+            analyzer.TrackerStatesAvailable += (_, e) => states = Enumerable.Range(0, Format.ChannelCount)
+                .Select(c => e.GetChannel(c).ToArray()).ToArray();
             var bytes = Audio(80);
             analyzer.PostSamples(bytes);
             analyzer.Stop();
@@ -230,7 +233,7 @@ namespace AEther.Tests
                 var expected = new double[options.Domain.Length];
                 processor.OutputLinear(expected);
                 for (var k = 0; k < expected.Length; ++k)
-                    Assert.That(rows[0][c * Splitter.OutputStride * expected.Length + Splitter.OutputStride * k + 3],
+                    Assert.That(states[c][k].ObservedAmplitude,
                         Is.EqualTo(expected[k]).Within(1e-12));
             }
         }
@@ -247,7 +250,7 @@ namespace AEther.Tests
         public void RejectsInvalidFilterWindowsAndFrequencies()
         {
             var options = Options();
-            options.TimeWindowSeconds = 0;
+            options.AmplitudeTrackingSeconds = 0;
             Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, options));
             options = Options();
             options.MaxFrequency = 5000;

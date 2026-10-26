@@ -7,6 +7,7 @@ cbuffer Parameters
     bool ShowB = true;
     bool ShowR = true;
     bool ShowSum = false;
+    bool CompareAmplitude = false;
 };
 float4 PS(PSin input) : SV_Target
 {
@@ -15,6 +16,14 @@ float4 PS(PSin input) : SV_Target
     int bin = min((int)((1 - input.UV.y) * width), (int)width - 1);
     float4 v = input.UV.x < .5 ? Spectrum0.Load(int3(bin, 0, 0)) : Spectrum1.Load(int3(bin, 0, 0));
     float x = 2 * abs(input.UV.x - .5);
+    if (CompareAmplitude)
+    {
+        // Same mapping and analysis row: red fill is inferred log-amplitude;
+        // white marker is the observed magnitude before the tracker.
+        float observed = input.UV.x < .5 ? Spectrum0.Load(int3(bin, 1, 0)).g : Spectrum1.Load(int3(bin, 1, 0)).g;
+        float marker = observed > 0 && abs(x - observed) < 1.5 / Resolution.x ? 1 : 0;
+        return float4(max(float3(x < v.r ? 1 : 0, 0, 0), marker.xxx), 1);
+    }
     bool raw = !(ShowS || ShowT || ShowB || ShowR);
     // Magnitude of the signed residual, computed before clamping the fitted effects.
     float r = abs(input.UV.x < .5 ? Spectrum0.Load(int3(bin, 1, 0)).r : Spectrum1.Load(int3(bin, 1, 0)).r);

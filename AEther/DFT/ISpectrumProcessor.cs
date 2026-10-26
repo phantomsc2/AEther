@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 
 namespace AEther;
 
@@ -7,6 +8,10 @@ public interface ISpectrumProcessor
 {
     void Process(ReadOnlyMemory<double> samples);
     void OutputLinear(Memory<double> destination);
+    /// <summary>Coherent complex amplitude, normalized exactly like OutputLinear.</summary>
+    void OutputComplex(Memory<Complex> destination);
+    /// <summary>Actual carrier centers, including finite-DFT bin quantization.</summary>
+    ReadOnlyMemory<double> Frequencies { get; }
     void Output(Memory<double> destination);
     void Reset();
 }

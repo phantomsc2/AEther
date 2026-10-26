@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Linq;
+using System.Numerics;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Channels;
@@ -13,8 +14,8 @@ namespace AEther
     {
         public PipelineProfile Profile { get; } = new();
         public event EventHandler<SampleEvent<double>>? SamplesAnalyzed;
-        /// <summary>Signed local-fit effects and standardized scores. Memory is valid only during the callback.</summary>
-        public event EventHandler<SampleEvent<JointEvidence>>? JointEvidenceAvailable;
+        /// <summary>Raw signed log-polar states before display squashing. Callback-lifetime memory.</summary>
+        public event EventHandler<SampleEvent<LogPolarState>>? TrackerStatesAvailable;
         public event EventHandler<double>? TransientDetected;
         public event EventHandler<AudioFeatures>? FeaturesAvailable;
         public readonly SampleFormat Format;
@@ -26,7 +27,7 @@ namespace AEther
         readonly double InputGain;
         readonly byte[] Batch;
         readonly ISpectrumProcessor[] Spectrum;
-        readonly Splitter[] Splitters;
+        readonly LogPolarTracker[] Trackers;
         readonly TransientDetector[] Transients;
         readonly AudioFeatureExtractor Features;
         readonly record struct InputPacket(SampleEvent<byte> Event, long Arrival, AudioPacketTiming? Timing);
@@ -65,11 +66,14 @@ namespace AEther
             Profile.Describe("Window function", options.WindowFunction.ToString());
             Profile.Describe("Spectrum backend", options.UseSwift ? "SWIFT" : "DFT");
             Batch = new byte[checked(BatchSize * Format.Size)];
-            Profile.Describe("Decomposition", "STBR: rolling Gaussian additive fit / residual RMS");
-            Splitters = Enumerable.Range(0, Format.ChannelCount)
-                .Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
+            Profile.Describe("Decomposition", "Log-polar Kalman: white-noise acceleration, observed-magnitude noise, two 2x2 blocks");
+            Profile.Describe("Amplitude response seconds", options.AmplitudeTrackingSeconds.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Phase response seconds", options.PhaseTrackingSeconds.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Tracker noise RMS", options.TrackerNoiseFloor.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Spectrum = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => SpectrumProcessor.Create(Domain, Format.SampleRate, options)).ToArray();
+            Trackers = Spectrum.Select(s => new LogPolarTracker(s.Frequencies,
+                BatchSize / (double)Format.SampleRate, options)).ToArray();
             if (Spectrum[0] is SwiftProcessor swift)
             {
                 var bands = swift.Bands.ToArray();
@@ -140,7 +144,7 @@ namespace AEther
         void ResetAnalysis()
         {
             foreach (var processor in Spectrum) processor.Reset();
-            foreach (var splitter in Splitters) splitter.Reset();
+            foreach (var tracker in Trackers) tracker.Reset();
             foreach (var transient in Transients) transient.Reset();
             Features.Reset();
             Interlocked.Increment(ref generation);
@@ -325,12 +329,12 @@ namespace AEther
         {
             using var totalTiming = Profile.Measure("analysis.total_ms");
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
-            var spectrum = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
-            var output = RentEvent<double>(AEther.Splitter.OutputStride * Domain.Length, Format.ChannelCount, time);
-            var residual = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
+            var spectrum = RentEvent<Complex>(Domain.Length, Format.ChannelCount, time);
+            var output = RentEvent<double>(LogPolarTracker.OutputStride * Domain.Length, Format.ChannelCount, time);
             var momentary = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
-            var jointEvidence = JointEvidenceAvailable is not null
-                ? RentEvent<JointEvidence>(Domain.Length, Format.ChannelCount, time) : null;
+            var observed = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
+            var trackerStates = TrackerStatesAvailable is not null
+                ? RentEvent<LogPolarState>(Domain.Length, Format.ChannelCount, time) : null;
             try
             {
                 using (Profile.Measure("analysis.decode_ms"))
@@ -359,38 +363,37 @@ namespace AEther
                     using (Profile.Measure("analysis.dft_channel_ms"))
                     {
                     Spectrum[c].Process(samples.GetChannel(c));
-                    Spectrum[c].OutputLinear(spectrum.GetChannel(c));
+                    Spectrum[c].OutputComplex(spectrum.GetChannel(c));
                     }
                     using (Profile.Measure("analysis.split_channel_ms"))
                     {
-                        Splitters[c].ProcessLinear(spectrum.GetChannel(c), output.GetChannel(c));
-                        var estimates = Splitters[c].Estimates.Span;
-                        var residualChannel = residual.GetChannel(c).Span;
-                        for (var k = 0; k < estimates.Length; k++)
+                        Trackers[c].Process(spectrum.GetChannel(c), output.GetChannel(c));
+                        // Existing Spectrum ShowR reads this diagnostic plane. The
+                        // fourth model coordinate also occupies alpha/raw fallback.
+                        for (var k = 0; k < Domain.Length; k++)
                         {
-                            var e = estimates[k];
-                            residualChannel[k] = e.ResidualRms;
-                            momentary.GetChannel(c).Span[k] = e.Amplitude - e.Background - e.Sine - e.Transient;
+                            momentary.GetChannel(c).Span[k] = output.GetChannel(c).Span[k * LogPolarTracker.OutputStride + 3];
+                            observed.GetChannel(c).Span[k] = Trackers[c].States.Span[k].ObservedAmplitude;
                         }
-                        if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
+                        if (trackerStates is not null) Trackers[c].States.CopyTo(trackerStates.GetChannel(c));
                     }
                 }
                 // Publish immediately; render pacing belongs to the renderer.
                 output = output with { MomentaryResidual = momentary.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
-                    ResidualRms = residual.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
+                    ObservedAmplitude = observed.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
                     SampleIndex = row * BatchSize, AnalysisRow = row,
                     StreamClock = streamClock,
                     CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
                     SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                     DiscontinuityGeneration = Interlocked.Read(ref generation) };
-                if (jointEvidence is not null)
+                if (trackerStates is not null)
                 {
-                    jointEvidence = jointEvidence with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
+                    trackerStates = trackerStates with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
                         StreamClock = streamClock,
                         CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp,
                         SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                         DiscontinuityGeneration = output.DiscontinuityGeneration };
-                    JointEvidenceAvailable?.Invoke(this, jointEvidence);
+                    TrackerStatesAvailable?.Invoke(this, trackerStates);
                 }
                 Profile.Record("analysis.capture_to_completion_ms", AudioClock.Seconds(AudioClock.Now(Clock) - captureTimestamp) * 1000);
                 if (end.HasValue) Profile.Record("analysis.source_age_ms", AudioClock.Seconds(AudioClock.Now(Clock) - end.Value) * 1000);
@@ -403,10 +406,10 @@ namespace AEther
             {
                 ReturnEvent(samples);
                 ReturnEvent(spectrum);
-                ReturnEvent(residual);
                 ReturnEvent(momentary);
+                ReturnEvent(observed);
                 ReturnEvent(output);
-                if (jointEvidence is not null) ReturnEvent(jointEvidence);
+                if (trackerStates is not null) ReturnEvent(trackerStates);
             }
         }
 

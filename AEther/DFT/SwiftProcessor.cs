@@ -12,11 +12,13 @@ namespace AEther;
 public sealed class SwiftProcessor : ISpectrumProcessor
 {
     readonly SwiftBand[] bands;
+    readonly double[] frequencies;
     readonly double[] pr, pi, qr, qi, yr, yi, ar, ai, br, bi, ca, cb, rr, ri, expiry;
     readonly bool vectorized;
     readonly long maxExpiry;
     long silent;
     public ReadOnlyMemory<SwiftBand> Bands => bands;
+    public ReadOnlyMemory<double> Frequencies => frequencies;
     public bool IsVectorized => vectorized;
 
     public SwiftProcessor(Domain domain, double sampleRate, bool useSIMD,
@@ -30,6 +32,7 @@ public sealed class SwiftProcessor : ISpectrumProcessor
         if (!double.IsFinite(sampleRate) || sampleRate <= 0) throw new ArgumentOutOfRangeException(nameof(sampleRate));
         if (settings.IsEmpty) throw new ArgumentException("At least one bin is required.", nameof(settings));
         bands = settings.ToArray();
+        frequencies = bands.Select(b => b.Frequency).ToArray();
         vectorized = useSIMD && Vector.IsHardwareAccelerated;
         var size = (bands.Length + Vector<double>.Count - 1) / Vector<double>.Count * Vector<double>.Count;
         pr = new double[size]; pi = new double[size]; qr = new double[size]; qi = new double[size];
@@ -146,5 +149,11 @@ public sealed class SwiftProcessor : ISpectrumProcessor
     {
         OutputLinear(destination);
         for (var k = 0; k < bands.Length; ++k) destination.Span[k] = Math.Log10(destination.Span[k]);
+    }
+
+    public void OutputComplex(Memory<Complex> destination)
+    {
+        if (destination.Length < bands.Length) throw new ArgumentException("Spectrum destination is too short.", nameof(destination));
+        for (var k = 0; k < bands.Length; ++k) destination.Span[k] = 2 * GetOutput(k);
     }
 }

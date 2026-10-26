@@ -26,7 +26,7 @@ namespace AEther
         public int FrequencyResolution { get; set; } = 12;
 
         [Category("DFT")]
-        [Description("Spectrum publication and STBR Gaussian fit update rate.")]
+        [Description("Spectrum publication and log-polar tracker update rate.")]
         public int TimeResolution { get; set; } = 1000;
 
         [Category("DFT")]
@@ -66,17 +66,30 @@ namespace AEther
         [Description("Gain before all analysis, from -60 to +60 dB. 0 dB preserves full-scale input units. For consistent loopback visuals, keep player volume at 100% and adjust listening volume downstream of capture.")]
         public double InputGainDb { get; set; } = 15.0;
 
-        [Category("STBR fit")]
-        [DisplayName("Time window (seconds)")]
-        [DefaultValue(.2)]
-        [Description("Causal time extent of the Gaussian STBR fit in seconds.")]
+        // Retained for historical standalone splitter studies, outside the active UI.
+        [Browsable(false)]
         public double TimeWindowSeconds { get; set; } = .2;
 
-        [Category("STBR fit")]
-        [DisplayName("Frequency window (octaves)")]
-        [DefaultValue(2.0)]
-        [Description("Centered log-frequency extent of the Gaussian STBR fit in octaves.")]
+        [Browsable(false)]
         public double FrequencyWindowOctaves { get; set; } = 2;
+
+        [Category("Log-polar tracker")]
+        [DisplayName("Amplitude response (seconds)")]
+        [DefaultValue(.1)]
+        [Description("Characteristic amplitude tracking time at amplitude 0.1 and noise RMS 0.001. Actual response depends on signal/noise ratio; this is not a settling-time guarantee.")]
+        public double AmplitudeTrackingSeconds { get; set; } = .1;
+
+        [Category("Log-polar tracker")]
+        [DisplayName("Phase response (seconds)")]
+        [DefaultValue(.1)]
+        [Description("Characteristic phase tracking time in seconds at the same reference signal/noise ratio as amplitude. Phase is experimental; no phase-jump rejection or frequency snapping is applied.")]
+        public double PhaseTrackingSeconds { get; set; } = .1;
+
+        [Category("Log-polar tracker")]
+        [DisplayName("Measurement noise RMS")]
+        [DefaultValue(.001)]
+        [Description("Fixed Cartesian noise RMS per real/imaginary component in coherent amplitude units AFTER input gain. Larger values reduce trust in measurements.")]
+        public double TrackerNoiseFloor { get; set; } = .001;
 
         public void Validate(SampleFormat format)
         {
@@ -107,7 +120,17 @@ namespace AEther
                     "SWIFT bandwidth must be smaller than the sample rate. Reduce width or increase bins per octave.");
             if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)
                 throw new ArgumentOutOfRangeException(nameof(HistorySeconds));
-            ValidateSplitter(FrequencyResolution, TimeResolution);
+            ValidateTracker();
+        }
+
+        internal void ValidateTracker()
+        {
+            if (!double.IsFinite(AmplitudeTrackingSeconds) || AmplitudeTrackingSeconds < .001 || AmplitudeTrackingSeconds > 10)
+                throw new ArgumentOutOfRangeException(nameof(AmplitudeTrackingSeconds));
+            if (!double.IsFinite(PhaseTrackingSeconds) || PhaseTrackingSeconds < .001 || PhaseTrackingSeconds > 10)
+                throw new ArgumentOutOfRangeException(nameof(PhaseTrackingSeconds));
+            if (!double.IsFinite(TrackerNoiseFloor) || TrackerNoiseFloor < 1e-12 || TrackerNoiseFloor > 1e3)
+                throw new ArgumentOutOfRangeException(nameof(TrackerNoiseFloor));
         }
 
         internal void ValidateSplitter(int resolution, double rate)

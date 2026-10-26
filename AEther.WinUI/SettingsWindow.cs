@@ -113,8 +113,11 @@ public sealed class SettingsWindow : ToolWindow
                 else
                 {
                     var integral = property.PropertyType == typeof(int);
-                    var logarithmic = property.Name == nameof(AnalyzerOptions.SwiftWidthScale);
-                    var step = integral ? 1 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
+                    var noiseFloor = property.Name == nameof(AnalyzerOptions.TrackerNoiseFloor);
+                    var logarithmic = property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
+                        or nameof(AnalyzerOptions.TrackerNoiseFloor)
+                        or nameof(AnalyzerOptions.AmplitudeTrackingSeconds) or nameof(AnalyzerOptions.PhaseTrackingSeconds);
+                    var step = integral ? 1 : noiseFloor ? .0001 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
                         or nameof(AnalyzerOptions.SwiftImbalance) ? .01 : .001;
                     double ToSlider(double value) => logarithmic ? Math.Log2(value) : value;
                     double FromSlider(double value) => logarithmic ? Math.Pow(2, value) : value;
@@ -124,8 +127,8 @@ public sealed class SettingsWindow : ToolWindow
                         Value = Convert.ToDouble(property.GetValue(Options)),
                         SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
                         SmallChange = step,
-                        LargeChange = integral ? 10 : .1,
-                        NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : 3 },
+                        LargeChange = integral ? 10 : noiseFloor ? .001 : .1,
+                        NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : noiseFloor ? 6 : 3 },
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         Minimum = NumericBounds(property.Name).Minimum,
                         Maximum = NumericBounds(property.Name).Maximum,
@@ -213,8 +216,9 @@ public sealed class SettingsWindow : ToolWindow
         nameof(AnalyzerOptions.SwiftImbalance) => (0, 1),
         nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
         nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
-        nameof(AnalyzerOptions.TimeWindowSeconds) => (2.0 / Options.TimeResolution, 2),
-        nameof(AnalyzerOptions.FrequencyWindowOctaves) => (2.0 / Options.FrequencyResolution, 8),
+        nameof(AnalyzerOptions.AmplitudeTrackingSeconds) => (.001, 2),
+        nameof(AnalyzerOptions.PhaseTrackingSeconds) => (.001, 2),
+        nameof(AnalyzerOptions.TrackerNoiseFloor) => (1e-6, .1),
         _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),
     };
 
@@ -223,7 +227,7 @@ public sealed class SettingsWindow : ToolWindow
     sealed class WidthToolTipConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language) =>
-            Math.Pow(2, (double)value).ToString("0.###", System.Globalization.CultureInfo.CurrentCulture);
+            Math.Pow(2, (double)value).ToString("0.######", System.Globalization.CultureInfo.CurrentCulture);
 
         public object ConvertBack(object value, Type targetType, object parameter, string language) =>
             throw new NotSupportedException();

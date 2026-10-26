@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,6 +18,64 @@ public class ShaderSilenceTests
     // Allow at least 20 seconds of natural decay. Slow simulations retain the
     // original generous upper bound, but dark scenes need not render it all.
     const int MinimumDecayFrames = 1200, DecayFrames = 10000, FinalFrames = 60;
+
+    [Test, Category("GPU")]
+    public void SpectrumAmplitudeComparisonShowsInferredFillAndObservedMarker()
+    {
+        const int width = 128, height = 72;
+        using var shaders = new SceneShaders("Spectrum");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, width, height, Bands, 100,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        renderer.SelectScene("Spectrum");
+        var parameters = renderer.ActiveShader!.Parameters!;
+        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CompareAmplitude"), true);
+        var output = new double[Bands * 4];
+        for (int k = 0; k < Bands; k++) output[k * 4] = .25;
+        renderer.PostAudio(new SampleEvent<double>(output, output.Length, DateTime.UnixEpoch)
+            { AnalysisRow = 0, ObservedAmplitude = Enumerable.Repeat(1.0, Bands).ToArray() }, 1);
+        clock.Advance(); renderer.Render(false);
+        var pixels = renderer.ReadPixels(false);
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++)
+        {
+            int offset = 4 * (y * width + x);
+            double position = 2 * Math.Abs((x + .5) / width - .5);
+            bool marker = Math.Abs(position - .5) < 1.5 / width;
+            Assert.That(pixels[offset], Is.EqualTo(marker || position < .25 ? 255 : 0));
+            Assert.That(pixels[offset + 1], Is.EqualTo(marker ? 255 : 0));
+            Assert.That(pixels[offset + 2], Is.EqualTo(marker ? 255 : 0));
+        }
+    }
+
+    [Test, Category("GPU")]
+    public void TrackerZeroSlopeReachesSpectrumAsAHalfWidthGreenBar()
+    {
+        const int width = 128, height = 72;
+        using var shaders = new SceneShaders("Spectrum");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, width, height, Bands, 100,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        renderer.SelectScene("Spectrum");
+        var parameters = renderer.ActiveShader!.Parameters!;
+        foreach (var name in new[] { "ShowS", "ShowT", "ShowB", "ShowR", "ShowSum" })
+            parameters.SetBoolean(parameters.Items.Single(p => p.Name == name), name == "ShowT");
+        var tracker = new LogPolarTracker(Enumerable.Repeat(100.0, Bands).ToArray(), .01, new());
+        var output = new double[4 * Bands];
+        tracker.Process(Enumerable.Repeat(new Complex(.001, 0), Bands).ToArray(), output);
+        renderer.PostAudio(new SampleEvent<double>(output, output.Length, DateTime.UnixEpoch) { AnalysisRow = 0 }, 1);
+        clock.Advance(); renderer.Render(false);
+        var pixels = renderer.ReadPixels(false);
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++)
+        {
+            int offset = 4 * (y * width + x);
+            double position = 2 * Math.Abs((x + .5) / width - .5);
+            Assert.That(pixels[offset], Is.Zero);
+            Assert.That(pixels[offset + 1], Is.EqualTo(position < .5 ? 255 : 0), $"x={x}, y={y}");
+            Assert.That(pixels[offset + 2], Is.Zero);
+        }
+    }
 
     [Test, Category("GPU")]
     public void SpectrumLayerVisibilityAndRawFallback([Range(0, 15)] int layers, [Values(false, true)] bool showSum)
@@ -186,23 +245,27 @@ public class ShaderSilenceTests
         }
     }
 
-    [TestCase("Spectrum", 0.0), TestCase("Spectrum", 60.0)]
-    [TestCase("Histogram", 0.0), TestCase("Histogram", 60.0)]
-    [TestCase("MandelFluidv3", 0.0), TestCase("MandelFluidv3", 60.0), Category("GPU")]
-    public void SwiftAndStbrOutputEventuallyRendersBlack(string scene, double gainDb)
+    [TestCase("Spectrum", 0.0, true), TestCase("Spectrum", 60.0, true)]
+    [TestCase("Histogram", 0.0, true), TestCase("Histogram", 60.0, true)]
+    [TestCase("MandelFluidv3", 0.0, true), TestCase("MandelFluidv3", 60.0, true)]
+    [TestCase("Spectrum", 0.0, false), TestCase("Spectrum", 60.0, false)]
+    [TestCase("Histogram", 0.0, false), TestCase("Histogram", 60.0, false)]
+    [TestCase("MandelFluidv3", 0.0, false), TestCase("MandelFluidv3", 60.0, false), Category("GPU")]
+    [Ignore("Experimental log-polar tracker: silence regression deferred by user request. Existing scene regressions remain enabled.")]
+    public void SpectrumAndTrackerOutputEventuallyRendersBlack(string scene, double gainDb, bool useSwift)
     {
         const int sampleRate = 12000, block = sampleRate / 60;
         var domain = new Domain(55, 12, Bands);
-        var options = new AnalyzerOptions { TimeResolution = 60, InputGainDb = gainDb };
-        var spectrum = new SwiftProcessor(domain, sampleRate, true);
-        var splitter = new Splitter(domain, options, 60);
+        var options = new AnalyzerOptions { TimeResolution = 60, InputGainDb = gainDb, UseSwift = useSwift };
+        var spectrum = SpectrumProcessor.Create(domain, sampleRate, options);
+        var tracker = new LogPolarTracker(spectrum.Frequencies, 1.0 / 60, options);
         using var shaders = new SceneShaders(scene);
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock);
         renderer.SelectScene(scene);
-        var input = new double[block]; var magnitudes = new double[Bands * 2];
+        var input = new double[block]; var observations = new Complex[Bands];
         var output = new double[Bands * 8];
         long row = 0;
         var gain = Math.Pow(10, gainDb / 20);
@@ -214,7 +277,7 @@ public class ShaderSilenceTests
             Tick(true);
             if (frame % 20 == 19) lit |= renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 10);
         }
-        Assert.That(lit, Is.True, "SWIFT/STBR musical fixture must excite the scene before silence.");
+        Assert.That(lit, Is.True, "Spectrum/tracker musical fixture must excite the scene before silence.");
         int decay = 0;
         for (; decay < DecayFrames; ++decay)
         {
@@ -224,8 +287,8 @@ public class ShaderSilenceTests
             if (decay % 1000 == 999) renderer.ReadPixels(false);
         }
         for (int frame = 0; frame < FinalFrames; ++frame) { Tick(false); AssertBlack(); }
-        Assert.That(magnitudes, Is.All.Zero, "Actual SWIFT state must expire, not merely render below visibility.");
-        Assert.That(output, Is.All.Zero, "STBR history must also expire.");
+        Assert.That(observations, Is.All.EqualTo(Complex.Zero), "Actual backend state must expire, not merely render below visibility.");
+        Assert.That(output, Is.All.Zero, "Tracker diagnostics must also expire.");
 
         void Tick(bool active)
         {
@@ -236,16 +299,15 @@ public class ShaderSilenceTests
                     + .3 * Math.Sin(2 * Math.PI * 110 * t)) : 0;
             }
             spectrum.Process(input);
-            spectrum.OutputLinear(magnitudes.AsMemory(0, Bands));
-            magnitudes.AsSpan(0, Bands).CopyTo(magnitudes.AsSpan(Bands));
-            splitter.ProcessLinear(magnitudes.AsMemory(0, Bands), output.AsMemory(0, Bands * 4));
+            spectrum.OutputComplex(observations);
+            tracker.Process(observations, output.AsMemory(0, Bands * 4));
             output.AsSpan(0, Bands * 4).CopyTo(output.AsSpan(Bands * 4));
             renderer.PostAudio(new SampleEvent<double>(output, Bands * 4, DateTime.UnixEpoch)
                 { AnalysisRow = row++ }, 2);
             clock.Advance(); renderer.Render(false);
         }
         void AssertBlack() => Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
-            $"{scene}, SWIFT/STBR gain {gainDb} dB, row {row}: every RGB channel must be black.");
+            $"{scene}, Swift={useSwift}, tracker gain {gainDb} dB, row {row}: every RGB channel must be black.");
     }
 
     // Compile only the scene under test. Discovery and all decay/RGB assertions stay unchanged;

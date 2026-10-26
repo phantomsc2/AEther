@@ -507,8 +507,11 @@ false in the bundled scenes.
 `FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
 `Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
 and the unscaled musical movement clock `MusicalMovementTime`.
-`Spectrum0/1` and `Histogram0/1` supply positive sustained (S), transient (T), and background (B) evidence in RGB and raw linear magnitude in alpha; `Linear`
-is the shared sampler. See `Common/Inputs.hlsl` for the complete declarations.
+On the current feature branch, `Spectrum0/1` and `Histogram0/1` supply fixed,
+unweighted diagnostic encodings of [a, a', phase, phase'] in RGBA.
+These replace the previous S/T/B/amplitude contract. `Linear` is the shared
+sampler. See [tracker mappings](log-polar-tracker-design.md) and
+`Common/Inputs.hlsl` for details.
 
 Resources are bound by reflected name independently for every entry point. Unknown
 resources, resource arrays and unsupported parameter types fail reload before any
@@ -523,13 +526,14 @@ Mandelbench geometry/view controls are the cache contract. Geometry edits,
 resize and reload rebuild the field; contour appearance edits reuse it.
 This renderer capability requires one application rebuild/restart.
 
-The Gaussian STBR fit estimates sustained spectral structure, broadband temporal
-structure, local background, and an unexplained residual. RGB contains
-positive S/T and background B; alpha is spectral amplitude A, not residual R. All four channels use input-gained amplitude units, with no component display gains.
-Signed effects and residual RMS are exposed separately on the CPU. Components
-are not normalized against one another. `FilteredHistogram0/1` remain aliases
-for `Histogram0/1`; Histogram's `CombinedLevel` shows raw amplitude.
-`TimeWindowSeconds` and `FrequencyWindowOctaves` control the fit neighborhood.
+The experimental log-polar tracker uses continuous white-noise acceleration
+and complex observations transformed to log magnitude and wrapped phase, with
+noise variance propagated from a fixed Cartesian floor. Its settings are amplitude/phase response
+times in seconds and a fixed Cartesian noise RMS. Signed raw states are
+available through Analyzer.TrackerStatesAvailable. The former STBR neighborhood
+settings do not affect live analysis. `FilteredHistogram0/1` remain aliases
+for `Histogram0/1`; Histogram's `CombinedLevel` currently shows the fourth
+diagnostic coordinate. Existing scene interpretations are provisional.
 
 Referencing `FluidDye` requests the existing fluid simulation;
 `FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`

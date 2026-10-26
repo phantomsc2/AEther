@@ -29,6 +29,8 @@ namespace AEther
         };
 
         readonly IDFTFilter[] Filters;
+        readonly double[] frequencies;
+        public ReadOnlyMemory<double> Frequencies => frequencies;
         public void Reset() { foreach (var filter in Filters) filter.Reset(); }
         public DFTProcessor(Domain domain, double sampleRate, bool useSIMD,
             DFTWindow windowFunction = DFTWindow.Blackman)
@@ -55,8 +57,8 @@ namespace AEther
                     .Select(f => new WindowedDFTFilter(f, domain.Resolution, sampleRate, window))
                     .ToArray();
             }
-
-
+            var harmonic = (int)Math.Round(1 / (Math.Pow(2, 1.0 / domain.Resolution) - 1));
+            frequencies = Filters.Select(f => harmonic * sampleRate / f.Length).ToArray();
         }
 
         public static double GetAWeighting(double f)
@@ -106,6 +108,12 @@ namespace AEther
             foreach (var filter in Filters)
                 filter.Process(samples);
 
+        }
+
+        public void OutputComplex(Memory<Complex> destination)
+        {
+            if (destination.Length < Filters.Length) throw new ArgumentException("Spectrum destination is too short.", nameof(destination));
+            for (var k = 0; k < Filters.Length; ++k) destination.Span[k] = 2 * Filters[k].GetOutput();
         }
 
     }

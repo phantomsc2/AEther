@@ -1,5 +1,10 @@
 # Gaussian STBR decomposition
 
+Historical standalone implementation: the live Analyzer now uses the
+[log-polar tracker](log-polar-tracker-design.md). Its settings are hidden from
+the application UI. The old analyzer evidence callback has been replaced by
+TrackerStatesAvailable; the standalone Splitter.Estimates API remains available.
+
 Spectrum analysis (SWIFT by default, optionally DFT) feeds the Gaussian local fit.
 Exact-median and per-sample sign splitters have been removed; historical versions
 remain in git. STBR means sustained spectral structure, broadband temporal

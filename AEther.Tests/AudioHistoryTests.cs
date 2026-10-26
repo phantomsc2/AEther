@@ -7,6 +7,20 @@ namespace AEther.Tests;
 public class AudioHistoryTests
 {
     [Test]
+    public void ObservedAmplitudeComparisonIsCopiedWithItsAnalysisRowAndMirroredForMono()
+    {
+        var history = new AudioHistory(1, 100, timeProvider: new HistoryClock());
+        var observed = new[] { 1.0 };
+        var frequency = new[] { .4 };
+        history.Post(new(new[] { .25, .5, .5, .4 }, 4, DateTime.UnixEpoch)
+            { ObservedAmplitude = observed, MomentaryResidual = frequency }, 1);
+        observed[0] = 0; frequency[0] = 0;
+        history.Advance(.01);
+        Assert.That(history.BlockMomentaryResidual[0], Is.EqualTo(new[] { .4f, .5f, 0f, 0f }));
+        Assert.That(history.BlockMomentaryResidual[1], Is.EqualTo(history.BlockMomentaryResidual[0]));
+    }
+
+    [Test]
     public void ResidualIsOwnedAveragedAndClearedWithSpectrum()
     {
         var clock = new HistoryClock();

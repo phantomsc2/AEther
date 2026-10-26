@@ -44,25 +44,18 @@ public class InputGainTests
         for (int row = 0; row < actual.Rows.Count; row++)
         {
             for (int i = 0; i < actual.Rows[row].Length; i++)
-                Assert.That(actual.Rows[row][i], Is.EqualTo(baseline.Rows[row][i] * gain).Within(1e-9));
+                Assert.That(actual.Rows[row][i], Is.InRange(0, 1), "Diagnostic mapping is bounded, not linear amplitude.");
             Assert.That(actual.Features[row].Level, Is.EqualTo(baseline.Features[row].Level * gain).Within(1e-10));
             Assert.That(actual.Features[row].Bass, Is.EqualTo(baseline.Features[row].Bass * gain).Within(1e-10));
             Assert.That(actual.Features[row].Body, Is.EqualTo(baseline.Features[row].Body * gain).Within(1e-10));
             Assert.That(actual.Features[row].Air, Is.EqualTo(baseline.Features[row].Air * gain).Within(1e-10));
             Assert.That(actual.Features[row].MusicalTime,
                 Is.EqualTo(baseline.Features[row].MusicalTime * gain * gain).Within(1e-8));
-            for (int k = 0; k < actual.Evidence[row].Length; k++)
+            for (int k = 0; k < actual.States[row].Length; k++)
             {
-                var a = actual.Evidence[row][k]; var b = baseline.Evidence[row][k];
-                Assert.That(a.Sine, Is.EqualTo(b.Sine * gain).Within(1e-9));
-                Assert.That(a.Transient, Is.EqualTo(b.Transient * gain).Within(1e-9));
-                Assert.That(a.Background, Is.EqualTo(b.Background * gain).Within(1e-9));
-                Assert.That(a.ResidualRms, Is.EqualTo(b.ResidualRms * gain).Within(1e-8));
-                if (b.ResidualRms > 1e-6)
-                {
-                    Assert.That(a.NormalizedSine, Is.EqualTo(b.NormalizedSine).Within(1e-8 * Math.Max(1, Math.Abs(b.NormalizedSine))));
-                    Assert.That(a.NormalizedTransient, Is.EqualTo(b.NormalizedTransient).Within(1e-8 * Math.Max(1, Math.Abs(b.NormalizedTransient))));
-                }
+                var a = actual.States[row][k]; var b = baseline.States[row][k];
+                Assert.That(a.ObservedAmplitude, Is.EqualTo(b.ObservedAmplitude * gain).Within(1e-9));
+                Assert.That(double.IsFinite(a.LogAmplitude + a.AmplitudeSlope + a.Phase + a.FrequencyOffset), Is.True);
             }
         }
     }
@@ -92,7 +85,7 @@ public class InputGainTests
     {
         public readonly List<double[]> Rows = new();
         public readonly List<AudioFeatures> Features = new();
-        public readonly List<JointEvidence[]> Evidence = new();
+        public readonly List<LogPolarState[]> States = new();
         public readonly List<double> Attacks = new();
     }
 
@@ -104,7 +97,7 @@ public class InputGainTests
         var result = new Result();
         analyzer.SamplesAnalyzed += (_, e) => result.Rows.Add(e.GetChannel(0).ToArray());
         analyzer.FeaturesAvailable += (_, e) => result.Features.Add(e);
-        analyzer.JointEvidenceAvailable += (_, e) => result.Evidence.Add(e.GetChannel(0).ToArray());
+        analyzer.TrackerStatesAvailable += (_, e) => result.States.Add(e.GetChannel(0).ToArray());
         analyzer.TransientDetected += (_, e) => result.Attacks.Add(e);
         var bytes = new byte[input.Length * sizeof(float)];
         Buffer.BlockCopy(input, 0, bytes, 0, bytes.Length);

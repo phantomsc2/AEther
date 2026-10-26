@@ -122,7 +122,7 @@ public sealed class AudioHistory
 
     public void Post(SampleEvent<double> input, int channelCount)
     {
-        if (input.SampleCount != Bands * Splitter.OutputStride || channelCount < 1)
+        if (input.SampleCount != Bands * LogPolarTracker.OutputStride || channelCount < 1)
             throw new ArgumentException("Analysis dimensions do not match the renderer.");
         bool timed = input.SampleEndTimestamp.HasValue;
         if (timed != input.SampleStartTimestamp.HasValue
@@ -132,7 +132,10 @@ public sealed class AudioHistory
             throw new ArgumentException("Residual dimensions do not match the renderer.");
         if (!input.MomentaryResidual.IsEmpty && input.MomentaryResidual.Length != Bands * channelCount)
             throw new ArgumentException("Momentary residual dimensions do not match the renderer.");
-        var momentary = new float[Bands * 2];
+        if (!input.ObservedAmplitude.IsEmpty && input.ObservedAmplitude.Length != Bands * channelCount)
+            throw new ArgumentException("Observed amplitude dimensions do not match the renderer.");
+        // Diagnostic RGBA: phase velocity in R, observed amplitude display in G.
+        var momentary = new float[Bands * 8];
         var residual = new float[Bands * 2];
         var owned = new float[Bands * 8];
         for (var c = 0; c < 2; c++)
@@ -148,7 +151,14 @@ public sealed class AudioHistory
                 for (int k = 0; k < Bands; k++)
                 {
                     double value = input.MomentaryResidual.Span[channel * Bands + k];
-                    momentary[c * Bands + k] = double.IsFinite(value) ? (float)Math.Clamp(value, -float.MaxValue, float.MaxValue) : 0;
+                    momentary[(c * Bands + k) * 4] = double.IsFinite(value) ? (float)Math.Clamp(value, -float.MaxValue, float.MaxValue) : 0;
+                }
+            if (!input.ObservedAmplitude.IsEmpty)
+                for (int k = 0; k < Bands; k++)
+                {
+                    double value = input.ObservedAmplitude.Span[channel * Bands + k];
+                    double root = double.IsFinite(value) && value > 0 ? Math.Sqrt(value) : 0;
+                    momentary[(c * Bands + k) * 4 + 1] = (float)(root / (1 + root));
                 }
             var src = input.GetChannel(channel).Span;
             for (var i = 0; i < src.Length; i++)
@@ -287,8 +297,7 @@ public sealed class AudioHistory
             {
                 row.Samples.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockSpectrum[channel]);
                 row.Residual.AsSpan(channel * Bands, Bands).CopyTo(BlockResidualSpectrum[channel]);
-                for (int k = 0; k < Bands; k++)
-                    BlockMomentaryResidual[channel][k * 4] = row.Momentary[channel * Bands + k];
+                row.Momentary.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockMomentaryResidual[channel]);
             }
         LatestCaptureTimestamp = row.Capture;
         LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;
