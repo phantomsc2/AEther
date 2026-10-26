@@ -37,17 +37,21 @@ internal static partial class Program
                 var screens = System.Windows.Forms.Screen.AllScreens;
                 string monitor = Option("--monitor", "primary");
                 var screen = monitor == "primary" ? System.Windows.Forms.Screen.PrimaryScreen!
+                    : monitor == "secondary" ? screens.First(s => !s.Primary)
                     : screens.Single(s => s.DeviceName.Equals(monitor, StringComparison.OrdinalIgnoreCase));
                 host.AppWindow.MoveAndResize(new RectInt32(screen.Bounds.X, screen.Bounds.Y, width, height));
                 Renderer? renderer = null;
                 RenderWorker? worker = null;
+                // Explicit reference mode reproduces the old compositor-only
+                // loop for latency/pacing comparisons; production always gates DXGI.
+                var bypassReady = new ManualResetEvent(true);
                 var profile = new PipelineProfile();
                 var watch = new Stopwatch();
                 bool recording = false;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 void Finish(Exception? error)
                 {
-                    timer.Stop(); worker?.Dispose(); worker = null;
+                    timer.Stop(); worker?.Dispose(); worker = null; bypassReady.Dispose();
                     if (renderer != null)
                     {
                         profile.Describe("Adapter", renderer.AdapterDescription);
@@ -57,12 +61,13 @@ internal static partial class Program
                         profile.Describe("Display mode", DisplayMode(screen.DeviceName));
                         profile.Describe("Fullscreen", args.Contains("--fullscreen").ToString());
                         profile.Describe("Pacing", Option("--pacing", "compositor"));
+                        profile.Describe("Swap-chain readiness", args.Contains("--bypass-swap-ready") ? "bypassed (reference only)" : "enabled");
                         profile.Describe("Path", "WinUI SwapChainPanel, compositor pacing, synthetic timestamped audio");
                         profile.Describe("Fluid work", renderer.FluidWork);
                         Console.WriteLine(profile.Save(output));
                         Console.WriteLine($"{scene}, {renderer.AdapterDescription}, {width}x{height}");
                         Console.WriteLine($"Monitor: {screen.DeviceName}, {DisplayMode(screen.DeviceName)}");
-                        foreach (string stage in new[] { "gpu.frame_ms", "gpu.fluid_ms", "render.frame_interval_ms", "render.display_interval_ms", "render.raw_display_interval_ms", "render.display_lead_ms", "render.pacing_wait_ms", "render.draw_cpu_ms", "render.present_wait_ms" })
+                        foreach (string stage in new[] { "gpu.frame_ms", "gpu.output_ms", "gpu.timing_delivery_ms", "gpu.fluid_ms", "render.frame_interval_ms", "render.display_interval_ms", "render.raw_display_interval_ms", "render.display_lead_ms", "render.pacing_wait_ms", "render.draw_cpu_ms", "render.present_wait_ms" })
                             Console.WriteLine($"{stage}: {profile.Recent(stage)}");
                         renderer.Dispose(); renderer = null;
                     }
@@ -94,7 +99,7 @@ internal static partial class Program
                         for (int i = 0; i < samples.Length; i += 4)
                         { samples[i] = .08; samples[i + 1] = .1; samples[i + 2] = .06; samples[i + 3] = .2; }
                         bool compositor = CompositorClock.IsSupported && Option("--pacing", "compositor") != "dxgi";
-                        worker = new RenderWorker(renderer.FrameReady, () =>
+                        worker = new RenderWorker(args.Contains("--bypass-swap-ready") ? bypassReady : renderer.FrameReady, () =>
                         {
                             long end = (long)(AudioClock.Seconds(Stopwatch.GetTimestamp() - origin) * 1000) - 6;
                             // Source rows retain their timestamps even when a display frame is late.

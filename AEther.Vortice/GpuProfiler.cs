@@ -14,6 +14,7 @@ internal sealed class GpuProfiler : IDisposable
         internal readonly List<(string Name, bool Start)> Events = new(64);
         internal bool Pending;
         internal bool Overflow;
+        internal long Submitted;
         internal PipelineProfile? Profile;
         public void Dispose() { foreach (var query in Queries) query.Dispose(); Disjoint.Dispose(); }
     }
@@ -65,7 +66,12 @@ internal sealed class GpuProfiler : IDisposable
         if (!frameOpen) return;
         frameOpen = false;
         Marker("Frame", false);
-        if (active != null) { context.End(active.Disjoint); active.Pending = true; active = null; }
+        if (active != null)
+        {
+            context.End(active.Disjoint);
+            active.Submitted = System.Diagnostics.Stopwatch.GetTimestamp();
+            active.Pending = true; active = null;
+        }
     }
     internal void Annotate(string name, bool begin)
     {
@@ -99,6 +105,10 @@ internal sealed class GpuProfiler : IDisposable
                 else elapsed[item.Name] = elapsed.GetValueOrDefault(item.Name) + (timestamp - starts[item.Name]) * 1000.0 / data.Frequency;
             }
             if (!complete) continue;
+            // Includes GPU queueing, driver query availability and CPU polling
+            // cadence. This is query delivery latency, not shader execution time
+            // or measured physical scanout latency.
+            frame.Profile?.Elapsed("gpu.timing_delivery_ms", frame.Submitted);
             if (elapsed.ContainsKey("Fluid"))
                 foreach (string name in FluidStages)
                     elapsed.TryAdd(name, 0);

@@ -46,13 +46,16 @@ internal sealed class RenderWorker : IDisposable
             while (WaitHandle.WaitAny(active) == 1)
             {
                 var start = Stopwatch.GetTimestamp();
-                // Each source supplies a complete cadence. Waiting for both serially
-                // can miss a compositor tick and halve the native-resolution rate.
+                // The compositor supplies cadence, not this swap chain's readiness.
+                // Wait for the tick FIRST, then for available swap-chain capacity,
+                // before render() samples audio. Reversing that order can wait for
+                // an unnecessary additional tick; omitting readiness samples audio
+                // too early and stalls later when the back buffer is first written.
                 if (waitForTick != null)
                 {
                     if (!waitForTick(stopped)) return;
                 }
-                else if (WaitHandle.WaitAny(ready) == 0) return;
+                if (WaitHandle.WaitAny(ready) == 0) return;
                 // Keep a consumed frame signal if minimized while waiting for DXGI.
                 // Resume can then draw without needing another presentation first.
                 if (WaitHandle.WaitAny(active) == 0) return;

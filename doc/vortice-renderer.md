@@ -25,21 +25,30 @@ uses FlipSequential, opaque alpha and an inverse composition-scale transform. Pi
 dimensions and the transform follow layout and DPI changes. The HWND presentation
 path remains available for renderer probes.
 
-The dedicated render thread uses one pacing source. On Windows 11 it waits for the
-compositor clock and uses `Present(0)` with no tearing flags, submitting the latest frame for desktop
+On Windows 11 the dedicated render thread waits for the compositor clock, then
+for swap-chain readiness before sampling audio, and uses `Present(0)` with no tearing flags, submitting the latest frame for desktop
 composition. This avoids both the XAML `CompositionTarget.Rendering` gate and the
 composition swap chain's `Present(1)` gate, which followed the 60 Hz primary display
 even with the window on the 165 Hz secondary display in the mixed-monitor probe.
 Waiting for DXGI and then for a fresh compositor tick can skip alternate refreshes
-at native resolution. The compositor path therefore does not also wait on DXGI.
+at native resolution. The order is instead compositor tick first, DXGI readiness
+second: if backpressure clears just after the tick, render immediately without
+requiring another tick. A compositor tick alone is not permission to write this
+swap chain's back buffer. Sampling audio before readiness can move the wait into
+the GPU output pass and Present, making the frame's input older before display.
 The compositor heartbeat can follow the fastest active display, so rendering on a
 slower display may submit more frames than that display scans out. Windows 10 keeps
 the DXGI wait plus `Present(1)` fallback. See Microsoft's
 [compositor-clock guidance](https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock).
 The swap chain allows one queued frame; its waitable flag is preserved on resize.
+See Microsoft's [wait-before-rendering guidance](https://learn.microsoft.com/en-us/windows/uwp/gaming/reduce-latency-with-dxgi-1-3-swap-chains).
 Either pacing wait is interruptible for shutdown, and the handle is closed after the worker
 stops. Timing shows frame-pacing wait separately from draw CPU and Present wait;
-the FPS value measures render submissions, not physical scanout.
+the FPS value measures render submissions, not physical scanout. GPU timing
+delivery reports CPU elapsed time between recording the end queries and reading
+their results; it includes GPU queueing, driver availability and polling cadence,
+and is not a direct scanout measurement. Skipped timing samples indicate a busy
+query pool, not skipped audio texture uploads or skipped render submissions.
 Resize, shader reload, readback and
 frame rendering are serialized around the D3D immediate context. Minimizing pauses
 rendering, and restore consumes recent audio from the bounded mailbox. Settings
@@ -70,6 +79,42 @@ restore and resize to 1366x768 it measured 163.7 submissions/s. These are short
 local Release runs after warmup, not GPU execution timings or a measurement of
 physical scanout. The one-frame-queue comparison used quiet input; it establishes
 the presentation ceiling rather than a controlled audio-processing speedup.
+
+### Back-buffer readiness verification, 2026-10-26
+
+A live report showed fresh audio at CPU submission (about 6 ms source age), but
+an output GPU interval near 16.5 ms and delayed visual response. The Windows 11
+worker was waiting on the compositor heartbeat while bypassing swap-chain
+readiness. It now waits for the compositor tick first and swap-chain readiness
+second, before reading audio or recording draw commands. A late readiness signal
+does not require another compositor tick. The user reports the latency is gone
+with the current build; a Spotify-specific pause/resume trigger was not isolated.
+
+Serial 1280x720 Spectrum probes used a real WinUI SwapChainPanel, synthetic
+timestamped audio, two seconds of warmup and three seconds of recorded timings.
+The reference mode reproduced the former compositor-only worker by bypassing
+the readiness gate. Means from the recorded CSVs were:
+
+| Display / path | Output GPU interval | GPU timing delivery | Submission interval |
+|---|---:|---:|---:|
+| 60 Hz primary, old | 15.79 ms | 349.97 ms | 16.68 ms |
+| 60 Hz primary, readiness gate | 0.20 ms | 5.82 ms | 6.06 ms |
+| 165 Hz secondary, old | 5.84 ms | 39.30 ms | 6.07 ms |
+| 165 Hz secondary, readiness gate | 0.19 ms | 5.90 ms | 6.06 ms |
+
+Reports are under `artifacts/pacing-ab`. The compositor heartbeat can run at the
+fastest display rate; 6.06 ms submissions on the 60 Hz monitor do not mean 165 Hz
+physical scanout. Query delivery is not an audio-to-photon measurement. These
+short diagnostics establish that the readiness gate removes the observed
+output-stage stalls without halving the submission rate on the 165 Hz display.
+OS-controlled occlusion/activation behavior can still occur; do not infer that
+all hide/show transitions have been exhaustively verified from this comparison.
+
+Reproduce with `AEther.Smoke --presentation-profile --scene=Spectrum
+--width=1280 --height=720 --seconds=3 --monitor=primary` (or `secondary`). Add
+`--bypass-swap-ready` only for the old-path reference comparison. The application
+always enables the readiness gate. Regression tests cover both readiness/tick
+orders, shutdown during either wait, and swap-chain readiness across resize.
 
 ### Native-resolution verification, 2026-10-21
 

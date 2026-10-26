@@ -74,7 +74,7 @@ public sealed partial class Renderer : IDisposable
     public string ShaderDirectory => shaderDirectory;
     public bool HighPrecisionOutput => output.HighPrecision;
     public string OutputDescription => output.Description;
-    /// <summary>DXGI pacing handle for hosts without compositor-clock pacing. Owned by the renderer.</summary>
+    /// <summary>Swap-chain readiness gate. Wait before sampling frame inputs even with compositor pacing. Owned by the renderer.</summary>
     public WaitHandle FrameReady => output.FrameReady;
     public string AdapterDescription { get; } = string.Empty;
     public string FluidWork => fluid == null || ActiveShader?.Fluid == null ? "inactive"
