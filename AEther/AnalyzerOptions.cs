@@ -80,6 +80,30 @@ namespace AEther
         public double AmplitudeTrackingSeconds { get; set; } = .1;
 
         [Category("Log-polar tracker")]
+        [DisplayName("Amplitude curvature scale (octaves)")]
+        [DefaultValue(.1)]
+        [Description("Experimental cross-bin log-amplitude prediction and correction. Larger scales penalize broader spectral curvature. 0 disables both; this is not a hard smoothing width.")]
+        public double AmplitudeCurvatureOctaves { get; set; } = .1;
+
+        [Category("Log-polar tracker")]
+        [DisplayName("Amplitude curvature correction strength")]
+        [DefaultValue(1.0)]
+        [Description("Confidence-weighted curvature penalty after measurements. Larger values smooth more; 0 keeps prediction coupling only. Strength 1 uses curvature precision 10000 per tick. Measurement confidence still matters.")]
+        public double AmplitudeCurvatureCorrectionStrength { get; set; } = 1;
+
+        [Category("Log-polar tracker")]
+        [DisplayName("Amplitude coupling time (seconds)")]
+        [DefaultValue(.1)]
+        [Description("Time scale of the spatial restoring force, separate from measurement tracking. Smaller values couple bins more strongly.")]
+        public double AmplitudeCouplingSeconds { get; set; } = .1;
+
+        [Category("Log-polar tracker")]
+        [DisplayName("Amplitude spatial damping")]
+        [DefaultValue(1.0)]
+        [Description("Damping of spatially rough amplitude velocity. 0 allows ringing; 1 is critical damping for a spatial mode with unit normalized curvature eigenvalue.")]
+        public double AmplitudeSpatialDamping { get; set; } = 1;
+
+        [Category("Log-polar tracker")]
         [DisplayName("Phase response (seconds)")]
         [DefaultValue(.1)]
         [Description("Characteristic phase tracking time in seconds at the same reference signal/noise ratio as amplitude. Phase is experimental; no phase-jump rejection or frequency snapping is applied.")]
@@ -125,6 +149,14 @@ namespace AEther
 
         internal void ValidateTracker()
         {
+            if (!double.IsFinite(AmplitudeCurvatureCorrectionStrength) || AmplitudeCurvatureCorrectionStrength < 0 || AmplitudeCurvatureCorrectionStrength > 1e8)
+                throw new ArgumentOutOfRangeException(nameof(AmplitudeCurvatureCorrectionStrength));
+            if (!double.IsFinite(AmplitudeCurvatureOctaves) || AmplitudeCurvatureOctaves < 0 || AmplitudeCurvatureOctaves > 1)
+                throw new ArgumentOutOfRangeException(nameof(AmplitudeCurvatureOctaves));
+            if (!double.IsFinite(AmplitudeCouplingSeconds) || AmplitudeCouplingSeconds < .01 || AmplitudeCouplingSeconds > 10)
+                throw new ArgumentOutOfRangeException(nameof(AmplitudeCouplingSeconds));
+            if (!double.IsFinite(AmplitudeSpatialDamping) || AmplitudeSpatialDamping < 0 || AmplitudeSpatialDamping > 4)
+                throw new ArgumentOutOfRangeException(nameof(AmplitudeSpatialDamping));
             if (!double.IsFinite(AmplitudeTrackingSeconds) || AmplitudeTrackingSeconds < .001 || AmplitudeTrackingSeconds > 10)
                 throw new ArgumentOutOfRangeException(nameof(AmplitudeTrackingSeconds));
             if (!double.IsFinite(PhaseTrackingSeconds) || PhaseTrackingSeconds < .001 || PhaseTrackingSeconds > 10)

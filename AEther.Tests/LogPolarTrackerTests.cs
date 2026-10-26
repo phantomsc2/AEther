@@ -9,6 +9,300 @@ public class LogPolarTrackerTests
 {
     static double Wrap(double x) => Math.IEEERemainder(x, 2 * Math.PI);
 
+    [Test]
+    public void CurvaturePredictionMatchesKnownThreeBinModeAndPreservesMean()
+    {
+        // dx=scale=.1 octave gives C=[1,-2,1], with nonzero eigenvalue 6.
+        var frequencies = Enumerable.Range(0, 3).Select(j => 100 * Math.Pow(2, j * .1)).ToArray();
+        var tracker = new LogPolarTracker(frequencies, .01, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCouplingSeconds = .1, AmplitudeSpatialDamping = 1,
+            AmplitudeCurvatureCorrectionStrength = 0
+        });
+        var output = new double[12];
+        tracker.Process(new[] { Math.Exp(-3), Math.Exp(-2), Math.Exp(-3) }.Select(a => new Complex(a, 0)).ToArray(), output);
+        // Practically uninformative observations isolate the deterministic prediction.
+        tracker.Process(Enumerable.Repeat(new Complex(1e-100, 0), 3).ToArray(), output);
+        double denominator = 1 + 6 * (.01 * 20 + .01 * .01 * 100);
+        double[] expectedV = [2 / denominator, -4 / denominator, 2 / denominator];
+        double[] initialA = [-3, -2, -3];
+        for (int j = 0; j < 3; j++)
+        {
+            Assert.That(tracker.States.Span[j].AmplitudeSlope, Is.EqualTo(expectedV[j]).Within(1e-10));
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(initialA[j] + .01 * expectedV[j]).Within(1e-10));
+        }
+        Assert.That(tracker.States.ToArray().Sum(s => s.LogAmplitude), Is.EqualTo(-8).Within(1e-10));
+    }
+
+    [TestCase(0.0), TestCase(.1)]
+    public void FreeBoundariesPreserveALogFrequencyRampOnUnevenCarriers(double scale)
+    {
+        double[] frequencies = [100, 108, 119, 131, 160, 170];
+        var tracker = new LogPolarTracker(frequencies, .01, new() { AmplitudeCurvatureOctaves = scale });
+        var initial = frequencies.Select(f => -3 + .2 * Math.Log2(f / 100)).ToArray();
+        var output = new double[24];
+        tracker.Process(initial.Select(a => new Complex(Math.Exp(a), 0)).ToArray(), output);
+        var quiet = Enumerable.Repeat(new Complex(1e-100, 0), 6).ToArray();
+        for (int n = 0; n < 100; n++) tracker.Process(quiet, output);
+        for (int j = 0; j < 6; j++)
+        {
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(initial[j]).Within(1e-9));
+            Assert.That(tracker.States.Span[j].AmplitudeSlope, Is.EqualTo(0).Within(1e-9));
+        }
+    }
+
+    [Test]
+    public void ZeroCurvatureScaleRetainsAnUnsupportedPeak()
+    {
+        var tracker = new LogPolarTracker(new[] { 100.0, 110, 120 }, .01,
+            new() { AmplitudeCurvatureOctaves = 0 });
+        var output = new double[12];
+        double[] initial = [-4, -2, -4];
+        tracker.Process(initial.Select(a => new Complex(Math.Exp(a), 0)).ToArray(), output);
+        var quiet = Enumerable.Repeat(new Complex(1e-100, 0), 3).ToArray();
+        for (int n = 0; n < 100; n++) tracker.Process(quiet, output);
+        for (int j = 0; j < 3; j++)
+        {
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(initial[j]).Within(1e-9));
+            Assert.That(tracker.States.Span[j].AmplitudeSlope, Is.EqualTo(0).Within(1e-9));
+        }
+    }
+
+    [TestCase(0.0), TestCase(4.0)]
+    public void StrongCouplingRemainsFiniteAndRelaxesRoughnessWithoutAnExplicitStepInstability(double damping)
+    {
+        var frequencies = Enumerable.Range(0, 49).Select(j => 100 * Math.Pow(2, j / 96.0)).ToArray();
+        var tracker = new LogPolarTracker(frequencies, .1, new()
+        {
+            AmplitudeCurvatureOctaves = 1, AmplitudeCouplingSeconds = .01, AmplitudeSpatialDamping = damping,
+            AmplitudeCurvatureCorrectionStrength = 0
+        });
+        var output = new double[4 * frequencies.Length];
+        tracker.Process(frequencies.Select((_, j) => new Complex(Math.Exp(-4 + (j % 2)), 0)).ToArray(), output);
+        var quiet = Enumerable.Repeat(new Complex(1e-100, 0), frequencies.Length).ToArray();
+        for (int n = 0; n < 100; n++)
+        {
+            tracker.Process(quiet, output);
+            foreach (var s in tracker.States.Span)
+            {
+                Assert.That(double.IsFinite(s.AmplitudeSlope), Is.True);
+                Assert.That(s.LogAmplitude, Is.InRange(-5, -2));
+            }
+        }
+        var a = tracker.States.ToArray().Select(s => s.LogAmplitude).ToArray();
+        double roughness = Enumerable.Range(1, a.Length - 2).Sum(j => Math.Pow(a[j - 1] - 2 * a[j] + a[j + 1], 2));
+        Assert.That(roughness, Is.LessThan(.01));
+    }
+
+    [Test]
+    public void SilentBinBreaksCouplingAndResetDoesNotLeakOldNeighbors()
+    {
+        var frequencies = Enumerable.Range(0, 7).Select(j => 100 * Math.Pow(2, j / 12.0)).ToArray();
+        var tracker = new LogPolarTracker(frequencies, .01, new() { AmplitudeCurvatureCorrectionStrength = 0 });
+        var output = new double[28];
+        tracker.Process(Enumerable.Range(0, 7).Select(j => new Complex(Math.Exp(j < 3 ? -4 : -2), 0)).ToArray(), output);
+        var input = Enumerable.Repeat(new Complex(1e-100, 0), 7).ToArray();
+        input[3] = Complex.Zero;
+        for (int n = 0; n < 20; n++) tracker.Process(input, output);
+        for (int j = 0; j < 7; j++)
+        {
+            if (j == 3) { Assert.That(tracker.States.Span[j].Active, Is.False); continue; }
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(j < 3 ? -4 : -2).Within(1e-9));
+        }
+        Assert.That(output.Skip(12).Take(4), Is.All.Zero);
+        tracker.Reset();
+        tracker.Process(Enumerable.Repeat(new Complex(.1, 0), 7).ToArray(), output);
+        Assert.That(tracker.States.ToArray().All(s => s.Observations == 1 && s.AmplitudeSlope == 0), Is.True);
+    }
+
+    [Test]
+    public void CouplingDoesNotChangePhaseProcessing()
+    {
+        double[] frequencies = [100, 110, 125, 140, 160];
+        var coupled = new LogPolarTracker(frequencies, .01, new());
+        var independent = new LogPolarTracker(frequencies, .01, new() { AmplitudeCurvatureOctaves = 0 });
+        var output = new double[20]; var input = new Complex[5];
+        for (int n = 1; n < 200; n++)
+        {
+            for (int j = 0; j < 5; j++)
+                input[j] = Complex.FromPolarCoordinates(Math.Exp(-3 + Math.Sin(j + n * .1)), n * (.3 + j));
+            coupled.Process(input, output); independent.Process(input, output);
+            for (int j = 0; j < 5; j++)
+            {
+                Assert.That(coupled.States.Span[j].Phase, Is.EqualTo(independent.States.Span[j].Phase));
+                Assert.That(coupled.States.Span[j].FrequencyOffset, Is.EqualTo(independent.States.Span[j].FrequencyOffset));
+            }
+        }
+    }
+
+    [TestCase(double.NaN), TestCase(double.PositiveInfinity), TestCase(-1.0), TestCase(2.0)]
+    public void InvalidCurvatureScaleIsRejected(double value) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LogPolarTracker(new[] { 100.0 }, .01,
+            new() { AmplitudeCurvatureOctaves = value }));
+
+    [TestCase(double.NaN), TestCase(double.PositiveInfinity), TestCase(-1.0), TestCase(0.0)]
+    public void InvalidCouplingTimeAndDampingAreRejected(double value)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LogPolarTracker(new[] { 100.0 }, .01,
+            new() { AmplitudeCouplingSeconds = value }));
+        if (value != 0)
+            Assert.Throws<ArgumentOutOfRangeException>(() => new LogPolarTracker(new[] { 100.0 }, .01,
+                new() { AmplitudeSpatialDamping = value }));
+    }
+
+    [Test]
+    public void CurvatureCorrectionMatchesAnalyticThreeBinModeAndPublishedEncoding()
+    {
+        var frequencies = Enumerable.Range(0, 3).Select(j => 100 * Math.Pow(2, j * .1)).ToArray();
+        var tracker = new LogPolarTracker(frequencies, .01, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCurvatureCorrectionStrength = .0001
+        });
+        var output = new double[12];
+        tracker.Process(new[] { -3.0, -2, -3 }.Select(a => new Complex(Math.Exp(a), 0)).ToArray(), output);
+        // Initial Paa=1, precision=1: the curved mode is divided by 1+6.
+        double[] expected = [-3 + 2.0 / 7, -2 - 4.0 / 7, -3 + 2.0 / 7];
+        for (int j = 0; j < 3; j++)
+        {
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(expected[j]).Within(1e-10));
+            Assert.That(output[4 * j], Is.EqualTo(.5 + .5 * Math.Tanh(expected[j] / 4)).Within(1e-10));
+            Assert.That(tracker.States.Span[j].AmplitudeSlope, Is.Zero, "Startup amplitude/velocity covariance is zero.");
+        }
+    }
+
+    [Test]
+    public void CurvatureCorrectionMatchesDenseConfidenceWeightedSolve()
+    {
+        var frequencies = Enumerable.Range(0, 5).Select(j => 100 * Math.Pow(2, j * .1)).ToArray();
+        var tracker = new LogPolarTracker(frequencies, .01, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCurvatureCorrectionStrength = .0001, TrackerNoiseFloor = .3
+        });
+        double[] magnitude = [.1, .2, .05, .3, .08];
+        var local = magnitude.Select(a => Math.Log(a)).ToArray();
+        var variance = magnitude.Select(a => Math.Max(1, .3 * .3 / (a * a))).ToArray();
+        var expected = DenseCurvatureCorrection(local, variance, 1);
+        tracker.Process(magnitude.Select(a => new Complex(a, 0)).ToArray(), new double[20]);
+        for (int j = 0; j < 5; j++)
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(expected[j]).Within(1e-10));
+    }
+
+    [Test]
+    public void SpatialAmplitudeCorrectionShiftsVelocityUsingLocalConditionalCovariance()
+    {
+        const double dt = .01;
+        var frequencies = Enumerable.Range(0, 3).Select(j => 100 * Math.Pow(2, j * .1)).ToArray();
+        var smooth = new LogPolarTracker(frequencies, dt, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCurvatureCorrectionStrength = 100
+        });
+        var local = new LogPolarTracker(frequencies, dt, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCurvatureCorrectionStrength = 0
+        });
+        var output = new double[12];
+        var flat = Enumerable.Repeat(new Complex(Math.Exp(-3), 0), 3).ToArray();
+        smooth.Process(flat, output); local.Process(flat, output);
+        var peaks = new[] { -3.0, -2, -3 }.Select(a => new Complex(Math.Exp(a), 0)).ToArray();
+        smooth.Process(peaks, output); local.Process(peaks, new double[12]);
+        double predictedPaa = 1 + dt * dt * 100 + .01 * dt * dt * dt / 3;
+        double predictedPav = dt * 100 + .01 * dt * dt / 2;
+        var variance = peaks.Select(z =>
+        {
+            double r = Math.Pow(.001 / z.Magnitude, 2);
+            return predictedPaa * r / (predictedPaa + r);
+        }).ToArray();
+        var expected = DenseCurvatureCorrection(local.States.ToArray().Select(s => s.LogAmplitude).ToArray(), variance, 1e6);
+        for (int j = 0; j < 3; j++)
+        {
+            var s = smooth.States.Span[j]; var b = local.States.Span[j];
+            double delta = expected[j] - b.LogAmplitude;
+            Assert.That(s.LogAmplitude, Is.EqualTo(expected[j]).Within(1e-9));
+            Assert.That(s.AmplitudeSlope, Is.EqualTo(b.AmplitudeSlope + predictedPav / predictedPaa * delta).Within(1e-9));
+            Assert.That(output[4 * j + 1], Is.EqualTo(.5 + .5 * Math.Tanh(s.AmplitudeSlope * .1)).Within(1e-12));
+        }
+    }
+
+    [Test]
+    public void StrongCorrectionSuppressesMeasurementSpikesThatPredictionAloneRetains()
+    {
+        var frequencies = Enumerable.Range(0, 9).Select(j => 100 * Math.Pow(2, j * .1)).ToArray();
+        var smooth = new LogPolarTracker(frequencies, .001, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCurvatureCorrectionStrength = 1e5
+        });
+        var local = new LogPolarTracker(frequencies, .001, new()
+        {
+            AmplitudeCurvatureOctaves = .1, AmplitudeCurvatureCorrectionStrength = 0
+        });
+        var input = Enumerable.Range(0, 9).Select(j => new Complex(Math.Exp(-3 + j % 2), 0)).ToArray();
+        var output = new double[36];
+        for (int n = 0; n < 1000; n++) { smooth.Process(input, output); local.Process(input, output); }
+        static double Roughness(LogPolarTracker tracker)
+        {
+            var a = tracker.States.ToArray().Select(s => s.LogAmplitude).ToArray();
+            return Enumerable.Range(1, a.Length - 2).Sum(j => Math.Pow(a[j - 1] - 2 * a[j] + a[j + 1], 2));
+        }
+        Assert.That(Roughness(smooth), Is.LessThan(.1 * Roughness(local)));
+    }
+
+    [Test]
+    public void CorrectionDoesNotBridgeSilenceAndHandlesCoincidentCarriersAndExtremeConfidence()
+    {
+        double[] frequencies = [100, 110, 120, 130, 140, 140, 160];
+        var tracker = new LogPolarTracker(frequencies, .01, new()
+        {
+            AmplitudeCurvatureCorrectionStrength = 1e8, AmplitudeCurvatureOctaves = 1
+        });
+        var input = new[] { .01, .01, .01, 0, .1, .1, .1 }.Select(a => new Complex(a, 0)).ToArray();
+        var output = new double[28];
+        for (int n = 0; n < 20; n++) tracker.Process(input, output);
+        for (int j = 0; j < 7; j++)
+        {
+            if (j == 3) { Assert.That(output.Skip(12).Take(4), Is.All.Zero); continue; }
+            Assert.That(tracker.States.Span[j].LogAmplitude, Is.EqualTo(Math.Log(j < 3 ? .01 : .1)).Within(1e-8));
+        }
+        input[1] = new Complex(1e200, 0); input[5] = new Complex(1e-200, 0);
+        for (int n = 0; n < 20; n++) tracker.Process(input, output);
+        Assert.That(output.All(double.IsFinite), Is.True);
+        Assert.That(tracker.States.ToArray().All(s => double.IsFinite(s.LogAmplitude) && double.IsFinite(s.AmplitudeSlope)), Is.True);
+        tracker.Reset(); tracker.Process(new Complex[7], output);
+        Assert.That(output, Is.All.Zero);
+    }
+
+    [TestCase(double.NaN), TestCase(double.PositiveInfinity), TestCase(-1.0), TestCase(1e9)]
+    public void InvalidCurvatureCorrectionStrengthIsRejected(double value) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LogPolarTracker(new[] { 100.0 }, .01,
+            new() { AmplitudeCurvatureCorrectionStrength = value }));
+
+    // Independent dense normal-equation reference for equally spaced test carriers
+    // with dx=curvatureScale. Production solves in curvature-observation space.
+    static double[] DenseCurvatureCorrection(double[] a, double[] variance, double precision)
+    {
+        int n = a.Length;
+        var m = new double[n, n]; var rhs = new double[n];
+        for (int j = 0; j < n; j++) { m[j, j] = 1 / variance[j]; rhs[j] = a[j] / variance[j]; }
+        double[] row = [1, -2, 1];
+        for (int j = 0; j < n - 2; j++)
+            for (int u = 0; u < 3; u++) for (int v = 0; v < 3; v++)
+                m[j + u, j + v] += precision * row[u] * row[v];
+        for (int j = 0; j < n; j++)
+        {
+            for (int i = j + 1; i < n; i++)
+            {
+                double factor = m[i, j] / m[j, j];
+                for (int k = j; k < n; k++) m[i, k] -= factor * m[j, k];
+                rhs[i] -= factor * rhs[j];
+            }
+        }
+        for (int j = n - 1; j >= 0; j--)
+        {
+            for (int i = j + 1; i < n; i++) rhs[j] -= m[j, i] * rhs[i];
+            rhs[j] /= m[j, j];
+        }
+        return rhs;
+    }
+
     [TestCase(1000.0), TestCase(4000.0)]
     public void SmallTrackerSettingsDoNotAddASubstantialDelayToHighFrequencyAmplitudeSteps(double frequency)
     {
@@ -158,12 +452,14 @@ public class LogPolarTrackerTests
     }
 
     [TestCase(true), TestCase(false)]
-    public void SteadyRealToneCentersSlopesAcrossObservableFilterbankBins(bool swift)
+    public void IndependentSteadyRealToneCentersSlopesAcrossObservableFilterbankBins(bool swift)
     {
         const int fs = 24000, block = 24;
         // Resolve the tiny off-band leakage too. Below a chosen measurement floor,
         // the requested constant-velocity model is intentionally allowed to coast.
-        var options = new AnalyzerOptions { UseSwift = swift, TrackerNoiseFloor = 1e-8 };
+        // This regression checks the original independent observer. Curvature
+        // coupling deliberately adds a restoring force even to stationary peaks.
+        var options = new AnalyzerOptions { UseSwift = swift, TrackerNoiseFloor = 1e-8, AmplitudeCurvatureOctaves = 0 };
         var backend = SpectrumProcessor.Create(options.Domain, fs, options);
         var tracker = new LogPolarTracker(backend.Frequencies, block / (double)fs, options);
         var input = new double[block]; var z = new Complex[options.Domain.Length];

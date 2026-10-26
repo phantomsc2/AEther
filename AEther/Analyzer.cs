@@ -66,10 +66,14 @@ namespace AEther
             Profile.Describe("Window function", options.WindowFunction.ToString());
             Profile.Describe("Spectrum backend", options.UseSwift ? "SWIFT" : "DFT");
             Batch = new byte[checked(BatchSize * Format.Size)];
-            Profile.Describe("Decomposition", "Log-polar Kalman: white-noise acceleration, observed-magnitude noise, two 2x2 blocks");
+            Profile.Describe("Decomposition", "Log-polar Kalman prototype: curvature-coupled prediction and regularized correction, local 2x2 covariance blocks");
             Profile.Describe("Amplitude response seconds", options.AmplitudeTrackingSeconds.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Phase response seconds", options.PhaseTrackingSeconds.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Tracker noise RMS", options.TrackerNoiseFloor.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Amplitude curvature octaves", options.AmplitudeCurvatureOctaves.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Amplitude curvature correction strength", options.AmplitudeCurvatureCorrectionStrength.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Amplitude coupling seconds", options.AmplitudeCouplingSeconds.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Amplitude spatial damping", options.AmplitudeSpatialDamping.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Spectrum = Enumerable.Range(0, Format.ChannelCount)
                 .Select(_ => SpectrumProcessor.Create(Domain, Format.SampleRate, options)).ToArray();
             Trackers = Spectrum.Select(s => new LogPolarTracker(s.Frequencies,

@@ -114,13 +114,15 @@ public sealed class SettingsWindow : ToolWindow
                 {
                     var integral = property.PropertyType == typeof(int);
                     var noiseFloor = property.Name == nameof(AnalyzerOptions.TrackerNoiseFloor);
+                    var zeroLogarithmic = property.Name == nameof(AnalyzerOptions.AmplitudeCurvatureCorrectionStrength);
                     var logarithmic = property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
                         or nameof(AnalyzerOptions.TrackerNoiseFloor)
-                        or nameof(AnalyzerOptions.AmplitudeTrackingSeconds) or nameof(AnalyzerOptions.PhaseTrackingSeconds);
+                        or nameof(AnalyzerOptions.AmplitudeTrackingSeconds) or nameof(AnalyzerOptions.PhaseTrackingSeconds)
+                        or nameof(AnalyzerOptions.AmplitudeCouplingSeconds);
                     var step = integral ? 1 : noiseFloor ? .0001 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
                         or nameof(AnalyzerOptions.SwiftImbalance) ? .01 : .001;
-                    double ToSlider(double value) => logarithmic ? Math.Log2(value) : value;
-                    double FromSlider(double value) => logarithmic ? Math.Pow(2, value) : value;
+                    double ToSlider(double value) => zeroLogarithmic ? Math.Log2(1 + value) : logarithmic ? Math.Log2(value) : value;
+                    double FromSlider(double value) => zeroLogarithmic ? Math.Pow(2, value) - 1 : logarithmic ? Math.Pow(2, value) : value;
                     var number = new NumberBox
                     {
                         Header = property.DisplayName,
@@ -136,12 +138,12 @@ public sealed class SettingsWindow : ToolWindow
                     var slider = new Slider
                     {
                         Minimum = ToSlider(number.Minimum), Maximum = ToSlider(number.Maximum),
-                        StepFrequency = logarithmic ? .05 : step,
-                        SmallChange = logarithmic ? .05 : number.SmallChange,
-                        LargeChange = logarithmic ? .5 : number.LargeChange,
+                        StepFrequency = logarithmic || zeroLogarithmic ? .05 : step,
+                        SmallChange = logarithmic || zeroLogarithmic ? .05 : number.SmallChange,
+                        LargeChange = logarithmic || zeroLogarithmic ? .5 : number.LargeChange,
                         Value = ToSlider(number.Value),
                     };
-                    if (logarithmic) slider.ThumbToolTipValueConverter = new WidthToolTipConverter();
+                    if (logarithmic || zeroLogarithmic) slider.ThumbToolTipValueConverter = new WidthToolTipConverter(zeroLogarithmic);
                     AutomationProperties.SetName(number, property.DisplayName);
                     AutomationProperties.SetName(slider, property.DisplayName);
                     bool updating = false;
@@ -217,6 +219,10 @@ public sealed class SettingsWindow : ToolWindow
         nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
         nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
         nameof(AnalyzerOptions.AmplitudeTrackingSeconds) => (.001, 2),
+        nameof(AnalyzerOptions.AmplitudeCurvatureOctaves) => (0, 1),
+        nameof(AnalyzerOptions.AmplitudeCurvatureCorrectionStrength) => (0, 1e8),
+        nameof(AnalyzerOptions.AmplitudeCouplingSeconds) => (.01, 2),
+        nameof(AnalyzerOptions.AmplitudeSpatialDamping) => (0, 4),
         nameof(AnalyzerOptions.PhaseTrackingSeconds) => (.001, 2),
         nameof(AnalyzerOptions.TrackerNoiseFloor) => (1e-6, .1),
         _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),
@@ -224,10 +230,10 @@ public sealed class SettingsWindow : ToolWindow
 
     void Changed() => SettingsChanged?.Invoke(this, EventArgs.Empty);
 
-    sealed class WidthToolTipConverter : IValueConverter
+    sealed class WidthToolTipConverter(bool zeroBased = false) : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language) =>
-            Math.Pow(2, (double)value).ToString("0.######", System.Globalization.CultureInfo.CurrentCulture);
+            (Math.Pow(2, (double)value) - (zeroBased ? 1 : 0)).ToString("0.######", System.Globalization.CultureInfo.CurrentCulture);
 
         public object ConvertBack(object value, Type targetType, object parameter, string language) =>
             throw new NotSupportedException();

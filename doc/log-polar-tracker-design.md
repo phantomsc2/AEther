@@ -7,7 +7,7 @@ Context: https://chatgpt.com/share/6adf55f8-3440-83ed-bd53-e8626534c185
 
 ## Model
 
-One independent state per audio channel and frequency bin:
+One state per audio channel and frequency bin. The original independent model is:
 
 ```text
 x = [a, v, p, w]
@@ -20,6 +20,8 @@ p' = w;  w' = white noise of intensity qp
 ```
 
 This is continuous white-noise acceleration (an integrated Wiener process).
+The experimental amplitude prediction now also includes spatial curvature
+coupling, described below. Phase remains independent.
 There is no additional position random walk. Estimation uncertainty is retained;
 the state is not assumed exactly known. For the actual audio interval h:
 
@@ -51,6 +53,13 @@ The UI's Log-polar tracker group exposes:
 - `PhaseTrackingSeconds`: default 0.1 seconds.
 - `TrackerNoiseFloor`: default 0.001, Cartesian RMS per real/imaginary component,
   in coherent amplitude units **after input gain**.
+- `AmplitudeCurvatureOctaves`: default 0.1 octaves; 0 restores independent bins.
+- `AmplitudeCurvatureCorrectionStrength`: default 1; 0 disables correction
+  regularization while retaining the prediction coupling. Larger values smooth
+  the corrected spectrum more strongly. The slider includes zero and spans
+  several orders of magnitude.
+- `AmplitudeCouplingSeconds`: default 0.1 seconds, independent of tracking time.
+- `AmplitudeSpatialDamping`: default 1; 0 removes explicit spatial damping.
 
 The response settings are characteristic dynamic scales, not hard windows or
 95% settling times. They are referenced to amplitude 0.1 and Cartesian RMS
@@ -84,7 +93,8 @@ vobs = (sigma/|y|)^2
 
 With independent amplitude/phase acceleration, this working observation model
 separates into two symmetric 2x2 covariance blocks: six scalars per bin. There
-is no full 4x4 matrix, cross-bin matrix, or matrix inversion. Predict the blocks
+is no full state covariance matrix or dense matrix inversion. Spatial regularization
+uses a separate banded solve. Predict the local blocks
 with F2*P*F2' + Q2, then use scalar linear Kalman updates:
 
 ```text
@@ -112,6 +122,123 @@ mismatch could then shrink amplitude; a very small predicted amplitude made
 both gains vanish and left derivatives coasting indefinitely. This occurred
 even after a strong signal returned. The polar update avoids both failure
 mechanisms without phase-jump rejection, frequency snapping, or reset heuristics.
+
+## Experimental local curvature coupling
+
+Only amplitude state means are coupled. Keep the original per-bin CWNA covariance
+prediction, measurement variance, and scalar amplitude/velocity correction.
+This is an approximate observer, not the exact joint Kalman filter for the new
+dynamics. It retains six covariance scalars per bin and no cross-bin covariance.
+Phase prediction and correction are unchanged.
+
+For each audio channel, snapshot all previous amplitude/velocity states before
+correcting any bin. Let x[j]=log2(f[j]) use the backend's actual carrier centers.
+For interior bin j, construct a nonuniform second-difference row:
+
+```text
+ell = AmplitudeCurvatureOctaves
+l = x[j] - x[j-1]; r = x[j+1] - x[j]
+C[j,j-1] =  2*ell^2 / (l*(l+r))
+C[j,j]   = -2*ell^2 / (l*r)
+C[j,j+1] =  2*ell^2 / (r*(l+r))
+B = transpose(C)*C
+k = 1 / AmplitudeCouplingSeconds^2
+d = 2*AmplitudeSpatialDamping / AmplitudeCouplingSeconds
+
+a' = v
+v' = -k*B*a - d*B*v + white acceleration noise
+```
+
+The scale ell multiplies curvature, so its contribution to B grows as ell^4.
+It is not a hard smoothing width or cutoff wavelength. At damping=1 a spatial
+mode with B eigenvalue 1 is critically damped; other modes have different damping
+ratios. Uniform amplitude motion and straight log-frequency ramps are in the
+null space of the curvature operator, so they are not spatially damped.
+
+The mean prediction uses backward Euler rather than an unstable explicit step:
+
+```text
+M = I + (h*d + h^2*k)*B
+solve M*v_pred = v - h*k*B*a
+a_pred = a + h*v_pred
+```
+
+Build and solve the symmetric pentadiagonal system with banded Cholesky, O(n)
+time/storage and no per-tick allocations. The matrix is rebuilt because active
+bins can change. No random samples are added to the state mean. Uncertainty
+still uses the original local CWNA prediction as a deliberate approximation.
+Output squashing and channel routing are unchanged.
+
+Boundary rows are omitted rather than padding the spectrum with zeros. A row
+also requires three previously initialized bins with finite nonzero current
+observations. Exact silence/invalid observations break the coupling; they do
+not drag their neighbors toward log(0), and new bins acquire from observations
+before participating. Coincident/reversed carrier intervals or spacing below
+1e-6 octave omit that row. A nonfinite/nonpositive Cholesky pivot or nonfinite
+solution falls back to independent mean prediction for that tick. Existing
+amplitude/velocity numerical bounds still apply after prediction.
+
+Important interpretation: a stationary sharp measured peak is in conflict with
+the smoothness dynamics. Local corrections can sustain it, but amplitude and
+velocity estimates can be biased, including nonzero estimated velocity under
+stationary observations. The posterior velocity is a latent dynamical estimate,
+not the finite difference of posterior amplitudes. The unchanged local covariance
+also ignores how uncertain neighbors affect prediction. Strong observations may
+largely undo spatial smoothing; quiet bins follow the prior more strongly.
+Backward Euler introduces additional numerical damping, even with damping=0.
+
+### Curvature-regularized correction
+
+Prediction coupling alone can be largely undone by independent measurement
+corrections. After all local measurement updates, apply a confidence-weighted
+curvature penalty to the log-amplitude means. It uses the same C and free
+boundaries as prediction, with an independent correction strength:
+
+```text
+b[j] = locally corrected log amplitude
+u[j] = locally corrected velocity
+p[j] = local posterior amplitude variance
+s[j] = local posterior amplitude/velocity covariance
+lambda = AmplitudeCurvatureCorrectionStrength / 0.01^2
+
+minimize over a:
+    sum_j (a[j]-b[j])^2 / p[j] + lambda * ||C*a||^2
+
+P = diag(p)
+solve (I/lambda + C*P*C')*t = C*b
+delta = -P*C'*t
+a_new = b + delta
+v_new[j] = u[j] + (s[j]/p[j])*delta[j]
+```
+
+The equivalent normal equations are `(P^-1 + lambda*C'*C)*a_new = P^-1*b`.
+Production solves in curvature-observation space instead, avoiding inverse
+variances and the level/slope null space that becomes poorly conditioned in
+the normal equations at very high strength. Symmetric diagonal scaling further
+reduces disparities between rows. The matrix is still pentadiagonal; this is a
+second O(n), allocation-free solve, not a full joint covariance update.
+
+The velocity shift is the conditional mean change from each bin's local 2x2
+covariance. It does not replace velocity with a finite difference. Zero variance
+coordinates remain fixed, with zero conditional velocity shift. Local covariance
+blocks are deliberately left unchanged: the spatial constraint's reductions in
+uncertainty and induced cross-bin correlations are not carried into the next
+tick. This remains a mean-only prototype, with possible velocity bias.
+
+Newly initialized finite nonzero bins can participate immediately after their
+first local update. Silence/invalid bins break correction stencils, just as in
+prediction; they always publish exact zero. Degenerate carrier rows are omitted.
+A failed or nonfinite solve leaves the local posterior means unchanged. Numerical
+state bounds apply after correction. Diagnostic states and texture encodings
+are published only after regularization, using the same final amplitude/velocity.
+
+Strength is a per-tick penalty in log-amplitude units, not a cutoff width or
+settling-time guarantee. Strongly observed bins resist it more than uncertain
+ones, so extremely small measurement floors can still require high strength.
+Increasing correction strength does not alter the phase filter or measurement
+noise setting. Set strength=0 for the prediction-only prototype; set curvature
+scale=0 to bypass both spatial steps. Flat spectra and straight log-frequency
+slopes lie in the curvature null space and are preserved.
 
 ## Acquisition and numerical behavior
 
@@ -221,8 +348,8 @@ alone. Low-frequency SWIFT is intrinsically slower: at 30 Hz its onset reaches
 - Overlapping filterbank observations are correlated and may have anisotropic
   noise. This observer is a feature experiment, not calibrated Bayesian confidence.
 - Constant log-amplitude slope predicts exponential growth/decay and can overshoot
-  steps. Independent bin trackers do not retain STBR's cross-frequency distinction
-  between broadband attacks and narrowband sustained structure.
+  steps. Curvature coupling is a soft spectral smoothness preference, not STBR's
+  distinction between broadband attacks and narrowband sustained structure.
 
 ## Verification
 
@@ -230,6 +357,13 @@ Tests cover known exponential amplitude trajectories, phase wraps, multiple
 publication rates, real-tone carrier/sign checks for both scalar/SIMD backends,
 noise-floor response, extreme finite inputs, invalid input, silence/reset, and
 agreement with an independently implemented dense 4x4 log-polar Kalman filter.
+Curvature tests check an analytic three-bin mode, free boundaries and nonuniform
+log-frequency ramps, disabled coupling, stiff-system stability with/without
+explicit damping, exact-silence isolation/reset, and unchanged phase estimates.
+Correction tests additionally compare an analytic spatial mode and a dense
+confidence-weighted reference, verify covariance-based velocity adjustment and
+final texture encoding, suppress measurement spikes that prediction alone
+retains, and exercise extreme confidence/strength and coincident carriers.
 Recovery tests reproduce the old Cartesian observer's failures on constant
 magnitude with a phase jump and on a long nonzero decay followed by a new attack.
 The latter also changes frequency offset and checks both derivatives recover.

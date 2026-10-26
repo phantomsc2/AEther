@@ -13,7 +13,8 @@ public readonly record struct LogPolarState(double LogAmplitude, double Amplitud
 
 /// <summary>Log-polar state with continuous white-noise acceleration. Complex measurements
 /// are transformed to log magnitude and phase; their local noise variance is sigma^2/|z|^2.
-/// Two 2x2 Kalman blocks retain uncertainty without coupling amplitude to phase lock.</summary>
+/// Two local 2x2 blocks retain uncertainty without coupling amplitude to phase lock.
+/// Optional cross-bin amplitude prediction/correction deliberately approximates covariance.</summary>
 public sealed class LogPolarTracker
 {
     public const int OutputStride = 4;
@@ -24,6 +25,10 @@ public sealed class LogPolarTracker
     readonly double[] carrier, advance;
     readonly Bin[] bins;
     readonly LogPolarState[] states;
+    readonly AmplitudeCurvatureCoupling? curvature;
+    readonly double correctionPrecision;
+    readonly double[] predictedA, predictedV, amplitudeVariance, velocityPerAmplitude;
+    readonly bool[] couplingActive;
     public ReadOnlyMemory<LogPolarState> States => states;
 
     public LogPolarTracker(ReadOnlyMemory<double> frequencies, double observationSeconds, AnalyzerOptions options)
@@ -43,12 +48,21 @@ public sealed class LogPolarTracker
         qp = h * 1e-4 / Math.Pow(phaseSeconds, 4);
         bins = new Bin[frequencies.Length]; states = new LogPolarState[bins.Length];
         carrier = new double[bins.Length]; advance = new double[bins.Length];
+        predictedA = new double[bins.Length]; predictedV = new double[bins.Length];
+        couplingActive = new bool[bins.Length];
+        amplitudeVariance = new double[bins.Length]; velocityPerAmplitude = new double[bins.Length];
+        // Reference curvature RMS=.01 log units. Strength is dimensionless and
+        // independent of both the measurement floor and dynamical coupling time.
+        correctionPrecision = options.AmplitudeCurvatureCorrectionStrength / 1e-4;
         for (int k = 0; k < bins.Length; k++)
         {
             var f = frequencies.Span[k];
             if (!double.IsFinite(f) || f <= 0) throw new ArgumentOutOfRangeException(nameof(frequencies));
             advance[k] = Tau * Math.IEEERemainder(f * h, 1);
         }
+        if (options.AmplitudeCurvatureOctaves > 0 && bins.Length >= 3)
+            curvature = new(frequencies.Span, h, options.AmplitudeCurvatureOctaves,
+                options.AmplitudeCouplingSeconds, options.AmplitudeSpatialDamping);
     }
 
     public void Reset()
@@ -58,11 +72,26 @@ public sealed class LogPolarTracker
 
     /// <summary>One completed audio tick. Complex input has coherent amplitude normalization.
     /// Outputs encode [a,a',phase,phase'] directly in [0,1], without amplitude weighting.
-    /// No allocation, neighborhood fit, phase gating, or outlier rejection.</summary>
+    /// Optional curvature-coupled amplitude prediction and regularized correction,
+    /// with local covariance retained as an explicit prototype approximation.
+    /// No allocation, phase gating, or outlier rejection.</summary>
     public void Process(ReadOnlyMemory<Complex> input, Memory<double> output)
     {
         if (input.Length != bins.Length || output.Length < OutputStride * bins.Length)
             throw new ArgumentException("Tracker spectrum dimensions do not match.");
+        if (curvature is not null)
+        {
+            // Snapshot before changing ANY bin: prediction must be simultaneous,
+            // not depend on the order in which local measurement updates run.
+            for (int k = 0; k < bins.Length; k++)
+            {
+                predictedA[k] = bins[k].A; predictedV[k] = bins[k].V;
+                var z = input.Span[k];
+                couplingActive[k] = bins[k].Count > 0 && z != Complex.Zero
+                    && double.IsFinite(z.Real) && double.IsFinite(z.Imaginary) && double.IsFinite(z.Magnitude);
+            }
+            curvature.Predict(predictedA, predictedV, couplingActive);
+        }
         for (int k = 0; k < bins.Length; k++)
         {
             carrier[k] = Wrap(carrier[k] + advance[k]);
@@ -100,8 +129,11 @@ public sealed class LogPolarTracker
             }
             else
             {
-                s.A = Math.Clamp(s.A + h * s.V, MinLog, MaxLog);
+                s.A = Math.Clamp(curvature is null ? s.A + h * s.V : predictedA[k], MinLog, MaxLog);
+                if (curvature is not null) s.V = Math.Clamp(predictedV[k], -MaxSlope, MaxSlope);
                 s.P = Wrap(s.P + h * s.W);
+                // Deliberate prototype approximation: unchanged local uncertainty,
+                // despite coupling the state means. Measurements remain local.
                 s.Amplitude.Predict(h, qa);
                 s.Phase.Predict(h, qp);
                 s.Amplitude.Correct(observationVariance, measuredA - s.A, out var da, out var dv);
@@ -113,6 +145,37 @@ public sealed class LogPolarTracker
             }
             if (s.Count < int.MaxValue) s.Count++;
             states[k] = new(s.A, s.V, s.P, s.W, magnitude, s.Count);
+        }
+        if (curvature is not null && correctionPrecision > 0)
+        {
+            for (int k = 0; k < bins.Length; k++)
+            {
+                ref var s = ref bins[k];
+                couplingActive[k] = s.Count > 0;
+                predictedA[k] = s.A; predictedV[k] = s.V;
+                // Zero variance means a fixed coordinate; the curvature solve avoids taking
+                // its reciprocal and handles very different measurement confidences.
+                amplitudeVariance[k] = s.Amplitude.PositionVariance;
+                velocityPerAmplitude[k] = s.Amplitude.VelocityPerPosition;
+            }
+            curvature.Correct(predictedA, predictedV, amplitudeVariance, velocityPerAmplitude,
+                couplingActive, correctionPrecision);
+            for (int k = 0; k < bins.Length; k++)
+            {
+                if (bins[k].Count == 0) continue;
+                bins[k].A = Math.Clamp(predictedA[k], MinLog, MaxLog);
+                bins[k].V = Math.Clamp(predictedV[k], -MaxSlope, MaxSlope);
+            }
+        }
+        // Publish only after spatial correction, so raw diagnostics and all four
+        // texture channels describe the same final state for this tick.
+        for (int k = 0; k < bins.Length; k++)
+        {
+            ref var s = ref bins[k];
+            if (s.Count == 0) continue; // already cleared above
+            double magnitude = states[k].ObservedAmplitude;
+            states[k] = new(s.A, s.V, s.P, s.W, magnitude, s.Count);
+            var dst = output.Span.Slice(OutputStride * k, OutputStride);
             dst[0] = Squash(s.A / 4);
             dst[1] = Squash(s.V * amplitudeSeconds);
             dst[2] = .5 + s.P / Tau;
@@ -133,6 +196,8 @@ public sealed class LogPolarTracker
     struct Covariance(double c00, double c01, double c11)
     {
         double c00 = c00, c01 = c01, c11 = c11;
+        public readonly double PositionVariance => c00;
+        public readonly double VelocityPerPosition => c00 > 0 ? c01 / c00 : 0;
         public void Predict(double dt, double q)
         {
             c00 += 2 * dt * c01 + dt * dt * c11 + q * dt * dt * dt / 3;
