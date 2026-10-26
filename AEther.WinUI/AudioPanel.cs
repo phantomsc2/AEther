@@ -158,7 +158,7 @@ public sealed class AudioPanel : UserControl
             if (rows.Children.Count == 0) continue;
             groups.Children.Add(new Expander
             {
-                Header = category.Key, Content = rows, IsExpanded = true,
+                Header = category.Key, Content = rows, IsExpanded = false,
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             });
         }

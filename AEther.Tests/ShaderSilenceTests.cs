@@ -164,18 +164,21 @@ public class ShaderSilenceTests
             foreach (int x in new[] { 365, 440, 470, 529, 559, 634 })
             for (int c = 0; c < 3; c++)
             {
-                double amplitude = combined ? (frame == 145 ? 1.5 : .875)
-                    : c == 1 ? .5 : (x < 500) == (c == 0) ? .25 : .75;
+                double amplitude = c == 1 ? .5 : (x < 500) == (c == 0) ? .25 : .75;
                 bool filled = posted && Math.Abs((x + .5) / width - .5) / .15 < amplitude;
-                Assert.That(pixels[4 * (44 * width + x) + c], Is.EqualTo(filled ? 255 : 0),
+                bool totalFilled = posted && Math.Abs((x + .5) / width - .5) / .15 < (frame == 145 ? 1.5 : .875);
+                Assert.That(pixels[4 * (44 * width + x) + c], Is.EqualTo(!combined && filled ? 255 : totalFilled ? 64 : 0),
                     $"live frame {frame}, x={x}, channel {c}");
                 Assert.That(pixels[4 * (4 * width + x) + c], Is.Zero, "Inactive frequency bin");
             }
             if (posted)
             {
-                int cap = frame == 145 ? 649 : 631;
-                Assert.That(pixels.Skip(4 * (44 * width + cap)).Take(3), Is.All.GreaterThan(200),
-                    "The current total has a white cap, including clipped totals.");
+                int background = frame == 145 ? 649 : 628;
+                Assert.That(pixels.Skip(4 * (44 * width + background)).Take(3), Is.All.EqualTo(64).Within(1),
+                    "The total fills a quarter-intensity grey bar, including clipped totals.");
+                if (frame != 145)
+                    Assert.That(pixels.Skip(4 * (44 * width + 631)).Take(3), Is.All.LessThanOrEqualTo(64),
+                        "The antialiased total edge must not become a white cap.");
             }
         }
         debug.RestartAudio(new(new Domain(30, 12, bands), 24, 1));

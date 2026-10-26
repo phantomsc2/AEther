@@ -21,10 +21,11 @@ from the live/history seam. Horizontal distance means amplitude inside the live
 region and elapsed time outside it; the two regions have separate scales.
 
 Live S/T/B components use the existing red/green/blue convention with overlapping
-bar lengths. A thin white cap marks total amplitude (the analysis alpha channel).
+bar lengths. Total amplitude (the analysis alpha channel) fills a quarter-intensity grey
+bar from the center, blending behind the component bars instead of a white edge cap.
 The fixed linear scale runs from zero at screen center to amplitude one at each
 live/history seam; larger values clip there. `CombinedLevel`, off by default,
-switches both live bars and history to monochrome total amplitude. These are
+switches the live bars to grey total amplitude alone and history to monochrome total amplitude. These are
 analysis values, not calibrated dB or acoustic loudness. There is no automatic
 gain, peak hold, additional frequency smoothing, or age fading.
 
@@ -34,9 +35,9 @@ observations. Missing rows remain black. Live bars use the newest block consumed
 this display frame and are black when no new block became due, matching `Spectrum`.
 The main hub embeds this view below Gain in its left column, exposing the
 audio-to-scene dataflow beside the scene controls in the equal-width right column.
-Debug contains the separate timing and status text. The view prefers a height of
-at least 220 logical pixels or two logical pixels per frequency band, whichever
-is greater, but fits the available space with thinner bands at high density.
+Debug contains the separate timing and status text. The Audio settings stay aligned
+to the bottom of the left column, and the analysis view fills the space above them,
+with thinner bands when the available height is small.
 Neither the analysis view nor the overall hub scrolls. Only the expanded Audio
 settings and shader settings scroll independently inside their own bounded panels.
 It shares the canvas renderer's device, audio textures, history, and rendering
@@ -632,8 +633,10 @@ spanning orders of magnitude, and rounding for discrete choices.
 ## Reload and UI behavior
 
 The application opens a resizable hub with two equal-width columns. Input, Gain
-(dB), and Analysis are pinned on the left, with a collapsed Audio expander below.
-Audio reveals the generated analyzer settings in a bounded scroller. The unlabeled
+(dB), and Analysis are pinned on the left. DFT, Pipeline, Smoother and Splitter
+appear below as independently expandable blocks, all closed initially, inside one
+shared bounded scroller. HistorySeconds is in Pipeline; the GPU category and outer
+Audio expander are removed. The unlabeled
 Scene picker is pinned on the right and starts empty. Selecting a scene opens the
 canvas and shows Reload, Reset defaults, the parameter tree and shader diagnostics
 below the picker. Shader settings scroll independently of Audio settings; the hub
@@ -642,7 +645,7 @@ Closing the hub stops the session and exits the application. An explicit
 `--scene=Name` argument opts into selecting and opening a scene at startup.
 
 F6 activates the hub and focuses the Scene picker. Escape dismisses the canvas or
-hides the focused Debug window. Collapsing Audio affects only layout.
+hides the focused Debug window. Expanding or collapsing categories affects only layout.
 Scene selection and controls operate on the existing renderer without restarting audio.
 Audio edits restart analysis while retaining graphics. The untitled canvas has a
 normal title bar and resizable border. Move it to the desired monitor; F11 explicitly

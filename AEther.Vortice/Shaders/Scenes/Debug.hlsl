@@ -18,10 +18,11 @@ float4 PS(PSin input) : SV_Target
         float4 v = left ? Spectrum0.Load(int3(bin, 0, 0)) : Spectrum1.Load(int3(bin, 0, 0));
         float x = distance / .15;
         float pixel = 1 / (.15 * Resolution.x);
-        float3 level = CombinedLevel ? v.aaa : v.rgb;
-        float3 bars = saturate((saturate(level) - x) / pixel + .5) * step(1e-20, level);
-        float cap = v.a > 0 ? saturate(1.5 - abs(x - saturate(v.a)) / pixel) : 0;
-        return float4(max(bars, cap.xxx), 1);
+        float3 bars = saturate((saturate(v.rgb) - x) / pixel + .5) * step(1e-20, v.rgb);
+        float total = v.a > 0 ? saturate((saturate(v.a) - x) / pixel + .5) : 0;
+        // Total amplitude fills behind the components, softly tinting their overlap.
+        float3 background = .25 * total.xxx;
+        return float4(CombinedLevel ? background : max(bars, background), 1);
     }
 
     // Integrate actual row coverage, including fractional pixels at event edges.

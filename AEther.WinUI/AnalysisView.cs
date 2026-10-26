@@ -12,8 +12,6 @@ public sealed class AnalysisView : UserControl
     Renderer? renderer;
     string? outputError;
     public event EventHandler? OutputChanged;
-    public event EventHandler? RequiredHeightChanged;
-    public double PreferredHeight { get; private set; } = 220;
     public string? Error => outputError ?? renderer?.DebugOutputError;
     public bool CanRender => IsLoaded && owner.AppWindow.IsVisible
         && owner.AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized }
@@ -51,15 +49,6 @@ public sealed class AnalysisView : UserControl
 
     public void RefreshOutput(bool resetError = false)
     {
-        if (renderer != null)
-        {
-            var height = Math.Max(220, renderer.Audio.Bands * 2);
-            if (PreferredHeight != height)
-            {
-                PreferredHeight = height;
-                RequiredHeightChanged?.Invoke(this, EventArgs.Empty);
-            }
-        }
         if (resetError) { outputError = null; renderer?.ClearDebugOutputError(); }
         if (renderer != null && owner.AppWindow.IsVisible && graph.ActualWidth > 0 && graph.ActualHeight > 0 && outputError == null)
         {

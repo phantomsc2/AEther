@@ -9,19 +9,22 @@ public sealed class SettingsPanel : UserControl
 {
     public const string Loopback = "System audio (loopback)";
     readonly ComboBox input = new() { Header = "Input", HorizontalAlignment = HorizontalAlignment.Stretch };
-    readonly ComboBox scenePicker = new() { Name = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
+    readonly ComboBox scenePicker = new() { Name = "Scene", Header = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ShaderPanel shaders;
     bool refreshingScenes;
     internal Grid Columns { get; } = new() { Padding = new Thickness(16), ColumnSpacing = 16, RowSpacing = 12 };
     internal Grid AudioColumn { get; } = new() { RowSpacing = 12 };
     internal Grid SceneColumn { get; } = new() { RowSpacing = 12 };
-    internal Expander AudioSettings { get; }
+    internal ScrollViewer AudioSettings { get; }
+    internal Expander Diagnostics { get; }
+    public bool DiagnosticsExpanded => Diagnostics.IsExpanded;
     public string InputName => input.SelectedItem?.ToString() ?? Loopback;
     public string? DeviceError { get; private set; }
     public event EventHandler? InputChanged;
     public event Action<string>? SceneSelected;
+    public event EventHandler? DiagnosticsRequested;
 
-    public SettingsPanel(AudioPanel audio, ShaderPanel shaders, ToolWindow debug, AnalysisView analysis)
+    public SettingsPanel(AudioPanel audio, ShaderPanel shaders, DebugPanel debug, AnalysisView analysis)
     {
         this.shaders = shaders;
         Content = Columns;
@@ -29,42 +32,39 @@ public sealed class SettingsPanel : UserControl
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var graphRow = new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MaxHeight = analysis.PreferredHeight };
-        var optionsRow = new RowDefinition { Height = GridLength.Auto, MinHeight = 48 };
-        AudioColumn.RowDefinitions.Add(graphRow);
-        AudioColumn.RowDefinitions.Add(optionsRow);
-        analysis.RequiredHeightChanged += (_, _) => graphRow.MaxHeight = analysis.PreferredHeight;
-        var audioScroll = new ScrollViewer { Content = audio, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        AudioSettings = new Expander
+        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: input
+        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: analysis
+        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 2: AudioSettings
+        Diagnostics = new Expander
         {
-            Header = "Audio", Content = audioScroll, IsExpanded = false,
-            HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
+            Header = "Debug", Content = debug, IsExpanded = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
-        AudioSettings.Expanding += (_, _) => optionsRow.Height = new GridLength(1, GridUnitType.Star);
-        AudioSettings.Collapsed += (_, _) => optionsRow.Height = AudioSettings.IsExpanded
-            ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
-        Grid.SetRow(audio.GainEditor, 1); Grid.SetRow(analysis, 2); Grid.SetRow(AudioSettings, 3);
-        AudioColumn.Children.Add(input); AudioColumn.Children.Add(audio.GainEditor);
+        Diagnostics.Expanding += (_, _) => DiagnosticsRequested?.Invoke(this, EventArgs.Empty);
+        var audioStack = (StackPanel)audio.Content;
+        audioStack.Children.Insert(0, audio.GainEditor);
+        audioStack.Children.Add(Diagnostics);
+        AudioSettings = new ScrollViewer { Content = audio, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        AudioColumn.SizeChanged += (_, _) =>
+        {
+            var available = AudioColumn.ActualHeight - input.ActualHeight
+                - 2 * AudioColumn.RowSpacing;
+            AudioSettings.MaxHeight = Math.Max(0, available / 2);
+        };
+        Grid.SetRow(analysis, 1); Grid.SetRow(AudioSettings, 2);
+        AudioColumn.Children.Add(input);
         AudioColumn.Children.Add(analysis); AudioColumn.Children.Add(AudioSettings);
 
-        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: scenePicker
+        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: shaders
         AutomationProperties.SetName(scenePicker, "Scene");
-        shaders.Visibility = Visibility.Collapsed;
+        Grid.SetRow(scenePicker, 0);
         Grid.SetRow(shaders, 1);
-        SceneColumn.Children.Add(scenePicker); SceneColumn.Children.Add(shaders);
+        SceneColumn.Children.Add(scenePicker);
+        SceneColumn.Children.Add(shaders);
         Grid.SetColumn(SceneColumn, 1);
         Columns.Children.Add(AudioColumn); Columns.Children.Add(SceneColumn);
-        var debugButton = new Button { Content = "Debug", HorizontalAlignment = HorizontalAlignment.Right };
-        debugButton.Click += (_, _) => debug.Toggle();
-        Grid.SetRow(debugButton, 1); Grid.SetColumnSpan(debugButton, 2);
-        Columns.Children.Add(debugButton);
-
         scenePicker.SelectionChanged += (_, _) =>
         {
             if (!refreshingScenes && scenePicker.SelectedItem is string name) SceneSelected?.Invoke(name);
@@ -77,6 +77,12 @@ public sealed class SettingsPanel : UserControl
     }
 
     public void FocusScene() => scenePicker.Focus(FocusState.Programmatic);
+
+    public void ShowDiagnostics()
+    {
+        Diagnostics.IsExpanded = true;
+        DispatcherQueue.TryEnqueue(() => Diagnostics.StartBringIntoView());
+    }
 
     public void SetScenes(IEnumerable<string> names, string? selected)
     {

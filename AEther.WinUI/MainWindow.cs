@@ -16,7 +16,7 @@ public sealed class MainWindow : Window
     readonly AnalysisView analysis;
     readonly CanvasWindow canvasWindow;
     readonly AudioPanel audio = new();
-    readonly DebugWindow debug = new();
+    readonly DebugPanel debug = new();
     readonly ShaderPanel shaders = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
     readonly DispatcherTimer reloadTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -61,9 +61,7 @@ public sealed class MainWindow : Window
             await RestartAsync();
             if (!closing && !canvasDismissed && session != null) canvasWindow.Show();
         };
-        debug.SetOwner(this);
-        debug.ShortcutRequested += HandleToolShortcut;
-        if (settings.DeviceError is { } error) { debug.SetStatus(error); debug.Show(); }
+        if (settings.DeviceError is { } error) { debug.SetStatus(error); settings.ShowDiagnostics(); }
         canvasWindow.SetOwner(this);
         shaders.SceneChanged += (_, _) => RefreshScenePicker();
         canvasWindow.Dismissed += (_, _) =>
@@ -84,10 +82,11 @@ public sealed class MainWindow : Window
                 RefreshScenePicker();
                 shaders.SetStatus(error.Message);
                 debug.SetStatus(error.Message);
-                debug.Show();
+                settings.ShowDiagnostics();
             }
         };
         settings.InputChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
+        settings.DiagnosticsRequested += (_, _) => debug.SetTiming(session);
         audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
         foreach (var key in new[] { VirtualKey.F5, VirtualKey.F6, VirtualKey.F11 })
             ToolWindow.AddShortcut(settings, key, () => HandleToolShortcut(key));
@@ -135,7 +134,7 @@ public sealed class MainWindow : Window
             {
                 shaders.SetStatus(error);
                 debug.SetStatus(error);
-                debug.Show();
+                settings.ShowDiagnostics();
             }
         };
         // A Tick already queued before Stop can still arrive during window teardown.
@@ -143,7 +142,8 @@ public sealed class MainWindow : Window
         {
             if (closing) return;
             if (analysis.Error is { } error) debug.SetStatus($"Analysis view: {error}");
-            if (debug.IsVisible) debug.SetTiming(session);
+            if (settings.DiagnosticsExpanded && AppWindow.IsVisible
+                && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized }) debug.SetTiming(session);
             UpdateRendering();
         };
         timingTimer.Start();
@@ -287,7 +287,7 @@ public sealed class MainWindow : Window
                 throw;
             }
         }
-        catch (Exception error) { debug.SetStatus(error.Message); debug.Show(); }
+        catch (Exception error) { debug.SetStatus(error.Message); settings.ShowDiagnostics(); }
         finally { changingSession = false; sessionGate.Release(); UpdateRendering(); }
     }
 
@@ -298,7 +298,7 @@ public sealed class MainWindow : Window
         {
             if (closing || !ReferenceEquals(sender, session)) return;
             debug.SetStatus(error.Message);
-            debug.Show();
+            settings.ShowDiagnostics();
         });
     }
 
@@ -397,7 +397,7 @@ public sealed class MainWindow : Window
     void RenderFailed(Exception error)
     {
         debug.SetStatus(error.Message);
-        debug.Show();
+        settings.ShowDiagnostics();
         _ = StopAfterRenderFailureAsync();
     }
 
@@ -431,7 +431,6 @@ public sealed class MainWindow : Window
         {
             sessionGate.Release();
             canvasWindow.Destroy();
-            debug.Destroy();
             shutdownComplete = true;
             // Closing can finish synchronously; do not reenter WinUI's Closing event.
             DispatcherQueue.TryEnqueue(() => base.Close());

@@ -46,8 +46,10 @@ properties use standard WinUI controls with the system's default appearance.
 - **Escape**: dismiss the canvas or hide the focused tool window. Select a scene in the hub to reopen the canvas.
 
 The resizable hub has two equal-width columns. Input, Gain and the live analysis
-view are pinned on the left; Audio expands the remaining analyzer options below
-them. The right column starts with an empty Scene picker. Selection opens the
+view are pinned on the left. Below them, DFT, Pipeline, Smoother and Splitter are
+separate expandable blocks, all closed initially, inside one shared scroller.
+HistorySeconds belongs to Pipeline; there is no GPU block or outer Audio expander.
+The right column starts with an empty Scene picker. Selection opens the
 canvas and reveals dynamic shader parameters, Reload and Reset defaults below it.
 Only the Audio settings and shader settings scroll, independently inside their
 panels. The overall window and analysis view never scroll. Debug remains a separate
@@ -62,8 +64,8 @@ it with retained parameters and without restarting capture. Audio edits and shad
 reloads leave the picker empty while the canvas is dismissed.
 
 The analysis view shares the renderer and history while the canvas keeps its
-selected scene. It prefers enough height for two logical pixels per band, and fits
-the available space with thinner bands at high density. It remains live with the
+selected scene. It fills the available space above the bottom-aligned Audio settings,
+with thinner bands when the window is too short. It remains live with the
 canvas closed; hiding or minimizing the hub stops its drawing work. An explicit
 `--scene=Name` argument opts into launching a scene on startup.
 

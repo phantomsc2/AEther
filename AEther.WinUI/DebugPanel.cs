@@ -3,17 +3,17 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace AEther.WinUI;
 
-public sealed class DebugWindow : ToolWindow
+public sealed class DebugPanel : UserControl
 {
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
     readonly TextBlock timing = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
 
-    public DebugWindow() : base("AEther debug", 640, 840)
+    public DebugPanel()
     {
         var content = new StackPanel { Spacing = 16 };
         content.Children.Add(status);
         content.Children.Add(timing);
-        Layout.Children.Add(new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        Content = content;
         SetTiming(null);
     }
     public void SetStatus(string text) => status.Text = text;

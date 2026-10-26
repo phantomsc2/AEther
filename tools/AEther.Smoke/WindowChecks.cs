@@ -90,9 +90,20 @@ internal static partial class Program
                                 if (((UserControl)canvasWindow.Content).KeyboardAccelerators.Count != 9)
                                     throw new Exception("Render-window shortcuts are missing.");
                                 host.Activate();
-                                if (canvasWindow.IsVisible || shadersVisible() || settings.AudioSettings.IsExpanded)
-                                    throw new Exception("Startup must leave canvas, shader settings and Audio collapsed.");
-                                settings.AudioSettings.IsExpanded = true;
+                                var audioGroups = ((StackPanel)audio.Content).Children.OfType<Expander>().ToArray();
+                                if (canvasWindow.IsVisible || shadersVisible() || audioGroups.Any(g => g.IsExpanded))
+                                    throw new Exception("Startup must leave canvas, shader settings and audio categories collapsed.");
+                                if (!audioGroups.Select(g => g.Header?.ToString()).SequenceEqual(new[] { "DFT", "Pipeline", "Smoother", "Splitter" }))
+                                    throw new Exception("Audio categories must be DFT, Pipeline, Smoother and Splitter, without GPU or an outer Audio block.");
+                                if (Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
+                                    - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1
+                                    || Math.Abs(analysis.ActualHeight - settings.AudioColumn.RowDefinitions[2].ActualHeight) > 1)
+                                    throw new Exception("Collapsed audio categories must remain bottom-aligned below a filling analysis view.");
+                                var pipeline = audioGroups.Single(g => g.Header?.ToString() == "Pipeline");
+                                if (!LogicalChildren((DependencyObject)pipeline.Content).OfType<NumberBox>()
+                                    .Any(n => n.Header?.ToString() == "HistorySeconds"))
+                                    throw new Exception("HistorySeconds must belong to Pipeline.");
+                                foreach (var group in audioGroups) group.IsExpanded = true;
                                 debug.Show();
                                 stage++;
                                 break;
@@ -100,8 +111,11 @@ internal static partial class Program
                                 if (current.Renderer.DebugDrawCount == 0) return;
                                 if (!analysis.CanRender || !Descendants(settings.Content).OfType<SwapChainPanel>().Any() || Descendants(debug.Content).OfType<SwapChainPanel>().Any())
                                     throw new Exception("The hub must contain the shared analysis graph; Debug must contain only text diagnostics.");
-                                if (analysis.ActualHeight <= 0 || analysis.ActualHeight > analysis.PreferredHeight)
-                                    throw new Exception("The analysis graph cannot visually resolve every frequency band.");
+                                if (analysis.ActualHeight <= 0
+                                    || Math.Abs(analysis.ActualHeight - settings.AudioColumn.RowDefinitions[2].ActualHeight) > 1
+                                    || Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
+                                        - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1)
+                                    throw new Exception("Analysis must fill the available space above bottom-aligned audio settings.");
                                 if (!host.AppWindow.IsVisible) throw new Exception("Settings did not open.");
                                 if (settings.Content is not Grid || Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
                                     throw new Exception("The hub must have two equal-width columns without an outer scroller.");
@@ -127,7 +141,7 @@ internal static partial class Program
                                 if (!Descendants(shaderPanel.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
                                     || !Descendants(shaderPanel.Content).OfType<Slider>().Any())
                                     throw new Exception("Dynamic shader parameter tree is missing.");
-                                var audioScroll = (ScrollViewer)settings.AudioSettings.Content;
+                                var audioScroll = settings.AudioSettings;
                                 var shaderScroll = ((Grid)shaderPanel.Content).Children.OfType<ScrollViewer>().Single();
                                 if (audioScroll.ViewportHeight <= 32 || audioScroll.ScrollableHeight <= 0
                                     || audioScroll.ViewportHeight > settings.AudioColumn.ActualHeight
@@ -154,8 +168,11 @@ internal static partial class Program
                                 if (Math.Abs(inputTop - Top((FrameworkElement)settings.AudioColumn.Children[0])) > .5
                                     || Math.Abs(sceneTop - Top((FrameworkElement)settings.SceneColumn.Children[0])) > .5)
                                     throw new Exception("Scrolling settings moved the pinned input or scene picker.");
-                                settings.AudioSettings.IsExpanded = false;
-                                settings.AudioSettings.IsExpanded = true;
+                                foreach (var group in ((StackPanel)audio.Content).Children.OfType<Expander>())
+                                {
+                                    group.IsExpanded = false;
+                                    group.IsExpanded = true;
+                                }
                                 if (started != 1) throw new Exception("Expanding Audio restarted capture.");
                                 var checkbox = Descendants(shaderPanel.Content).OfType<CheckBox>().Single(c => c.Content?.ToString() == "ShowS");
                                 checkbox.IsChecked = false;
@@ -301,7 +318,7 @@ internal static partial class Program
                                 stage++;
                                 break;
                             case 11:
-                                if (started != 4 || analysis.PreferredHeight < current.Renderer.Audio.Bands * 2) return;
+                                if (started != 4 || current.Renderer.Audio.Bands < 300) return;
                                 if (current.Renderer.Audio.Bands < 300 || host.AppWindow.Size.Width != hubWidth || host.AppWindow.Size.Height != hubHeight || analysis.ActualHeight > settings.AudioColumn.RowDefinitions[2].ActualHeight + 1)
                                     throw new Exception("More bands must fit the pinned analysis area without resizing the window or adding scrolling.");
                                 if (Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
@@ -310,7 +327,7 @@ internal static partial class Program
                                 stage++;
                                 break;
                             case 12:
-                                if (started != 5 || analysis.PreferredHeight != 220) return;
+                                if (started != 5 || current.Renderer.Audio.Bands >= 300) return;
                                 if (host.AppWindow.Size.Width != hubWidth)
                                     throw new Exception("Restoring the band count changed the hub width.");
                                 debug.Hide();

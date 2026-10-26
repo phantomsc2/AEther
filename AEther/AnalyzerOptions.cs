@@ -64,7 +64,7 @@ namespace AEther
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
-        [Category("GPU")]
+        [Category("Pipeline")]
         [Description("Seconds of spectral history retained for age-based shader lookups. Longer values allow longer fluid tails and use more memory.")]
         public double HistorySeconds { get; set; } = 2;
 
