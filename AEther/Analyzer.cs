@@ -52,6 +52,8 @@ namespace AEther
 
         public Analyzer(SampleFormat format, AnalyzerOptions options, TimeProvider? timeProvider = null)
         {
+            using var startup = Profile.Measure("startup.analysis_ms");
+            options = options.Copy();
             options.Validate(format);
             InputGain = Math.Pow(10, options.InputGainDb / 20);
             Domain = options.Domain;
@@ -77,11 +79,14 @@ namespace AEther
             Profile.Describe("Log acceleration intensity", options.LogAccelerationIntensity.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Complex acceleration intensity", options.ComplexAccelerationIntensity.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Smoother noise RMS", options.SmoothingNoiseFloor.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
-            Spectrum = Enumerable.Range(0, Format.ChannelCount)
-                .Select(_ => SpectrumProcessor.Create(Domain, Format.SampleRate, options)).ToArray();
-            Smoothers = Spectrum.Select(s => new SpectrumSmoother(s.Frequencies,
-                BatchSize / (double)Format.SampleRate, options)).ToArray();
-            Splitters = Spectrum.Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
+            using (Profile.Measure("startup.dft_ms"))
+                Spectrum = Enumerable.Range(0, Format.ChannelCount)
+                    .Select(_ => SpectrumProcessor.Create(Domain, Format.SampleRate, options)).ToArray();
+            using (Profile.Measure("startup.smoother_ms"))
+                Smoothers = Spectrum.Select(s => new SpectrumSmoother(s.Frequencies,
+                    BatchSize / (double)Format.SampleRate, options)).ToArray();
+            using (Profile.Measure("startup.splitter_ms"))
+                Splitters = Spectrum.Select(_ => new Splitter(Domain, options, Format.SampleRate / (double)BatchSize)).ToArray();
             if (Spectrum[0] is SwiftProcessor swift)
             {
                 var bands = swift.Bands.ToArray();

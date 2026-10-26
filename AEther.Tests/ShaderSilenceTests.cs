@@ -14,6 +14,124 @@ namespace AEther.Tests;
 [TestFixture, NonParallelizable, Apartment(ApartmentState.STA)]
 public class ShaderSilenceTests
 {
+    [TestCase(false), TestCase(true), Category("GPU")]
+    public void DebugCombinesLiveStereoBarsWithUnchangedHistory(bool combined)
+    {
+        const int width = 1000, height = 64, bands = 8;
+        using var shaders = new SceneShaders("Debug");
+        File.Copy(Path.Combine(ShaderDirectory, "Scenes", "Histogram.hlsl"),
+            Path.Combine(shaders.Path, "Scenes", "Histogram.hlsl"));
+        using var window = new HiddenWindow();
+        using var historyWindow = new HiddenWindow();
+        var clock = new RenderClock();
+        using var debug = new Renderer(window.Handle, width, height, bands, 24, 1,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Debug");
+        using var history = new Renderer(historyWindow.Handle, 700, height, bands, 24, 1,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Histogram");
+        foreach (var renderer in new[] { debug, history })
+        {
+            var parameters = renderer.ActiveShader!.Parameters!;
+            parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), combined);
+        }
+        long row = 0;
+        for (int frame = 0; frame < 150; frame++)
+        {
+            // 24 Hz blocks on a 60 Hz display: fractional scrolling, missing rows,
+            // ring wrap, isolated frequency rows and distinct stereo channels.
+            bool posted = frame % 5 == 0 || frame % 5 == 2;
+            if (posted)
+            {
+                var samples = new double[bands * 8];
+                for (int c = 0; c < 2; c++)
+                {
+                    int offset = (c * bands + 2) * 4;
+                    samples[offset] = c == 0 ? .25 : .75;
+                    samples[offset + 1] = .5;
+                    samples[offset + 2] = c == 0 ? .75 : .25;
+                    samples[offset + 3] = frame == 145 ? 1.5 : .875;
+                }
+                if (frame == 50) row += 2;
+                foreach (var renderer in new[] { debug, history })
+                    renderer.PostAudio(new SampleEvent<double>(samples, bands * 4, DateTime.UnixEpoch)
+                        { AnalysisRow = row }, 2);
+                row++;
+            }
+            clock.Advance(); debug.Render(false); history.Render(false);
+            if (frame is not (0 or 1 or 50 or 51 or 130 or 131 or 145 or 146 or 149)) continue;
+            var pixels = debug.ReadPixels(false);
+            var reference = history.ReadPixels(false);
+            for (int y = 0; y < height; y++)
+            for (int x = 0; x < 700; x++)
+            for (int c = 0; c < 3; c++)
+            {
+                int dx = x < 350 ? x : x + 300;
+                Assert.That(pixels[4 * (y * width + dx) + c],
+                    Is.EqualTo(reference[4 * (y * 700 + x) + c]).Within(1),
+                    $"history frame {frame}, {x},{y}, channel {c}");
+            }
+            // Interior probes are well away from antialiasing and the total cap.
+            foreach (int x in new[] { 365, 440, 470, 529, 559, 634 })
+            for (int c = 0; c < 3; c++)
+            {
+                double amplitude = combined ? (frame == 145 ? 1.5 : .875)
+                    : c == 1 ? .5 : (x < 500) == (c == 0) ? .25 : .75;
+                bool filled = posted && Math.Abs((x + .5) / width - .5) / .15 < amplitude;
+                Assert.That(pixels[4 * (44 * width + x) + c], Is.EqualTo(filled ? 255 : 0),
+                    $"live frame {frame}, x={x}, channel {c}");
+                Assert.That(pixels[4 * (4 * width + x) + c], Is.Zero, "Inactive frequency bin");
+            }
+            if (posted)
+            {
+                int cap = frame == 145 ? 649 : 631;
+                Assert.That(pixels.Skip(4 * (44 * width + cap)).Take(3), Is.All.GreaterThan(200),
+                    "The current total has a white cap, including clipped totals.");
+            }
+        }
+        debug.RestartAudio(new(new Domain(30, 12, bands), 24, 1));
+        clock.Advance(); debug.Render(false);
+        Assert.That(debug.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero);
+    }
+
+    [TestCase("Debug"), TestCase("Spectrum"), TestCase("Histogram"), Category("GPU"), Category("Performance")]
+    public void AnalysisSceneGpuTimingAt720p(string scene)
+    {
+        using var shaders = new SceneShaders(scene);
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        var profile = new PipelineProfile();
+        using var renderer = new Renderer(window.Handle, 1280, 720, 128, 60, 2,
+            shaderDirectory: shaders.Path, timeProvider: clock, profile: profile);
+        var samples = new double[128 * 8];
+        for (int frame = 0; frame < 360; frame++)
+        {
+            for (int channel = 0; channel < 2; channel++)
+            for (int bin = 0; bin < 128; bin++)
+            {
+                int i = (channel * 128 + bin) * 4;
+                double tone = Math.Exp(-Math.Pow((bin - 24 - channel * 4) / 2.0, 2));
+                double harmonic = Math.Exp(-Math.Pow((bin - 70) / 3.0, 2));
+                double beat = Math.Exp(-(frame % 30) / 2.0);
+                samples[i] = .5 * tone;
+                samples[i + 1] = .7 * beat * (1 - bin / 128.0);
+                samples[i + 2] = .35 * harmonic;
+                samples[i + 3] = Math.Max(samples[i], Math.Max(samples[i + 1], samples[i + 2]));
+            }
+            renderer.PostAudio(new SampleEvent<double>(samples, 128 * 4, DateTime.UnixEpoch)
+                { AnalysisRow = frame }, 2);
+            clock.Advance(); renderer.Render(false);
+            // Bound the queue; timing comes from GPU timestamp queries, not readback duration.
+            renderer.ReadPixels(false);
+        }
+        var timing = profile.Recent("gpu.scene_ms");
+        Assert.That(timing, Is.Not.Null);
+        TestContext.Out.WriteLine($"{scene}, 1280x720, {renderer.AdapterDescription}: GPU scene mean {timing!.Value.Mean:F4} ms, p95 {timing.Value.P95:F4} ms");
+        var directory = Path.GetFullPath(Path.Combine(ShaderDirectory, "..", "..", "artifacts", "debug-scene"));
+        Directory.CreateDirectory(directory);
+        var capture = Path.Combine(directory, scene + "-1280x720.rgba");
+        File.WriteAllBytes(capture, renderer.ReadPixels(false));
+        TestContext.AddTestAttachment(capture, "1280x720 RGBA8 analysis scene");
+    }
+
     const int Width = 96, Height = 54, Bands = 32;
     // Allow at least 20 seconds of natural decay. Slow simulations retain the
     // original generous upper bound, but dark scenes need not render it all.
@@ -128,6 +246,13 @@ public class ShaderSilenceTests
 
     [TestCaseSource(nameof(Scenes)), Category("GPU")]
     public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb, bool periodic)
+        => CheckSilence(scene, inputGainDb, periodic, restartAudio: false);
+
+    [TestCase("Debug"), TestCase("Histogram"), TestCase("Mandelbox"), TestCase("MandelFluidv4"), Category("GPU")]
+    public void AnalysisRestartPreservesSilenceDecayOfRetainedGraphics(string scene)
+        => CheckSilence(scene, 0, true, restartAudio: true);
+
+    void CheckSilence(string scene, double inputGainDb, bool periodic, bool restartAudio)
     {
         using var shaders = new SceneShaders(scene);
         using var window = new HiddenWindow();
@@ -140,6 +265,9 @@ public class ShaderSilenceTests
             var parameters = renderer.ActiveShader!.Parameters!;
             parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
                 .Single(p => p.Name == "PeriodicBoundary"), periodic);
+            if (restartAudio && scene == "MandelFluidv4")
+                parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
+                    .Single(p => p.Name == "LowQuality"), true);
         }
         var gain = Math.Pow(10, inputGainDb / 20);
         long row = 0;
@@ -166,8 +294,15 @@ public class ShaderSilenceTests
             }
             Assert.That(lit, Is.True, $"{scene}: musical fixture never produced visible light.");
 
+            if (restartAudio)
+            {
+                var program = renderer.ActiveShader!.Program.Pixel;
+                renderer.RestartAudio(new(new Domain(30, 12, Bands), 60, 1));
+                Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
+            }
+
             // Keep the same renderer, scene and simulation. No resets, clearing,
-            // large dt jumps or scene switches that could erase retained state.
+            // large dt jumps or scene switches that could erase retained simulation state.
             for (int frame = 0; frame < DecayFrames; frame++)
             {
                 if (sendSilentPackets) Post(false);
@@ -221,7 +356,7 @@ public class ShaderSilenceTests
     }
 
     public static IEnumerable<TestCaseData> SmootherSilenceCases() =>
-        from scene in new[] { "Spectrum", "Histogram", "MandelFluidv3" }
+        from scene in new[] { "Spectrum", "Histogram", "Debug", "MandelFluidv3" }
         from gain in new[] { 0.0, 60.0 }
         from swift in new[] { false, true }
         from mode in new[] { SmoothingMode.LogAmplitude, SmoothingMode.Complex }
@@ -1183,6 +1318,7 @@ public class ShaderSilenceTests
     }
 
     [TestCase("Spectrum", 0.0), TestCase("Spectrum", 60.0)]
+    [TestCase("Debug", 0.0), TestCase("Debug", 60.0)]
     [TestCase("Histogram", 0.0), TestCase("Histogram", 60.0), Category("GPU")]
     public async Task WaveformThroughAnalysisViewsEventuallyTurnsBlack(string scene, double gainDb)
     {

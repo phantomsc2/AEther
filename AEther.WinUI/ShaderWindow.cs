@@ -17,7 +17,7 @@ public sealed class ShaderWindow : ToolWindow
         .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..] ?? "Mandelbox";
     public event EventHandler? SceneChanged;
 
-    public ShaderWindow() : base("AEther shaders", 520, 800)
+    public ShaderWindow() : base("AEther scene", 520, 800)
     {
         Layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -79,10 +79,12 @@ public sealed class ShaderWindow : ToolWindow
         if (renderer != null)
         {
             SelectedScene = renderer.SceneName;
+            // Retain visited scenes even when a reload leaves them uncompiled.
+            if (renderer.ActiveShader?.Parameters is { } values) saved[SelectedScene] = values;
             status.Text = renderer.ShaderDirectory;
         }
         else status.Text = "No active rendering session.";
-        Title = $"AEther shaders - {SelectedScene}";
+        Title = $"AEther scene - {SelectedScene}";
         RefreshParameters();
         SceneChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -134,13 +136,13 @@ public sealed class ShaderWindow : ToolWindow
         AutomationProperties.SetName(number, parameter.Name);
         AutomationProperties.SetName(slider, parameter.Name);
         bool updating = false;
-        slider.ValueChanged += (_, e) =>
+        SliderCommit.Bind(slider, value =>
         {
             if (updating) return;
             updating = true;
-            try { number.Value = e.NewValue; values.SetFloat(parameter, (float)e.NewValue); }
+            try { number.Value = value; }
             finally { updating = false; }
-        };
+        }, value => { if (!updating) values.SetFloat(parameter, (float)value); });
         number.ValueChanged += (_, e) =>
         {
             if (updating || !double.IsFinite(e.NewValue)) return;

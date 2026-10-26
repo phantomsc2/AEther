@@ -19,6 +19,7 @@ internal static partial class Program
         try
         {
             if (args.Contains("--presentation-profile")) { ProfilePresentation(args); return 0; }
+            if (args.Contains("--slider-probe")) { CheckSliderPointerEdits(); return 0; }
             if (args.Contains("--swift-settings-only")) { CheckSwiftSettings(); return 0; }
             if (args.Contains("--windows-only")) { CheckShaderWindows(null); return 0; }
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -30,6 +31,7 @@ internal static partial class Program
             var shaderDirectory = Path.Combine(output, "shader-reload");
             Directory.CreateDirectory(shaderDirectory);
             CopyShaderTree(Path.Combine(root, "AEther.Vortice", "Shaders"), shaderDirectory);
+            if (args.Contains("--windows-watcher-only")) { CheckShaderWindows(shaderDirectory); return 0; }
             using var form = new Form { ClientSize = new(640, 360), ShowInTaskbar = false };
             if (args.Contains("--shader-authoring-only") || !args.Any(arg => arg.StartsWith("--", StringComparison.Ordinal)))
             { CheckShaderAuthoring(form.Handle, shaderDirectory, output); CheckShaderWindows(shaderDirectory); return 0; }

@@ -11,6 +11,44 @@ copy the same directory structure beside the executable. The recursive watcher
 debounces saves, creation, renames and deletion by 250 ms. No .NET build is needed
 for shader edits, parameter changes or scene discovery.
 
+## Debug analysis scene
+
+`Debug` combines the presented analysis block and its stereo history on shared
+frequency rows (low at the bottom, high at the top). The central 30% contains
+mirrored live bars: left channel grows left, right channel grows right. Each
+outer 35% shows that channel's full configured history duration, scrolling outward
+from the live/history seam. Horizontal distance means amplitude inside the live
+region and elapsed time outside it; the two regions have separate scales.
+
+Live S/T/B components use the existing red/green/blue convention with overlapping
+bar lengths. A thin white cap marks total amplitude (the analysis alpha channel).
+The fixed linear scale runs from zero at screen center to amplitude one at each
+live/history seam; larger values clip there. `CombinedLevel`, off by default,
+switches both live bars and history to monochrome total amplitude. These are
+analysis values, not calibrated dB or acoustic loudness. There is no automatic
+gain, peak hold, additional frequency smoothing, or age fading.
+
+History integrates piecewise-constant observations over each pixel's time
+footprint, preserving smooth subpixel scrolling without inventing intermediate
+observations. Missing rows remain black. Live bars use the newest block consumed
+this display frame and are black when no new block became due, matching `Spectrum`.
+The view uses the existing analysis stream and scene picker; the text diagnostics
+window is unchanged. With stopped or silent audio, all scene RGB eventually turns
+black as history scrolls out. Residual and smoother comparisons remain in `Spectrum`.
+
+GPU timestamp comparison at 1280x720 on Intel Arc Graphics (128 bands, 60 analysis
+rows/second, two seconds of history; synthetic stereo tones and periodic attacks):
+
+| Scene | Mean scene time | p95 scene time |
+| --- | ---: | ---: |
+| Debug | 0.2204 ms | 0.2282 ms |
+| Spectrum | 0.1308 ms | 0.1399 ms |
+| Histogram | 0.2364 ms | 0.2399 ms |
+
+These measure the scene GPU pass, excluding presentation and readback duration.
+`AnalysisSceneGpuTimingAt720p` reproduces the comparison and saves RGBA captures
+under `artifacts/debug-scene`. Its recent timing window excludes initial warmup.
+
 ## Minimal scene
 
 ```hlsl
@@ -563,13 +601,39 @@ scales the shared musical phase in HLSL: changing it can shift the pose, and zer
 selects a stationary phase. This differs from the previous CPU integration that
 preserved pose when changing speed.
 
+## Mapping normalized controls
+
+Float controls stay in [0, 1], including defaults and vector components. Keep
+physical bounds and response curves in the scene HLSL so each scene remains
+self contained. There is no separate bounds metadata.
+
+```hlsl
+float speed = lerp(-4.0, 4.0, Motion.Speed);
+float radius = exp2(lerp(log2(0.01), log2(10.0), Light.Radius));
+float iterations = 1.0 + round(15.0 * Quality.Iterations);
+```
+
+Use linear mapping for signed ranges, logarithmic mapping for positive values
+spanning orders of magnitude, and rounding for discrete choices.
+
 ## Reload and UI behavior
 
-The Scene selector in settings automatically opens the owned shader window when a scene
-is selected. The shader window contains the current parameter tree, Reload, Reset defaults
-and diagnostics. Closing hides it; F6 toggles it from settings or the render window
-and hides it when the shader window has focus.
+The application opens a primary hub with Input, Gain (dB), and Scene controls,
+plus Canvas, Audio, Scene and Debug buttons. Audio contains the remaining generated
+analyzer controls. Debug shows timing and application status/errors. Each button
+toggles its owned window, and closing a side window hides it without losing state.
+Closing the hub stops the session and exits the application.
+
+The unlabeled Scene picker sits directly below Gain. Selection updates rendering
+without opening the properties window. The Scene button opens Reload, Reset defaults,
+the current parameter tree and shader diagnostics. F6 toggles Scene from the render
+window or other tools, and hides it when Scene has focus. Escape hides the focused tool.
 Scene selection and controls operate on the existing renderer without restarting audio.
+Audio edits restart analysis while retaining graphics. The untitled canvas has a
+normal title bar and resizable border. Move it to the desired monitor; F11 explicitly
+toggles fullscreen on that monitor. Restarts preserve its placement. Space in the
+canvas activates the hub; Escape hides the canvas, and Canvas in the hub reopens it.
+Monitor-specific white level and DPI follow the canvas window automatically.
 
 A reload builds a complete candidate set before swapping programs, parameter layouts,
 bindings and UI. Failure preserves the previous set. Removing the active scene selects
@@ -599,9 +663,10 @@ dotnet test AEther.Tests/AEther.Tests.csproj --filter FullyQualifiedName~ShaderS
 ```powershell
 dotnet build AEther.sln --no-restore
 dotnet run --project tools/AEther.Smoke -- . --shader-authoring-only
+dotnet run --project tools/AEther.Smoke -- . --windows-watcher-only
 ```
 
-The focused smoke check renders all four scenes with synthetic audio, checks reflected
+The focused smoke check renders all discovered scenes with synthetic audio, checks reflected
 struct/vector/bool defaults and uploads, changes slots and declaration order, exercises
 add/remove/reset and failed-reload rollback, and verifies watcher discovery and shader
 window controls without restarting capture. PNGs go to the ignored smoke artifacts folder.

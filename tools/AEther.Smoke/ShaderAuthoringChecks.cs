@@ -26,7 +26,10 @@ internal static partial class Program
     static void CheckShaderAuthoring(IntPtr window, string shaders, string output)
     {
         using var renderer = new Renderer(window, 320, 180, 64, 256, shaderDirectory: shaders);
-        if (renderer.Scenes.Count != 4) throw new Exception("Expected four discovered scenes.");
+        var expected = Directory.GetFiles(Path.Combine(shaders, "Scenes"), "*.hlsl")
+            .Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal);
+        if (!renderer.Scenes.Select(s => s.Name).Order(StringComparer.Ordinal).SequenceEqual(expected))
+            throw new Exception("Discovered scenes do not match the scene files.");
         foreach (var scene in renderer.Scenes)
         {
             renderer.SelectScene(scene.Name); Seed(renderer); renderer.Render(false);
@@ -86,7 +89,7 @@ internal static partial class Program
         File.Delete(path);
         if (!renderer.ReloadShaders() || renderer.Scenes.Any(s => s.Name == "AuthoringProbe") || renderer.ActiveShader == null)
             throw new Exception("Deleting the active scene failed to select a fallback.");
-        Console.WriteLine("Shader authoring: four scenes, GPU output, nested defaults, vectors, bools, nonstandard slots, reordered layout, reload rollback, reset, add/remove and resize passed.");
+        Console.WriteLine("Shader authoring: scene discovery, GPU output, nested defaults, vectors, bools, nonstandard slots, reordered layout, reload rollback, reset, add/remove and resize passed.");
     }
 
 }

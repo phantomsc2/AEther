@@ -37,6 +37,29 @@ namespace AEther.Tests
         }
 
         [Test]
+        public async Task RunningAnalyzerKeepsItsSettingsUntilRestart()
+        {
+            var options = Options();
+            var analyzer = new Analyzer(Format, options);
+            try
+            {
+                options.TimeResolution = 1000;
+                options.MaxInputAgeMilliseconds = 1;
+                options.SmoothingEnabled = false;
+                Assert.That(analyzer.Options, Is.Not.SameAs(options));
+                Assert.That(analyzer.Options.TimeResolution, Is.EqualTo(100));
+                Assert.That(analyzer.Options.MaxInputAgeMilliseconds, Is.EqualTo(50));
+                Assert.That(analyzer.Options.SmoothingEnabled, Is.True);
+                var results = Collect(analyzer);
+                analyzer.PostSamples(Audio(160));
+                analyzer.Stop();
+                await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.That(results.Count, Is.EqualTo(2), "The active generation retains its original block size.");
+            }
+            finally { analyzer.Stop(); await analyzer.Completion; }
+        }
+
+        [Test]
         public async Task DroppedCaptureLeavesAnalysisRowsMissing()
         {
             var analyzer = new Analyzer(Format, Options(2));

@@ -20,22 +20,144 @@ public class TimedSessionTests
     }
     sealed class Source : SampleSource, ITimedSampleSource
     {
-        public override SampleFormat Format => new(SampleType.Float32.Instance, 8000, 1);
+        public Source(int sampleRate = 8000, int channels = 1) => Format = new(SampleType.Float32.Instance, sampleRate, channels);
+        public override SampleFormat Format { get; }
+        public bool Emit = true;
+        public int Starts, Stops, Disposals;
         public event TimedSampleDataHandler TimedDataAvailable;
         public int TimedSubscribers => TimedDataAvailable?.GetInvocationList().Length ?? 0;
         public override void Start()
         {
-            var data = new byte[160 * 4];
+            Starts++;
+            if (!Emit) return;
+            var data = new byte[160 * Format.Size];
             TimedDataAvailable?.Invoke(this, data, new(System.Diagnostics.Stopwatch.GetTimestamp()
-                - AudioClock.Frames(160, 8000), 0, AudioTimestampQuality.Device));
+                - AudioClock.Frames(160, Format.SampleRate), 0, AudioTimestampQuality.Device));
             DataAvailable?.Invoke(this, data);
         }
-        public override void Stop() { }
-        public override void Dispose() { }
+        public override void Stop() { Stops++; }
+        public override void Dispose() { Disposals++; }
     }
 
     static AnalyzerOptions Options() => new() { MinFrequency = 100, MaxFrequency = 1000, TimeResolution = 100,
         MaxInputAgeMilliseconds = 1000 };
+
+    [Test, Category("GPU")]
+    public async Task AnalysisRestartsKeepCompiledProgramsAcrossEveryGraphicsContractChange()
+    {
+        using var shaders = new RestartShaders();
+        using var window = new Window();
+        var source = new Source { Emit = false };
+        await using var session = new Session(window.Handle, 1280, 720, source, Options(),
+            shaderDirectory: shaders.Root, initialScene: "Probe");
+        session.Start();
+        var renderer = session.Renderer;
+        var frameReady = renderer.FrameReady;
+        var originalAnalyzer = session.Analyzer;
+        var rejectedSource = new Source { Emit = false };
+        var invalid = Options(); invalid.TimeResolution = 0;
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await session.RestartAnalysisAsync(rejectedSource, invalid));
+        Assert.That(session.Analyzer, Is.SameAs(originalAnalyzer));
+        Assert.That(originalAnalyzer.Completion.IsCompleted, Is.False);
+        Assert.That(source.Stops, Is.Zero, "Reject invalid settings before stopping the active generation.");
+        Assert.That(rejectedSource.TimedSubscribers, Is.Zero);
+        Assert.That(rejectedSource.Disposals, Is.Zero, "Failed replacement sources remain caller-owned.");
+        rejectedSource.Dispose();
+        renderer.SelectScene("Other");
+        var other = renderer.ActiveShader.Program.Pixel;
+        renderer.SelectScene("Probe");
+        var scene = renderer.ActiveShader;
+        var program = scene.Program.Pixel;
+        var parameter = scene.Parameters.Items.Single(p => p.Name == "Gain");
+        scene.Parameters.SetFloat(parameter, .75f);
+        // Any attempt to reload source/recompile on settings changes now fails.
+        foreach (string file in Directory.GetFiles(Path.Combine(shaders.Root, "Scenes")))
+            File.WriteAllText(file, "INVALID SHADER SOURCE");
+        File.WriteAllText(Path.Combine(shaders.Root, "Common", "Inputs.hlsl"), "INVALID COMMON SOURCE");
+
+        (string Name, Action<AnalyzerOptions> Edit, int Rate, int Channels)[] edits =
+        [
+            ("gain", o => o.InputGainDb = 0, 8000, 1),
+            ("DFT backend", o => o.UseSwift = false, 8000, 1),
+            ("SIMD", o => o.SIMDEnabled = false, 8000, 1),
+            ("SWIFT tuning", o => { o.SwiftWidthScale = 2; o.SwiftImbalance = .5; }, 8000, 1),
+            ("smoother", o => { o.SmoothingMode = SmoothingMode.Complex; o.SmoothingNoiseFloor = .01; }, 8000, 1),
+            ("bypass", o => o.SmoothingEnabled = false, 8000, 1),
+            ("splitter", o => { o.TimeWindowSeconds = .3; o.FrequencyWindowOctaves = 3; }, 8000, 1),
+            ("queue", o => { o.BufferCapacity = 8; o.MaxInputAgeMilliseconds = 500; }, 8000, 1),
+            ("domain meaning", o => { o.MinFrequency = 200; o.MaxFrequency = 2000; }, 8000, 1),
+            ("bands", o => o.FrequencyResolution = 24, 8000, 1),
+            ("actual tick rate", o => o.TimeResolution = 101, 8000, 1),
+            ("history", o => o.HistorySeconds = 3, 8000, 1),
+            ("sample rate/channels", _ => { }, 44100, 2),
+        ];
+        foreach (var edit in edits)
+        {
+            var oldAnalyzer = session.Analyzer;
+            var oldAudio = renderer.Audio;
+            var options = Options(); edit.Edit(options);
+            var nextSource = new Source(edit.Rate, edit.Channels) { Emit = false };
+            await session.RestartAnalysisAsync(nextSource, options);
+            Assert.That(oldAnalyzer.Completion.IsCompletedSuccessfully, Is.True, edit.Name);
+            Assert.That(source.TimedSubscribers, Is.Zero, edit.Name);
+            Assert.That(source.Stops, Is.EqualTo(1), edit.Name);
+            Assert.That(source.Disposals, Is.EqualTo(1), edit.Name);
+            Assert.That(nextSource.TimedSubscribers, Is.EqualTo(1), edit.Name);
+            source = nextSource;
+            session.Start();
+            Assert.That(source.Starts, Is.EqualTo(1), edit.Name);
+            Assert.That(session.Renderer, Is.SameAs(renderer), edit.Name);
+            Assert.That(renderer.FrameReady, Is.SameAs(frameReady), edit.Name);
+            Assert.That(renderer.Input, Is.EqualTo(options.GetGraphicsInput(source.Format)), edit.Name);
+            Assert.That(renderer.ActiveShader, Is.SameAs(scene), edit.Name);
+            Assert.That(scene.Program.Pixel, Is.SameAs(program), edit.Name);
+            Assert.That(renderer.Scenes.Single(s => s.Name == "Other").Program.Pixel, Is.SameAs(other), edit.Name);
+            Assert.That(renderer.Scenes.Single(s => s.Name == "Lazy").Parameters, Is.Null, edit.Name);
+            Assert.That(scene.Parameters.GetFloat(parameter), Is.EqualTo(.75f), edit.Name);
+            Assert.That(renderer.Audio, Is.Not.SameAs(oldAudio), edit.Name);
+            Assert.That(renderer.Audio.Profile, Is.SameAs(session.Analyzer.Profile), edit.Name);
+            Assert.That(renderer.ReadHistogram(0), Is.All.Zero, edit.Name);
+            Assert.That(renderer.ReadHistogram(0).Length, Is.EqualTo(renderer.Audio.Bands * renderer.Audio.Rows * 4));
+
+            // Row zero must work again; the preceding analysis generation had row zero too.
+            int bands = renderer.Audio.Bands;
+            renderer.PostAudio(new(Enumerable.Repeat(.5, bands * 4).ToArray(), bands * 4, DateTime.UnixEpoch)
+                { AnalysisRow = 0 }, 1);
+            renderer.Render(false);
+            Assert.That(renderer.ReadHistogram(0).Any(v => v > 0), Is.True, edit.Name);
+            Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 0), Is.True, edit.Name);
+        }
+    }
+
+    sealed class RestartShaders : IDisposable
+    {
+        public string Root { get; } = Path.Combine(Path.GetTempPath(), "AEther-restart-" + Guid.NewGuid().ToString("N"));
+        public RestartShaders()
+        {
+            Directory.CreateDirectory(Path.Combine(Root, "Common"));
+            Directory.CreateDirectory(Path.Combine(Root, "Scenes"));
+            string common = null;
+            for (var directory = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); directory != null; directory = directory.Parent)
+            {
+                string candidate = Path.Combine(directory.FullName, "AEther.Vortice", "Shaders", "Common");
+                if (Directory.Exists(candidate)) { common = candidate; break; }
+            }
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl" })
+                File.Copy(Path.Combine(common, file), Path.Combine(Root, "Common", file));
+            foreach (string name in new[] { "Probe", "Other", "Lazy" })
+                File.WriteAllText(Path.Combine(Root, "Scenes", name + ".hlsl"), """
+                    #include "../Common/Inputs.hlsl"
+                    cbuffer Parameters { float Gain = .5; };
+                    float4 PS(PSin input) : SV_Target { return float4(Gain * Spectrum0.Load(int3(0,0,0)).rgb, 1); }
+                    """);
+        }
+        public void Dispose()
+        {
+            if (!Path.GetFullPath(Root).StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Cleanup escaped temporary directory.");
+            Directory.Delete(Root, true);
+        }
+    }
 
     [Test, Category("GPU")]
     public async Task SceneChangesPreserveRendererAudioHistoryAndCaptureSubscription()

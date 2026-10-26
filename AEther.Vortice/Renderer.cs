@@ -55,7 +55,8 @@ public sealed partial class Renderer : IDisposable
     internal bool RawPresentationClock { get; set; }
     // Reference cadence for repeatable before/after developer profiling only.
     internal bool FixedFluidMaterialCadence { get; set; }
-    public AudioHistory Audio { get; }
+    public AudioHistory Audio { get; private set; }
+    public GraphicsInput? Input { get; private set; }
     public string SceneName { get; private set; } = "Mandelbox";
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
     public ShaderScene? ActiveShader { get { lock (graphicsGate) return scenes.GetValueOrDefault(SceneName); } }
@@ -95,43 +96,45 @@ public sealed partial class Renderer : IDisposable
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
+    public Renderer(IntPtr window, int width, int height, GraphicsInput input,
+        string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null,
+        string? initialScene = null, PipelineProfile? profile = null)
+        : this(window, width, height, input.Domain.Length, input.AnalysisRate, input.HistorySeconds,
+            shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile)
+    {
+        Input = input;
+    }
+
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
         double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
         Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null,
-        string? initialScene = null)
+        string? initialScene = null, PipelineProfile? profile = null)
     {
+        using var startup = profile?.Measure("startup.gpu_ms");
         Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
+        Audio.Profile = profile;
         if (initialScene != null) SceneName = initialScene;
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
         try
         {
             using var factory = CreateDXGIFactory1<IDXGIFactory2>();
-            CreateGraphicsDevice(factory);
+            using (profile?.Measure("startup.gpu_device_ms"))
+                CreateGraphicsDevice(factory);
             Own(device); Own(context);
             gpu = Own(new GpuProfiler(device, context));
             using (var dxgiDevice = device.QueryInterface<IDXGIDevice>())
             using (var adapter = dxgiDevice.GetAdapter())
                 AdapterDescription = adapter.Description.Description;
             Debug.WriteLine($"AEther GPU: {AdapterDescription}");
-            output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain));
+            using (profile?.Measure("startup.gpu_output_ms"))
+                output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain));
             if (attachSwapChain == null)
                 factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
             frameBuffer = Own(device.CreateBuffer((uint)Marshal.SizeOf<Frame>(), BindFlags.ConstantBuffer));
 
             namedBuffers.Add("FrameConstants", frameBuffer);
 
-            for (var i = 0; i < textures.Length; i++)
-            {
-                textures[i] = Own(device.CreateTexture2D(new Texture2DDescription
-                {
-                    Width = (uint)bands, Height = (uint)(i < 2 ? 2 : Audio.Rows),
-                    MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
-                    SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
-                    BindFlags = BindFlags.ShaderResource,
-                }));
-                textures[i].DebugName = i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
-                views[i] = Own(device.CreateShaderResourceView(textures[i]));
-            }
+            ReplaceAudioTextures(Audio);
             var sampler = Own(device.CreateSamplerState(new SamplerDescription
             {
                 Filter = Filter.MinMagLinearMipPoint, AddressU = TextureAddressMode.Clamp,
@@ -146,7 +149,8 @@ public sealed partial class Renderer : IDisposable
             }));
             context.RSSetState(rasterizer);
             Resize(width, height);
-            if (!ReloadShaders()) throw new InvalidOperationException(ShaderError);
+            using (profile?.Measure("startup.gpu_shaders_ms"))
+                if (!ReloadShaders()) throw new InvalidOperationException(ShaderError);
         }
         catch { Dispose(); throw; }
     }

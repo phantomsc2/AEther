@@ -5,6 +5,14 @@ namespace AEther
 {
     public class AnalyzerOptions
     {
+        /// <summary>Independent settings for one pipeline generation. All option values are scalars.</summary>
+        public AnalyzerOptions Copy() => (AnalyzerOptions)MemberwiseClone();
+
+        public GraphicsInput GetGraphicsInput(SampleFormat format)
+        {
+            Validate(format);
+            return new(Domain, format.SampleRate / (double)(format.SampleRate / TimeResolution), HistorySeconds);
+        }
 
         [Browsable(false)]
         public Domain Domain => Domain.FromRange(MinFrequency, MaxFrequency, FrequencyResolution);
@@ -16,13 +24,13 @@ namespace AEther
         [Description("Maximum age of completed live analysis ticks. Preserve the samples needed by a fresh tick. Offline input is unaffected.")]
         public double MaxInputAgeMilliseconds { get; set; } = 50;
 
-        [Category("Domain")]
+        [Category("DFT")]
         public double MinFrequency { get; set; } = 30;
 
-        [Category("Domain")]
+        [Category("DFT")]
         public double MaxFrequency { get; set; } = 8000;
 
-        [Category("Domain")]
+        [Category("DFT")]
         public int FrequencyResolution { get; set; } = 12;
 
         [Category("DFT")]
@@ -56,7 +64,7 @@ namespace AEther
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
-        [Category("Visualization")]
+        [Category("GPU")]
         [Description("Seconds of spectral history retained for age-based shader lookups. Longer values allow longer fluid tails and use more memory.")]
         public double HistorySeconds { get; set; } = 2;
 
@@ -74,31 +82,31 @@ namespace AEther
         [Description("Frequency support of the original splitter, in octaves.")]
         public double FrequencyWindowOctaves { get; set; } = 2;
 
-        [Category("Kalman smoother")]
+        [Category("Smoother")]
         [DisplayName("Enabled")]
         [DefaultValue(true)]
         [Description("Smooth the spectrum before the splitter. When off, both filters are bypassed and observed linear magnitudes feed the original splitter directly.")]
         public bool SmoothingEnabled { get; set; } = true;
 
-        [Category("Kalman smoother")]
+        [Category("Smoother")]
         [DisplayName("Splitter input")]
         [DefaultValue(SmoothingMode.LogAmplitude)]
         [Description("Both smoothers run on identical observations. Select which linear amplitude feeds the original splitter. Spectrum CompareSmoothers shows A left, B right, using the same stereo average.")]
         public SmoothingMode SmoothingMode { get; set; } = SmoothingMode.LogAmplitude;
 
-        [Category("Kalman smoother")]
+        [Category("Smoother")]
         [DisplayName("Log acceleration intensity")]
         [DefaultValue(.001)]
         [Description("Mode A continuous white-acceleration intensity q, in log-amplitude squared / seconds cubed. Larger permits faster dynamics; 0 is deterministic constant velocity. No response-time calibration.")]
         public double LogAccelerationIntensity { get; set; } = .001;
 
-        [Category("Kalman smoother")]
+        [Category("Smoother")]
         [DisplayName("Complex acceleration intensity")]
         [DefaultValue(.00001)]
         [Description("Mode B continuous white-acceleration intensity q per Cartesian component, in amplitude squared / seconds cubed. The known carrier rotation is included in linear dynamics. Larger permits faster dynamics.")]
         public double ComplexAccelerationIntensity { get; set; } = .00001;
 
-        [Category("Kalman smoother")]
+        [Category("Smoother")]
         [DisplayName("Measurement noise RMS")]
         [DefaultValue(.001)]
         [Description("Fixed Cartesian noise RMS per real/imaginary component in coherent amplitude units AFTER input gain. Larger values reduce trust in measurements.")]

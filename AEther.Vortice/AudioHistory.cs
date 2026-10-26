@@ -90,9 +90,13 @@ public sealed class AudioHistory
 
     public AudioHistory(int bands, double analysisRate, double seconds = 1, double presentationDelay = 0,
         TimeProvider? timeProvider = null)
+        : this(bands, analysisRate, seconds, presentationDelay, timeProvider ?? TimeProvider.System, null) { }
+
+    AudioHistory(int bands, double analysisRate, double seconds, double presentationDelay,
+        TimeProvider timeProvider, long? origin)
     {
-        this.timeProvider = timeProvider ?? TimeProvider.System;
-        started = this.timeProvider.GetTimestamp();
+        this.timeProvider = timeProvider;
+        started = origin ?? timeProvider.GetTimestamp();
         if (bands <= 0 || analysisRate <= 0 || !double.IsFinite(analysisRate)
             || seconds <= 0 || !double.IsFinite(seconds)
             || presentationDelay < 0 || !double.IsFinite(presentationDelay)) throw new ArgumentOutOfRangeException();
@@ -113,6 +117,10 @@ public sealed class AudioHistory
         // Legacy/offline fixtures can seed an entire history without pretending it is live capture.
         offline = Mailbox(Math.Min(32768, Rows * 2));
     }
+
+    // A new analysis generation rewinds row numbers, but must not rewind the renderer clock.
+    internal AudioHistory Restart(GraphicsInput input) => new(input.Domain.Length, input.AnalysisRate,
+        input.HistorySeconds, PresentationDelay, timeProvider, started);
 
     Channel<Row> Mailbox(int capacity) => Channel.CreateBounded<Row>(new BoundedChannelOptions(capacity)
     {

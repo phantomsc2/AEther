@@ -11,6 +11,31 @@ using Microsoft.UI.Xaml.Controls;
 
 internal static partial class Program
 {
+    // Interactive pointer probe: the title counts actual pipeline-setting commits.
+    // Dragging should change the NumberBox continuously and increment the title once.
+    static void CheckSliderPointerEdits()
+    {
+        WinRT.ComWrappersSupport.InitializeComWrappers();
+        Microsoft.UI.Xaml.Application.Start(_ =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherQueueSynchronizationContext(
+                DispatcherQueue.GetForCurrentThread()));
+            var app = new WindowCheckApplication();
+            app.StartChecks = () =>
+            {
+                var settings = new AudioWindow { Title = "Slider commits: 0" };
+                int commits = 0;
+                settings.SettingsChanged += (_, _) =>
+                {
+                    settings.Title = $"Slider commits: {++commits}";
+                    Console.WriteLine($"Commit {commits}: min frequency {settings.Options.MinFrequency:G17}");
+                };
+                settings.ShortcutRequested += _ => { settings.Destroy(); app.Exit(); };
+                settings.Activate();
+            };
+        });
+    }
+
     static void CheckSwiftSettings()
     {
         Exception? failure = null;
@@ -26,7 +51,7 @@ internal static partial class Program
                 try
                 {
                     // Construct the real controls without activating or displaying a window.
-                    var settings = new SettingsWindow();
+                    var settings = new AudioWindow();
                     var elements = LogicalChildren((DependencyObject)settings.Content).ToArray();
                     var numbers = elements.OfType<NumberBox>().ToArray();
                     var width = numbers.Single(n => n.Header?.ToString() == "SWIFT width");

@@ -18,7 +18,7 @@ their original meaning. See [models and comparison](doc/kalman-smoothing.md).
 - **AEther.NAudio**: audio input with [NAudio](https://github.com/naudio/NAudio)
 - **AEther.Tests**: using [NUnit](https://nunit.org/)
 - **AEther.Vortice**: D3D11 fullscreen shaders, audio textures and runtime shader compilation
-- **AEther.WinUI**: WinUI 3 render canvas, separate settings and shader windows, application lifecycle
+- **AEther.WinUI**: primary settings hub, separate render canvas and tool windows, application lifecycle
 
 - **tools/AEther.CaptureProbe**: measures NAudio loopback packet timing
 - **tools/AEther.Smoke**: exercises analysis and rendering with synthetic audio
@@ -31,24 +31,27 @@ The app is unpackaged and includes its Windows App SDK runtime, so no MSIX
 installation or separate Windows App Runtime installation is needed. The .NET 10
 desktop runtime is required when running a build without the SDK.
 The app starts windowed, captures the default system audio output and displays Mandelbox.
-The main window contains only a Direct3D `SwapChainPanel`. Settings and shader
+The main window is the settings hub. A separate untitled, resizable window with a
+standard title bar contains only a Direct3D `SwapChainPanel`. Settings and shader
 properties use standard WinUI controls with the system's default appearance.
 
-- **Space** (render window): show or hide settings. Closing settings keeps the render window running.
+- **Space** (render window): activate the hub. Closing the hub exits the application.
 - **F6**: toggle the shader window.
-- **F11**: toggle borderless fullscreen on the selected display.
+- **F11**: explicitly toggle fullscreen on the canvas window's current display.
 - **F5**: rebuild the capture/analysis/render session.
 - **R**: toggle combined level view in Spectrum and Histogram.
 - **I**: toggle Spectrum intensity view.
 - **[ / ]**: move the Mandelbox slice.
-- **Escape**: close the render window, or hide the focused tool window.
+- **Escape**: hide the canvas or focused tool window. The hub's Canvas button reopens the canvas.
 
-Settings select audio input, display and analyzer options. These changes restart the
-session. The Scene selector in settings switches scenes and automatically opens the
-separate shader window with dynamic parameter trees, Reload and Reset defaults.
+The hub selects audio input, gain and scene. Audio opens the remaining analyzer
+options. Audio edits restart analysis while retaining graphics. Drag the canvas to
+choose its display; monitor settings follow its location, and restarts leave it there.
+The Scene selector switches scenes without opening the separate shader window,
+which contains dynamic parameter trees, Reload and Reset defaults.
 **F6** toggles that window. Scene selection
-and parameter edits keep capture, analysis and history running. Closing either tool
-window keeps the render window running.
+and parameter edits keep capture, analysis and history running. Closing a side
+window hides it; closing the hub shuts down all windows and capture.
 
 Scenes are the top-level files in `AEther.Vortice/Shaders/Scenes/*.hlsl`. Shared code
 lives in `Shaders/Common`. Save source files in the IDE to reload without a .NET build;

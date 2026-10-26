@@ -1,33 +1,96 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Vortice.Direct3D11;
+using Vortice.DXGI;
+using MapFlags = Vortice.Direct3D11.MapFlags;
 using Vortice.Mathematics;
 
 namespace AEther.Vortice;
 
 public sealed partial class Renderer
 {
+    /// <summary>
+    /// Call after draining the old analyzer. Resets its row/history generation;
+    /// rebuilds dimension-dependent textures only. Device, swap chain, compiled
+    /// scene programs and their parameter values survive every contract change.
+    /// </summary>
+    public void RestartAudio(GraphicsInput input, PipelineProfile? profile = null)
+    {
+        lock (graphicsGate)
+        {
+            var next = Audio.Restart(input);
+            next.Profile = profile;
+            using var restart = profile?.Measure("startup.gpu_audio_ms");
+            if (next.Bands != Audio.Bands || next.Rows != Audio.Rows)
+                ReplaceAudioTextures(next);
+            Audio = next;
+            Input = input;
+            previousMusicalTime = 0;
+            // Texture contents must be zeroed before any scene (including transport
+            // preparation) can sample them. No old rows or queued packets survive.
+            UploadAudio(reset: true);
+        }
+    }
+
+    void ReplaceAudioTextures(AudioHistory history)
+    {
+        var nextTextures = new ID3D11Texture2D[4];
+        var nextViews = new ID3D11ShaderResourceView[4];
+        try
+        {
+            for (int i = 0; i < nextTextures.Length; i++)
+            {
+                nextTextures[i] = device.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = (uint)history.Bands, Height = (uint)(i < 2 ? 2 : history.Rows),
+                    MipLevels = 1, ArraySize = 1, Format = Format.R32G32B32A32_Float,
+                    SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default,
+                    BindFlags = BindFlags.ShaderResource,
+                });
+                nextTextures[i].DebugName = i < 2 ? $"Spectrum{i}" : $"Histogram{i - 2}";
+                nextViews[i] = device.CreateShaderResourceView(nextTextures[i]);
+            }
+        }
+        catch
+        {
+            for (int i = 0; i < nextTextures.Length; i++)
+            { nextViews[i]?.Dispose(); nextTextures[i]?.Dispose(); }
+            throw;
+        }
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
+        for (int i = 0; i < textures.Length; i++)
+        {
+            if (views[i] != null) { resources.Remove(views[i]); views[i].Dispose(); }
+            if (textures[i] != null) { resources.Remove(textures[i]); textures[i].Dispose(); }
+            textures[i] = Own(nextTextures[i]); views[i] = Own(nextViews[i]);
+        }
+        namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
+        namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
+        namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
+    }
+
     // Internal reference path for correctness comparisons and upload measurements.
     internal bool FullHistoryUploads { get; set; }
     internal readonly record struct AudioUpload(int Rows, long Bytes, int Calls, double Milliseconds);
     // Counts cover both histogram textures; Rows is the number updated per channel.
     internal AudioUpload LastHistoryUpload { get; private set; }
 
-    unsafe void UploadAudio()
+    unsafe void UploadAudio(bool reset = false)
     {
         long start = Stopwatch.GetTimestamp();
         // Capture/analysis never touches a graphics lock. All uploads follow Advance.
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
         uint pitch = (uint)(Audio.Bands * 16);
-        bool blocks = SceneName == "Spectrum";
+        bool blocks = SceneName is "Spectrum" or "Debug";
         var spectrum = blocks ? Audio.BlockSpectrum : Audio.Spectrum;
         for (int channel = 0; channel < 2; channel++)
             fixed (float* data = spectrum[channel])
                 context.UpdateSubresource(textures[channel], 0, new Box(0, 0, 0, Audio.Bands, 1, 1), (IntPtr)data, pitch, 0);
 
 
-        if (blocks)
+        if (blocks || reset)
             for (int channel = 0; channel < 2; channel++)
                 fixed (float* data = Audio.BlockMomentaryResidual[channel])
                     context.UpdateSubresource(textures[channel], 0, new Box(0, 1, 0, Audio.Bands, 2, 1),
