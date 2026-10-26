@@ -113,24 +113,23 @@ public sealed class SettingsWindow : ToolWindow
                 else
                 {
                     var integral = property.PropertyType == typeof(int);
-                    var noiseFloor = property.Name == nameof(AnalyzerOptions.TrackerNoiseFloor);
-                    var zeroLogarithmic = property.Name == nameof(AnalyzerOptions.AmplitudeCurvatureCorrectionStrength);
+                    var noiseFloor = property.Name == nameof(AnalyzerOptions.SmoothingNoiseFloor);
+                    var zeroLogarithmic = property.Name is nameof(AnalyzerOptions.LogAccelerationIntensity)
+                        or nameof(AnalyzerOptions.ComplexAccelerationIntensity);
                     var logarithmic = property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
-                        or nameof(AnalyzerOptions.TrackerNoiseFloor)
-                        or nameof(AnalyzerOptions.AmplitudeTrackingSeconds) or nameof(AnalyzerOptions.PhaseTrackingSeconds)
-                        or nameof(AnalyzerOptions.AmplitudeCouplingSeconds);
-                    var step = integral ? 1 : noiseFloor ? .0001 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
+                        or nameof(AnalyzerOptions.SmoothingNoiseFloor);
+                    var step = integral ? 1 : zeroLogarithmic ? .00001 : noiseFloor ? .0001 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
                         or nameof(AnalyzerOptions.SwiftImbalance) ? .01 : .001;
-                    double ToSlider(double value) => zeroLogarithmic ? Math.Log2(1 + value) : logarithmic ? Math.Log2(value) : value;
-                    double FromSlider(double value) => zeroLogarithmic ? Math.Pow(2, value) - 1 : logarithmic ? Math.Pow(2, value) : value;
+                    double ToSlider(double value) => zeroLogarithmic ? Math.Log2(1 + value / 1e-8) : logarithmic ? Math.Log2(value) : value;
+                    double FromSlider(double value) => zeroLogarithmic ? 1e-8 * (Math.Pow(2, value) - 1) : logarithmic ? Math.Pow(2, value) : value;
                     var number = new NumberBox
                     {
                         Header = property.DisplayName,
                         Value = Convert.ToDouble(property.GetValue(Options)),
                         SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
                         SmallChange = step,
-                        LargeChange = integral ? 10 : noiseFloor ? .001 : .1,
-                        NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : noiseFloor ? 6 : 3 },
+                        LargeChange = integral ? 10 : noiseFloor || zeroLogarithmic ? .001 : .1,
+                        NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : noiseFloor || zeroLogarithmic ? 12 : 3 },
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         Minimum = NumericBounds(property.Name).Minimum,
                         Maximum = NumericBounds(property.Name).Maximum,
@@ -143,7 +142,7 @@ public sealed class SettingsWindow : ToolWindow
                         LargeChange = logarithmic || zeroLogarithmic ? .5 : number.LargeChange,
                         Value = ToSlider(number.Value),
                     };
-                    if (logarithmic || zeroLogarithmic) slider.ThumbToolTipValueConverter = new WidthToolTipConverter(zeroLogarithmic);
+                    if (logarithmic || zeroLogarithmic) slider.ThumbToolTipValueConverter = new WidthToolTipConverter(zeroLogarithmic ? 1e-8 : 0);
                     AutomationProperties.SetName(number, property.DisplayName);
                     AutomationProperties.SetName(slider, property.DisplayName);
                     bool updating = false;
@@ -218,22 +217,21 @@ public sealed class SettingsWindow : ToolWindow
         nameof(AnalyzerOptions.SwiftImbalance) => (0, 1),
         nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
         nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
-        nameof(AnalyzerOptions.AmplitudeTrackingSeconds) => (.001, 2),
-        nameof(AnalyzerOptions.AmplitudeCurvatureOctaves) => (0, 1),
-        nameof(AnalyzerOptions.AmplitudeCurvatureCorrectionStrength) => (0, 1e8),
-        nameof(AnalyzerOptions.AmplitudeCouplingSeconds) => (.01, 2),
-        nameof(AnalyzerOptions.AmplitudeSpatialDamping) => (0, 4),
-        nameof(AnalyzerOptions.PhaseTrackingSeconds) => (.001, 2),
-        nameof(AnalyzerOptions.TrackerNoiseFloor) => (1e-6, .1),
+        nameof(AnalyzerOptions.LogAccelerationIntensity) => (0, 1e3),
+        nameof(AnalyzerOptions.ComplexAccelerationIntensity) => (0, 1e3),
+        nameof(AnalyzerOptions.SmoothingNoiseFloor) => (1e-12, 1),
+        nameof(AnalyzerOptions.TimeWindowSeconds) => (2.0 / Options.TimeResolution, 2),
+        nameof(AnalyzerOptions.FrequencyWindowOctaves) => (2.0 / Options.FrequencyResolution, 8),
         _ => throw new InvalidOperationException($"No slider bounds defined for {name}."),
     };
 
     void Changed() => SettingsChanged?.Invoke(this, EventArgs.Empty);
 
-    sealed class WidthToolTipConverter(bool zeroBased = false) : IValueConverter
+    sealed class WidthToolTipConverter(double zeroScale = 0) : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language) =>
-            (Math.Pow(2, (double)value) - (zeroBased ? 1 : 0)).ToString("0.######", System.Globalization.CultureInfo.CurrentCulture);
+            ((Math.Pow(2, (double)value) - (zeroScale > 0 ? 1 : 0)) * (zeroScale > 0 ? zeroScale : 1))
+                .ToString("0.############", System.Globalization.CultureInfo.CurrentCulture);
 
         public object ConvertBack(object value, Type targetType, object parameter, string language) =>
             throw new NotSupportedException();

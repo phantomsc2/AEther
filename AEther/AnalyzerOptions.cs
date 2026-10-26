@@ -26,7 +26,7 @@ namespace AEther
         public int FrequencyResolution { get; set; } = 12;
 
         [Category("DFT")]
-        [Description("Spectrum publication and log-polar tracker update rate.")]
+        [Description("Spectrum publication and Kalman smoother update rate.")]
         public int TimeResolution { get; set; } = 1000;
 
         [Category("DFT")]
@@ -66,54 +66,37 @@ namespace AEther
         [Description("Gain before all analysis, from -60 to +60 dB. 0 dB preserves full-scale input units. For consistent loopback visuals, keep player volume at 100% and adjust listening volume downstream of capture.")]
         public double InputGainDb { get; set; } = 15.0;
 
-        // Retained for historical standalone splitter studies, outside the active UI.
-        [Browsable(false)]
+        [Category("Splitter")]
+        [Description("Temporal support of the original Gaussian S/T/B/residual decomposition, in seconds.")]
         public double TimeWindowSeconds { get; set; } = .2;
 
-        [Browsable(false)]
+        [Category("Splitter")]
+        [Description("Frequency support of the original splitter, in octaves.")]
         public double FrequencyWindowOctaves { get; set; } = 2;
 
-        [Category("Log-polar tracker")]
-        [DisplayName("Amplitude response (seconds)")]
-        [DefaultValue(.1)]
-        [Description("Characteristic amplitude tracking time at amplitude 0.1 and noise RMS 0.001. Actual response depends on signal/noise ratio; this is not a settling-time guarantee.")]
-        public double AmplitudeTrackingSeconds { get; set; } = .1;
+        [Category("Kalman smoother")]
+        [DisplayName("Splitter input")]
+        [DefaultValue(SmoothingMode.LogAmplitude)]
+        [Description("Both smoothers run on identical observations. Select which linear amplitude feeds the original splitter. Spectrum CompareSmoothers shows A left, B right, using the same stereo average.")]
+        public SmoothingMode SmoothingMode { get; set; } = SmoothingMode.LogAmplitude;
 
-        [Category("Log-polar tracker")]
-        [DisplayName("Amplitude curvature scale (octaves)")]
-        [DefaultValue(.1)]
-        [Description("Experimental cross-bin log-amplitude prediction and correction. Larger scales penalize broader spectral curvature. 0 disables both; this is not a hard smoothing width.")]
-        public double AmplitudeCurvatureOctaves { get; set; } = .1;
+        [Category("Kalman smoother")]
+        [DisplayName("Log acceleration intensity")]
+        [DefaultValue(.001)]
+        [Description("Mode A continuous white-acceleration intensity q, in log-amplitude squared / seconds cubed. Larger permits faster dynamics; 0 is deterministic constant velocity. No response-time calibration.")]
+        public double LogAccelerationIntensity { get; set; } = .001;
 
-        [Category("Log-polar tracker")]
-        [DisplayName("Amplitude curvature correction strength")]
-        [DefaultValue(1.0)]
-        [Description("Confidence-weighted curvature penalty after measurements. Larger values smooth more; 0 keeps prediction coupling only. Strength 1 uses curvature precision 10000 per tick. Measurement confidence still matters.")]
-        public double AmplitudeCurvatureCorrectionStrength { get; set; } = 1;
+        [Category("Kalman smoother")]
+        [DisplayName("Complex acceleration intensity")]
+        [DefaultValue(.00001)]
+        [Description("Mode B continuous white-acceleration intensity q per Cartesian component, in amplitude squared / seconds cubed. The known carrier rotation is included in linear dynamics. Larger permits faster dynamics.")]
+        public double ComplexAccelerationIntensity { get; set; } = .00001;
 
-        [Category("Log-polar tracker")]
-        [DisplayName("Amplitude coupling time (seconds)")]
-        [DefaultValue(.1)]
-        [Description("Time scale of the spatial restoring force, separate from measurement tracking. Smaller values couple bins more strongly.")]
-        public double AmplitudeCouplingSeconds { get; set; } = .1;
-
-        [Category("Log-polar tracker")]
-        [DisplayName("Amplitude spatial damping")]
-        [DefaultValue(1.0)]
-        [Description("Damping of spatially rough amplitude velocity. 0 allows ringing; 1 is critical damping for a spatial mode with unit normalized curvature eigenvalue.")]
-        public double AmplitudeSpatialDamping { get; set; } = 1;
-
-        [Category("Log-polar tracker")]
-        [DisplayName("Phase response (seconds)")]
-        [DefaultValue(.1)]
-        [Description("Characteristic phase tracking time in seconds at the same reference signal/noise ratio as amplitude. Phase is experimental; no phase-jump rejection or frequency snapping is applied.")]
-        public double PhaseTrackingSeconds { get; set; } = .1;
-
-        [Category("Log-polar tracker")]
+        [Category("Kalman smoother")]
         [DisplayName("Measurement noise RMS")]
         [DefaultValue(.001)]
         [Description("Fixed Cartesian noise RMS per real/imaginary component in coherent amplitude units AFTER input gain. Larger values reduce trust in measurements.")]
-        public double TrackerNoiseFloor { get; set; } = .001;
+        public double SmoothingNoiseFloor { get; set; } = .001;
 
         public void Validate(SampleFormat format)
         {
@@ -144,25 +127,19 @@ namespace AEther
                     "SWIFT bandwidth must be smaller than the sample rate. Reduce width or increase bins per octave.");
             if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)
                 throw new ArgumentOutOfRangeException(nameof(HistorySeconds));
-            ValidateTracker();
+            ValidateSmoother();
+            ValidateSplitter(FrequencyResolution, format.SampleRate / (double)(format.SampleRate / TimeResolution));
         }
 
-        internal void ValidateTracker()
+        internal void ValidateSmoother()
         {
-            if (!double.IsFinite(AmplitudeCurvatureCorrectionStrength) || AmplitudeCurvatureCorrectionStrength < 0 || AmplitudeCurvatureCorrectionStrength > 1e8)
-                throw new ArgumentOutOfRangeException(nameof(AmplitudeCurvatureCorrectionStrength));
-            if (!double.IsFinite(AmplitudeCurvatureOctaves) || AmplitudeCurvatureOctaves < 0 || AmplitudeCurvatureOctaves > 1)
-                throw new ArgumentOutOfRangeException(nameof(AmplitudeCurvatureOctaves));
-            if (!double.IsFinite(AmplitudeCouplingSeconds) || AmplitudeCouplingSeconds < .01 || AmplitudeCouplingSeconds > 10)
-                throw new ArgumentOutOfRangeException(nameof(AmplitudeCouplingSeconds));
-            if (!double.IsFinite(AmplitudeSpatialDamping) || AmplitudeSpatialDamping < 0 || AmplitudeSpatialDamping > 4)
-                throw new ArgumentOutOfRangeException(nameof(AmplitudeSpatialDamping));
-            if (!double.IsFinite(AmplitudeTrackingSeconds) || AmplitudeTrackingSeconds < .001 || AmplitudeTrackingSeconds > 10)
-                throw new ArgumentOutOfRangeException(nameof(AmplitudeTrackingSeconds));
-            if (!double.IsFinite(PhaseTrackingSeconds) || PhaseTrackingSeconds < .001 || PhaseTrackingSeconds > 10)
-                throw new ArgumentOutOfRangeException(nameof(PhaseTrackingSeconds));
-            if (!double.IsFinite(TrackerNoiseFloor) || TrackerNoiseFloor < 1e-12 || TrackerNoiseFloor > 1e3)
-                throw new ArgumentOutOfRangeException(nameof(TrackerNoiseFloor));
+            if (!Enum.IsDefined(SmoothingMode)) throw new ArgumentOutOfRangeException(nameof(SmoothingMode));
+            if (!double.IsFinite(LogAccelerationIntensity) || LogAccelerationIntensity < 0 || LogAccelerationIntensity > 1e6)
+                throw new ArgumentOutOfRangeException(nameof(LogAccelerationIntensity));
+            if (!double.IsFinite(ComplexAccelerationIntensity) || ComplexAccelerationIntensity < 0 || ComplexAccelerationIntensity > 1e6)
+                throw new ArgumentOutOfRangeException(nameof(ComplexAccelerationIntensity));
+            if (!double.IsFinite(SmoothingNoiseFloor) || SmoothingNoiseFloor < 1e-12 || SmoothingNoiseFloor > 1e3)
+                throw new ArgumentOutOfRangeException(nameof(SmoothingNoiseFloor));
         }
 
         internal void ValidateSplitter(int resolution, double rate)

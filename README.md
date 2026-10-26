@@ -4,11 +4,12 @@
 
 Audio analysis and audio-reactive DirectX visualization on Windows using NAudio.
 
-The current feature branch replaces live STBR analysis with an experimental
-log-polar resonator tracker. Its settings default to 100 ms amplitude/phase
-response and a fixed Cartesian measurement-noise floor. Spectrum's existing
-S/T/B/R toggles now show log amplitude, its slope, phase, and phase velocity.
-See [tracker design and diagnostic mappings](doc/log-polar-tracker-design.md).
+The original STBR splitter is preceded by an independent Kalman smoother.
+Choose log-amplitude smoothing (A) or complex-resonator smoothing (B), with
+explicit acceleration-noise intensities and a fixed measurement-noise floor.
+Spectrum's `CompareSmoothers` view shows both on the same input, A left/red and
+B right/cyan, with raw amplitude marked in white. Normal S/T/B/R controls retain
+their original meaning. See [models and comparison](doc/kalman-smoothing.md).
 
 ## Project Layout
 

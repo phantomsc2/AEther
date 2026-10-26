@@ -507,11 +507,11 @@ false in the bundled scenes.
 `FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
 `Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
 and the unscaled musical movement clock `MusicalMovementTime`.
-On the current feature branch, `Spectrum0/1` and `Histogram0/1` supply fixed,
-unweighted diagnostic encodings of [a, a', phase, phase'] in RGBA.
-These replace the previous S/T/B/amplitude contract. `Linear` is the shared
-sampler. See [tracker mappings](log-polar-tracker-design.md) and
-`Common/Inputs.hlsl` for details.
+`Spectrum0/1` and `Histogram0/1` supply [positive S, positive T, background B,
+splitter input amplitude] in RGBA, in linear amplitude units. The splitter input
+is the selected Kalman smoother's output. `Linear` is the shared sampler.
+See [smoother models and comparison](kalman-smoothing.md),
+[splitter semantics](splitter-design.md), and `Common/Inputs.hlsl` for details.
 
 Resources are bound by reflected name independently for every entry point. Unknown
 resources, resource arrays and unsupported parameter types fail reload before any
@@ -526,14 +526,14 @@ Mandelbench geometry/view controls are the cache contract. Geometry edits,
 resize and reload rebuild the field; contour appearance edits reuse it.
 This renderer capability requires one application rebuild/restart.
 
-The experimental log-polar tracker uses continuous white-noise acceleration
-and complex observations transformed to log magnitude and wrapped phase, with
-noise variance propagated from a fixed Cartesian floor. Its settings are amplitude/phase response
-times in seconds and a fixed Cartesian noise RMS. Signed raw states are
-available through Analyzer.TrackerStatesAvailable. The former STBR neighborhood
-settings do not affect live analysis. `FilteredHistogram0/1` remain aliases
-for `Histogram0/1`; Histogram's `CombinedLevel` currently shows the fourth
-diagnostic coordinate. Existing scene interpretations are provisional.
+The preprocessing stage compares log-amplitude and complex-resonator Kalman
+models with explicit acceleration-noise intensities and fixed Cartesian noise
+RMS. Both return linear magnitudes; neither exports velocity or phase. The
+original splitter neighborhood settings and `Analyzer.JointEvidenceAvailable`
+callback are restored. Spectrum's `CompareSmoothers` view uses diagnostic row 1:
+[signed momentary residual, raw magnitude, mode A magnitude, mode B magnitude].
+It displays A left/red and B right/cyan using the same stereo average and linear
+scale. `FilteredHistogram0/1` remain aliases for `Histogram0/1`.
 
 Referencing `FluidDye` requests the existing fluid simulation;
 `FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`
