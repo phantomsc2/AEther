@@ -76,7 +76,7 @@ public sealed class PipelineProfile
         File.WriteAllLines(Path.ChangeExtension(path, ".txt"), Metadata.OrderBy(pair => pair.Key)
             .Select(pair => $"{pair.Key}: {pair.Value}").Concat(new[] {
             "CPU/wait timings in milliseconds; stages can overlap and must not all be added.",
-            "DFT and split rows are per channel. Capture/completion/render intervals use the monotonic clock.",
+            "DFT, smoother (A+B), and split rows are per channel; bypassed smoothing records zero. Capture/completion/render intervals use the monotonic clock.",
             "Present measures CPU blocking, not GPU duration or scanout. First frames include warmup.",
             "stage,count,median,p95,p99,max" }).Concat(snapshot.GroupBy(r => r.Stage).Select(group => {
                 var values = group.Select(r => r.Milliseconds).Order().ToArray();

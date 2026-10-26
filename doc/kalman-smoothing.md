@@ -9,10 +9,11 @@ Velocity is internal to the smoother and is not forwarded to the splitter.
 
 ## Parameters
 
-The Kalman smoother group contains only a mode selector and model noise parameters:
+The Kalman smoother group contains an enabled flag, mode selector and model noise parameters:
 
 | Setting | Default | Units / interpretation |
 |---|---:|---|
+| Enabled | true | Off bypasses both filters and feeds observed magnitudes directly to the splitter |
 | Splitter input | A: log amplitude | Select A or B for production decomposition |
 | Log acceleration intensity | 0.001 | qA, log-amplitude squared / seconds cubed |
 | Complex acceleration intensity | 0.00001 | qB, amplitude squared / seconds cubed, per real/imaginary component |
@@ -26,6 +27,9 @@ The two q defaults approximately match the former temporal observer's intensitie
 at 1 kHz updates and amplitude 0.1, but the q values are now used directly.
 Their units differ; equal numerical values do not imply equal smoothing.
 The original splitter support settings are separate: 0.2 seconds and 2 octaves.
+When disabled, both comparison outputs equal the raw observation and neither
+filter runs. The timing panel shows dedicated smoother CPU mean/p95 per channel
+for A+B combined (`analysis.smooth_channel_ms`); bypass records zero.
 
 ## Mode A: log amplitude
 

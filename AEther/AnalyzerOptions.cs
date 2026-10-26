@@ -75,6 +75,12 @@ namespace AEther
         public double FrequencyWindowOctaves { get; set; } = 2;
 
         [Category("Kalman smoother")]
+        [DisplayName("Enabled")]
+        [DefaultValue(true)]
+        [Description("Smooth the spectrum before the splitter. When off, both filters are bypassed and observed linear magnitudes feed the original splitter directly.")]
+        public bool SmoothingEnabled { get; set; } = true;
+
+        [Category("Kalman smoother")]
         [DisplayName("Splitter input")]
         [DefaultValue(SmoothingMode.LogAmplitude)]
         [Description("Both smoothers run on identical observations. Select which linear amplitude feeds the original splitter. Spectrum CompareSmoothers shows A left, B right, using the same stereo average.")]

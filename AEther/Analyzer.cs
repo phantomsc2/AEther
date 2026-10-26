@@ -30,6 +30,7 @@ namespace AEther
         readonly SpectrumSmoother[] Smoothers;
         readonly Splitter[] Splitters;
         readonly SmoothingMode smoothingMode;
+        readonly bool smoothingEnabled;
         readonly TransientDetector[] Transients;
         readonly AudioFeatureExtractor Features;
         readonly record struct InputPacket(SampleEvent<byte> Event, long Arrival, AudioPacketTiming? Timing);
@@ -69,7 +70,9 @@ namespace AEther
             Profile.Describe("Spectrum backend", options.UseSwift ? "SWIFT" : "DFT");
             Batch = new byte[checked(BatchSize * Format.Size)];
             smoothingMode = options.SmoothingMode;
-            Profile.Describe("Decomposition", "Gaussian STBR after independent CWNA Kalman smoothing");
+            smoothingEnabled = options.SmoothingEnabled;
+            Profile.Describe("Decomposition", smoothingEnabled ? "Gaussian STBR after independent CWNA Kalman smoothing" : "Gaussian STBR, smoother bypassed");
+            Profile.Describe("Smoother enabled", smoothingEnabled.ToString());
             Profile.Describe("Smoother mode", smoothingMode.ToString());
             Profile.Describe("Log acceleration intensity", options.LogAccelerationIntensity.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Complex acceleration intensity", options.ComplexAccelerationIntensity.ToString("G17", System.Globalization.CultureInfo.InvariantCulture));
@@ -374,19 +377,30 @@ namespace AEther
                     Spectrum[c].Process(samples.GetChannel(c));
                     Spectrum[c].OutputComplex(spectrum.GetChannel(c));
                     }
-                    using (Profile.Measure("analysis.smooth_channel_ms"))
-                        Smoothers[c].Process(spectrum.GetChannel(c), logSmoothed.GetChannel(c), complexSmoothed.GetChannel(c));
+                    for (var k = 0; k < Domain.Length; k++)
+                        observed.GetChannel(c).Span[k] = SpectralMath.Sanitize(spectrum.GetChannel(c).Span[k].Magnitude);
+                    if (smoothingEnabled)
+                    {
+                        using (Profile.Measure("analysis.smooth_channel_ms"))
+                            Smoothers[c].Process(spectrum.GetChannel(c), logSmoothed.GetChannel(c), complexSmoothed.GetChannel(c));
+                    }
+                    else
+                    {
+                        // Keep comparison channels consistent with the bypassed
+                        // pipeline without running either Kalman filter.
+                        observed.GetChannel(c).CopyTo(logSmoothed.GetChannel(c));
+                        observed.GetChannel(c).CopyTo(complexSmoothed.GetChannel(c));
+                        Profile.Record("analysis.smooth_channel_ms", 0);
+                    }
                     using (Profile.Measure("analysis.split_channel_ms"))
                     {
-                        Splitters[c].ProcessLinear(smoothingMode == SmoothingMode.LogAmplitude
+                        Splitters[c].ProcessLinear(!smoothingEnabled ? observed.GetChannel(c) : smoothingMode == SmoothingMode.LogAmplitude
                             ? logSmoothed.GetChannel(c) : complexSmoothed.GetChannel(c), output.GetChannel(c));
                         for (var k = 0; k < Domain.Length; k++)
                         {
                             var e = Splitters[c].Estimates.Span[k];
                             residual.GetChannel(c).Span[k] = e.ResidualRms;
                             momentary.GetChannel(c).Span[k] = e.Amplitude - e.Background - e.Sine - e.Transient;
-                            var z = spectrum.GetChannel(c).Span[k];
-                            observed.GetChannel(c).Span[k] = SpectralMath.Sanitize(z.Magnitude);
                         }
                         if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
                     }

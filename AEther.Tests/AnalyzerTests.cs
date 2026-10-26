@@ -173,10 +173,11 @@ namespace AEther.Tests
             Assert.That(events, Is.EqualTo(new[] { "attack", "spectrum" }));
         }
 
-        [TestCase(SmoothingMode.LogAmplitude), TestCase(SmoothingMode.Complex)]
-        public async Task SmootherFeedsOriginalSplitterAndPublishesTrueResiduals(SmoothingMode mode)
+        [TestCase(SmoothingMode.LogAmplitude, true), TestCase(SmoothingMode.Complex, true)]
+        [TestCase(SmoothingMode.LogAmplitude, false), TestCase(SmoothingMode.Complex, false)]
+        public async Task SmootherFeedsOriginalSplitterAndPublishesTrueResiduals(SmoothingMode mode, bool enabled)
         {
-            var options = Options(); options.SmoothingMode = mode;
+            var options = Options(); options.SmoothingMode = mode; options.SmoothingEnabled = enabled;
             var analyzer = new Analyzer(Format, options);
             int count = 0;
             JointEvidence[] evidence = null!;
@@ -188,7 +189,14 @@ namespace AEther.Tests
                 Assert.That(e.ObservedAmplitude.Length, Is.EqualTo(e.ResidualRms.Length));
                 Assert.That(e.LogSmoothedAmplitude.Length, Is.EqualTo(e.ResidualRms.Length));
                 Assert.That(e.ComplexSmoothedAmplitude.Length, Is.EqualTo(e.ResidualRms.Length));
-                var selected = mode == SmoothingMode.LogAmplitude ? e.LogSmoothedAmplitude : e.ComplexSmoothedAmplitude;
+                var selected = !enabled ? e.ObservedAmplitude : mode == SmoothingMode.LogAmplitude ? e.LogSmoothedAmplitude : e.ComplexSmoothedAmplitude;
+                if (!enabled)
+                {
+                    Assert.That(e.LogSmoothedAmplitude.ToArray(), Is.EqualTo(e.ObservedAmplitude.ToArray()));
+                    Assert.That(e.ComplexSmoothedAmplitude.ToArray(), Is.EqualTo(e.ObservedAmplitude.ToArray()));
+                    Assert.That(analyzer.Profile.Recent("analysis.smooth_channel_ms")!.Value.Mean, Is.Zero);
+                }
+                else Assert.That(analyzer.Profile.Recent("analysis.smooth_channel_ms"), Is.Not.Null);
                 for (int c = 0; c < Format.ChannelCount; c++)
                     for (int k = 0; k < analyzer.Domain.Length; k++)
                     {
@@ -209,6 +217,34 @@ namespace AEther.Tests
             analyzer.Stop();
             await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.That(count, Is.EqualTo(2));
+        }
+
+        [TestCase(false), TestCase(true)]
+        public async Task DisabledSmootherMatchesTheOriginalSpectrumToSplitterPipeline(bool swift)
+        {
+            Assert.That(new AnalyzerOptions().SmoothingEnabled, Is.True);
+            var options = Options(); options.SmoothingEnabled = false; options.UseSwift = swift;
+            var analyzer = new Analyzer(Format, options);
+            var actual = Collect(analyzer);
+            var bytes = Audio(240);
+            analyzer.PostSamples(bytes); analyzer.Stop();
+            await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(actual.Count, Is.EqualTo(3));
+            for (int c = 0; c < Format.ChannelCount; c++)
+            {
+                var backend = SpectrumProcessor.Create(options.Domain, Format.SampleRate, options);
+                var splitter = new Splitter(options.Domain, options, 100);
+                var magnitude = new double[options.Domain.Length];
+                var expected = new double[4 * options.Domain.Length];
+                for (int row = 0; row < 3; row++)
+                {
+                    var input = Enumerable.Range(0, 80).Select(i =>
+                        (double)BitConverter.ToSingle(bytes, (2 * (row * 80 + i) + c) * sizeof(float))
+                        * Math.Pow(10, options.InputGainDb / 20)).ToArray();
+                    backend.Process(input); backend.OutputLinear(magnitude); splitter.ProcessLinear(magnitude, expected);
+                    Assert.That(actual[row].AsSpan(c * expected.Length, expected.Length).ToArray(), Is.EqualTo(expected));
+                }
+            }
         }
 
         [TestCase(0)]

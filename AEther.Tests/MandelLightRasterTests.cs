@@ -150,11 +150,14 @@ public class MandelLightRasterTests
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(edited));
     }
 
+    static long tonalRow;
     static void FeedTonal(Renderer renderer, double tonal = .02, double transient = 0)
     {
         int bands = renderer.Audio.Bands; var spectrum = new double[8*bands];
         for (int i = 0; i < spectrum.Length; i += 4) { spectrum[i] = tonal; spectrum[i+1] = transient; }
-        renderer.PostAudio(new(spectrum, bands*4, DateTime.UnixEpoch), 2);
+        // The audio mailbox rejects duplicate analysis rows, including silence.
+        renderer.PostAudio(new(spectrum, bands*4, DateTime.UnixEpoch)
+            { AnalysisRow = Interlocked.Increment(ref tonalRow) }, 2);
     }
     static void WaitForTonalLookup(Renderer renderer, double level = .02)
     {
@@ -343,20 +346,23 @@ public class MandelLightRasterTests
         }
     }
 
-    [Test, Category("GPU")]
-    public void HardwarePcfMatchesBilinearDepthComparisonsAcrossCubeFaces()
+    [TestCase(false), TestCase(true), Category("GPU")]
+    public void HardwarePcfMatchesBilinearDepthComparisonsAcrossCubeFaces(bool tonal)
     {
         using var shaders = new ShaderTree(shadowProbe: true);
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 256, 128, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new FixedClock());
         renderer.SelectScene("MandelLightv4");
-        Set(renderer,"Lights.Shadows",true);
+        Set(renderer,"Lights.Count",0f);
+        Set(renderer,"Lights.Shadows",!tonal);
+        Set(renderer,"TonalLights.Shadows",tonal);
         Set(renderer,"Lights.Directional",false); // This probe specifically checks cubemap seams.
+        Set(renderer,"TonalLights.Directional",false);
         foreach (float resolution in new[] { 0f, .5f, 1f })
         {
             Set(renderer, "Quality.ShadowResolution", resolution);
-            FeedTransient(renderer);
+            FeedTonal(renderer, tonal: .02, transient: .02);
             renderer.Render(false);
             byte[] pixels=renderer.ReadPixels(false);
             Assert.That(pixels.Where((_, i)=>i%4==0), Is.All.Zero,
@@ -427,8 +433,12 @@ public class MandelLightRasterTests
                         // Include exact X/Z face seams as well as generic directions.
                         float angle=(input.Position.x-.5)*2*Pi/256;
                         float3 d=20*normalize(float3(cos(angle),2*input.UV.y-1,sin(angle)));
-                        float3 p=LightPosition(0)+d;
-                        float actual=Visibility(0,p,0);
+                        // Read the active index from the host buffer, exercising
+                        // both light groups without constant-folding the unused
+                        // branch of LightData/LightCone to a negative array index.
+                        int light=ActiveLight(0);
+                        float3 p=LightPosition(light)+d;
+                        float actual=Visibility(light,p,0);
                         int face; float2 uv; CubeAddress(d,face,uv);
                         uint w,h,layers; RasterShadows.GetDimensions(w,h,layers);
                         uv=.5+(uv-.5)*((w-2.0)/w);
@@ -437,7 +447,7 @@ public class MandelLightRasterTests
                         float reference=saturate(ProjectDepth(z)/z),expected=0;
                         [unroll] for (int y=0;y<2;++y) [unroll] for (int x=0;x<2;++x)
                         {
-                            float stored=RasterShadows.Load(int4(base+int2(x,y),face,0));
+                            float stored=RasterShadows.Load(int4(base+int2(x,y),ShadowSlice(light)+face,0));
                             expected+=(x ? f.x : 1-f.x)*(y ? f.y : 1-f.y)*(reference<=stored ? 1 : 0);
                         }
                         bool invalid=abs(actual-expected)>.012 || !isfinite(actual)

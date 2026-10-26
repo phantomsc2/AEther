@@ -276,6 +276,7 @@ public sealed class SettingsWindow : ToolWindow
             + $"Audio age at frame start: {Stat("render.presented_audio_age_ms")}\n"
             + $"Timestamp quality: {analyzer.LastTimestampQuality}\n"
             + $"Analysis CPU: {Stat("analysis.total_ms")}\n"
+            + $"Smoother CPU / channel (A+B): {Stat("analysis.smooth_channel_ms")}\n"
             + $"Draw CPU: {Stat("render.draw_cpu_ms")}\n"
             + $"Audio upload CPU: {Stat("render.audio_upload_ms")}\n"
             + $"GPU frame: {Stat("gpu.frame_ms")}\n"
