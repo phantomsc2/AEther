@@ -30,10 +30,4 @@ public sealed class CanvasWindow : ToolWindow
             if (e.Cancel) Dismissed?.Invoke(this, EventArgs.Empty);
         };
     }
-
-    public void Dismiss()
-    {
-        Hide();
-        Dismissed?.Invoke(this, EventArgs.Empty);
-    }
 }

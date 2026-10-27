@@ -36,14 +36,8 @@ untitled, resizable canvas window with a standard title bar. Its content is a
 Direct3D `SwapChainPanel`. Settings and shader
 properties use standard WinUI controls with the system's default appearance.
 
-- **Space** (render window): activate the hub. Closing the hub exits the application.
-- **F6**: activate the hub and focus the scene picker.
-- **F11**: explicitly toggle fullscreen on the canvas window's current display.
-- **F5**: rebuild the capture/analysis/render session.
-- **R**: toggle combined level view in Spectrum and Histogram.
-- **I**: toggle Spectrum intensity view.
-- **[ / ]**: move the Mandelbox slice.
-- **Escape**: dismiss the canvas or hide the focused tool window. Select a scene in the hub to reopen the canvas.
+- **F11** or double-clicking the canvas toggles fullscreen on the canvas window's current display.
+  Closing the canvas dismisses it; select a scene in the hub to reopen it. Closing the hub exits the application.
 
 The resizable hub has two equal-width columns. Input, Gain and the live analysis
 view are pinned on the left. Below them, DFT, Pipeline, Smoother and Splitter are

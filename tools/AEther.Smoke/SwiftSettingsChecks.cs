@@ -31,7 +31,7 @@ internal static partial class Program
                     host.Title = $"Slider commits: {++commits}";
                     Console.WriteLine($"Commit {commits}: min frequency {settings.Options.MinFrequency:G17}");
                 };
-                host.ShortcutRequested += _ => { host.Destroy(); app.Exit(); };
+                host.AppWindow.Closing += (_, _) => app.Exit();
                 host.Activate();
             };
         });

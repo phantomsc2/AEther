@@ -142,8 +142,6 @@ public sealed class SettingsPanel : UserControl
         input.SelectionChanged += (_, _) => InputChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void FocusScene() => scenePicker.Focus(FocusState.Programmatic);
-
     public void ShowDiagnostics()
     {
         Diagnostics.IsExpanded = true;

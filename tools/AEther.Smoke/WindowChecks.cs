@@ -87,8 +87,9 @@ internal static partial class Program
                                     throw new Exception("Hub must be primary; canvas must be untitled, windowed and resizable.");
                                 if (((UserControl)canvasWindow.Content).Content is not SwapChainPanel)
                                     throw new Exception("Canvas window must contain only the rendering canvas.");
-                                if (((UserControl)canvasWindow.Content).KeyboardAccelerators.Count != 9)
-                                    throw new Exception("Render-window shortcuts are missing.");
+                                var shortcuts = ((UserControl)canvasWindow.Content).KeyboardAccelerators;
+                                if (shortcuts.Count != 1 || shortcuts[0].Key != VirtualKey.F11)
+                                    throw new Exception("The canvas must have only the F11 shortcut.");
                                 host.Activate();
                                 var audioGroups = ((StackPanel)audio.Content).Children.OfType<Expander>().ToArray();
                                 if (canvasWindow.IsVisible || shadersVisible() || audioGroups.Any(g => g.IsExpanded))

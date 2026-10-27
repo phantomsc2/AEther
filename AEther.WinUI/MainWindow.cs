@@ -43,7 +43,8 @@ public sealed class MainWindow : Window
         AppWindow.TitleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
         canvasDismissed = !Environment.GetCommandLineArgs().Any(argument => argument.StartsWith("--scene=", StringComparison.Ordinal));
         // A focusable host routes keyboard input without adding anything over the canvas.
-        root = new UserControl { Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false };
+        root = new UserControl { Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         canvasWindow = new(root);
         analysis = new(this);
         frameTime = new(this);
@@ -104,17 +105,9 @@ public sealed class MainWindow : Window
             if (session != null) session.Analyzer.Profile.DetailedGpuTimings = false;
         };
         audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
-        foreach (var key in new[] { VirtualKey.F5, VirtualKey.F6, VirtualKey.F11 })
-            ToolWindow.AddShortcut(settings, key, () => HandleToolShortcut(key));
-        ToolWindow.AddShortcut(root, VirtualKey.Space, Activate);
-        ToolWindow.AddShortcut(root, VirtualKey.F6, FocusScene);
+        ToolWindow.AddShortcut(settings, VirtualKey.F11, ToggleFullscreen);
         ToolWindow.AddShortcut(root, VirtualKey.F11, ToggleFullscreen);
-        ToolWindow.AddShortcut(root, VirtualKey.F5, () => _ = RestartAsync());
-        ToolWindow.AddShortcut(root, VirtualKey.Escape, canvasWindow.Dismiss);
-        ToolWindow.AddShortcut(root, VirtualKey.R, () => { if (session != null) { session.Renderer.CombinedLevel ^= true; shaders.RefreshParameters(); } });
-        ToolWindow.AddShortcut(root, VirtualKey.I, () => { if (session != null) { session.Renderer.ShowSum ^= true; shaders.RefreshParameters(); } });
-        ToolWindow.AddShortcut(root, (VirtualKey)219, () => ChangeSlice(-.05f));
-        ToolWindow.AddShortcut(root, (VirtualKey)221, () => ChangeSlice(.05f));
+        root.DoubleTapped += (_, e) => { ToggleFullscreen(); e.Handled = true; };
         canvas.Loaded += (_, _) =>
         {
             SwapChainHost.Attach(canvas, canvasChain);
@@ -179,30 +172,10 @@ public sealed class MainWindow : Window
             Math.Min((int)Math.Ceiling(680 * scale), Math.Max(1, available))));
     }
 
-    void FocusScene()
-    {
-        Activate();
-        settings.FocusScene();
-    }
-
     void AttachCanvasSwapChain(IDXGISwapChain1? chain)
     {
         canvasChain = chain;
         if (canvas.IsLoaded || chain == null) SwapChainHost.Attach(canvas, chain);
-    }
-
-    void HandleToolShortcut(VirtualKey key)
-    {
-        if (key == VirtualKey.F6) FocusScene();
-        if (key == VirtualKey.F11) ToggleFullscreen();
-        if (key == VirtualKey.F5) _ = RestartAsync();
-    }
-
-    void ChangeSlice(float change)
-    {
-        if (session == null) return;
-        session.Renderer.SliceDepth += change;
-        shaders.RefreshParameters();
     }
 
     (int Width, int Height) CanvasSize =>
@@ -292,7 +265,7 @@ public sealed class MainWindow : Window
                 watcher.Renamed += ShaderChanged;
                 watcher.Deleted += ShaderChanged;
                 watcher.EnableRaisingEvents = true;
-                debug.SetStatus("Running. Space: settings · F6: scene · F11: fullscreen\nF5: restart · R: level · I: sum · [ / ]: slice");
+                debug.SetStatus("Running. F11 or double-click canvas: fullscreen.");
                 StartRenderWorker(next);
                 UpdateRendering();
             }
@@ -371,7 +344,7 @@ public sealed class MainWindow : Window
 
     void ToggleFullscreen()
     {
-        if (canvasDismissed) { FocusScene(); return; }
+        if (canvasDismissed) return;
         if (!canvasWindow.IsVisible) OpenCanvas();
         if (!fullscreen)
         {

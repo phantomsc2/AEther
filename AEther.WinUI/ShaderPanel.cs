@@ -23,15 +23,12 @@ public sealed class ShaderPanel : UserControl
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Content = layout;
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var reload = new Button { Content = "Reload", MinHeight = 24, Padding = new Thickness(8, 2, 8, 2) };
-        var reset = new Button { Content = "Reset defaults", MinHeight = 24, Padding = new Thickness(8, 2, 8, 2) };
-        buttons.Children.Add(reload); buttons.Children.Add(reset);
-        reload.Click += (_, _) => Reload();
+        var reset = new Button { Content = "Reset defaults", MinHeight = 24, Padding = new Thickness(8, 2, 8, 2),
+            HorizontalAlignment = HorizontalAlignment.Left };
         reset.Click += (_, _) => { renderer?.ActiveShader?.Parameters?.Reset(); RefreshParameters(); };
         var scroll = new ScrollViewer { Content = parameters, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); Grid.SetRow(status, 2);
-        layout.Children.Add(buttons); layout.Children.Add(scroll); layout.Children.Add(status);
+        layout.Children.Add(reset); layout.Children.Add(scroll); layout.Children.Add(status);
     }
 
     public void Attach(Renderer? value)
@@ -107,6 +104,9 @@ public sealed class ShaderPanel : UserControl
     {
         if (parameter.Children.Count != 0)
         {
+            if (parameter.Name == "Display" && parameter.Children.Count == 1
+                && parameter.Children[0] is { Name: "Exposure", Children.Count: 0 } exposure)
+                return Editor(values, exposure);
             var children = new StackPanel { Spacing = 8 };
             foreach (var child in parameter.Children) children.Children.Add(Editor(values, child));
             return new Expander

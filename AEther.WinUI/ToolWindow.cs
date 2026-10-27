@@ -12,7 +12,6 @@ public abstract partial class ToolWindow : Window
 {
     bool destroying;
     protected Grid Layout { get; } = new() { Padding = new Thickness(16), RowSpacing = 12 };
-    public event Action<VirtualKey>? ShortcutRequested;
 
     protected ToolWindow(string title, int width, int height)
     {
@@ -30,9 +29,6 @@ public abstract partial class ToolWindow : Window
             Hide();
         };
         Closed += (_, _) => destroying = true;
-        AddShortcut(Layout, VirtualKey.Escape, Hide);
-        foreach (var key in new[] { VirtualKey.F5, VirtualKey.F6, VirtualKey.F11 })
-            AddShortcut(Layout, key, () => ShortcutRequested?.Invoke(key));
     }
 
     public void SetOwner(Window owner)
@@ -46,7 +42,6 @@ public abstract partial class ToolWindow : Window
     public bool IsVisible => !destroying && AppWindow.IsVisible;
     public void Show() => Activate();
     public void Hide() => AppWindow.Hide();
-    public void Toggle() { if (IsVisible) Hide(); else Show(); }
     public void Destroy() { destroying = true; base.Close(); }
 
     internal static void AddShortcut(UIElement root, VirtualKey key, Action action)
