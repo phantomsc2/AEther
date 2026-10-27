@@ -707,13 +707,17 @@ internal static partial class Program
 
     static void CheckWindows() => CheckShaderWindows(null);
 
-    sealed class SyntheticSource(Action started) : SampleSource
+    sealed class SyntheticSource(Action started) : SampleSource, ITimedSampleSource
     {
+        public event TimedSampleDataHandler? TimedDataAvailable;
         public override SampleFormat Format { get; } = new(SampleType.Float32.Instance, 48000, 2);
         public override void Start()
         {
             started();
-            DataAvailable?.Invoke(this, new byte[480 * 8]);
+            var data = new byte[480 * 8];
+            TimedDataAvailable?.Invoke(this, data, new AudioPacketTiming(
+                System.Diagnostics.Stopwatch.GetTimestamp() - AudioClock.Frames(480, 48000), 0, AudioTimestampQuality.Device));
+            DataAvailable?.Invoke(this, data);
         }
         public override void Stop() => Stopped?.Invoke(this, null);
         public override void Dispose() { }

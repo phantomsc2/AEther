@@ -13,7 +13,7 @@ using SkiaSharp;
 
 namespace AEther.WinUI;
 
-/// <summary>Per-frame intervals, GPU durations and estimated source-to-presentation ages, without decimation.</summary>
+/// <summary>Per-frame intervals and CPU/GPU durations in milliseconds, without decimation.</summary>
 public sealed class FrameTimeView : UserControl
 {
     const string FrameMetric = "render.frame_interval_ms";
@@ -33,11 +33,11 @@ public sealed class FrameTimeView : UserControl
     readonly Trace[] traces =
     [
         new(FrameMetric, "Frame time", new SKColor(70, 160, 230)),
+        new("render.draw_cpu_ms", "CPU", new SKColor(170, 115, 225)),
         new("gpu.frame_ms", "GPU", new SKColor(235, 170, 60)),
-        new("render.total_audio_age_ms", "Total age", new SKColor(170, 115, 225)),
     ];
     readonly Axis timeAxis = new() { TextSize = 11, MinStep = 1 };
-    readonly LogarithmicAxis durationAxis = new(10)
+    readonly Axis durationAxis = new()
     {
         TextSize = 11,
         // The chart plots log10(milliseconds), so tick positions use the same scale.
@@ -52,8 +52,9 @@ public sealed class FrameTimeView : UserControl
     bool dirty;
 
     internal int PointCount => traces[0].Points.Count;
-    internal int GpuPointCount => traces[1].Points.Count;
-    internal int AgePointCount => traces[2].Points.Count;
+    internal int CpuPointCount => traces[1].Points.Count;
+    internal int GpuPointCount => traces[2].Points.Count;
+    internal string[] CurveNames => traces.Select(trace => trace.Series.Name!).ToArray();
     internal int PlottedPointCount => traces.Sum(trace => trace.Points.Count);
     internal long UpdateCount { get; private set; }
     internal long LostSamples => lost;
@@ -63,7 +64,11 @@ public sealed class FrameTimeView : UserControl
     {
         this.owner = owner;
         chart.Series = traces.Select(trace => trace.Series).ToArray();
-        timeAxis.Labeler = value => $"{value - latestTime:0}s";
+        timeAxis.Labeler = value =>
+        {
+            var seconds = Math.Round(value - latestTime);
+            return seconds == 0 ? "0s" : $"{seconds:0}s";
+        };
         chart.XAxes = [timeAxis];
         chart.YAxes = [durationAxis];
         timeAxis.ShowSeparatorLines = false;
@@ -75,7 +80,7 @@ public sealed class FrameTimeView : UserControl
             if (start != 0) profile?.Elapsed("chart.frame_time_update_ms", start);
             Interlocked.Increment(ref completedUpdates);
         };
-        ToolTipService.SetToolTip(chart, "Frame interval, GPU execution time, and audio source age at estimated presentation. Total age requires source timestamps and a presentation estimate; it is not calibrated audio-to-photon latency.");
+        ToolTipService.SetToolTip(chart, "Frame time: interval between render starts. CPU: elapsed frame preparation and draw submission before Present. GPU: execution duration measured by GPU timestamps. Raw per-frame samples in milliseconds on a logarithmic axis; CPU and GPU durations overlap and do not add up to frame time.");
 
         Content = chart;
         refresh.Tick += (_, _) => Refresh();
@@ -117,7 +122,7 @@ public sealed class FrameTimeView : UserControl
             else trace.Incoming.Clear();
             received |= trace.Incoming.Count != 0;
         }
-        if (!received && !dirty) return;
+        if (!received && !dirty && traces.All(trace => trace.Points.Count == 0)) return;
         lock (chart.SyncContext)
         {
             foreach (var trace in traces)
@@ -133,6 +138,7 @@ public sealed class FrameTimeView : UserControl
                 }
                 if (unordered) trace.Points.Sort((a, b) => a.Time.CompareTo(b.Time));
             }
+            latestTime = Stopwatch.GetElapsedTime(origin).TotalSeconds;
             foreach (var trace in traces)
             {
                 var expired = 0;
@@ -149,8 +155,14 @@ public sealed class FrameTimeView : UserControl
                 }
             // LiveCharts creates/measures custom tick visuals even outside the visible range.
             // Keep only the useful 1-2-5 ticks, rather than all sixteen decades.
-            var ticks = LogTicks.Where(tick => tick >= min && tick <= max).ToArray();
+            var lower = LogTicks.LastOrDefault(tick => tick <= min, LogTicks[0]);
+            var upper = LogTicks.FirstOrDefault(tick => tick >= max, LogTicks[^1]);
+            if (upper <= lower)
+                upper = LogTicks.FirstOrDefault(tick => tick > lower, lower + 1);
+            var ticks = LogTicks.Where(tick => tick >= lower && tick <= upper).ToArray();
             if (!ticks.SequenceEqual(durationAxis.CustomSeparators ?? [])) durationAxis.CustomSeparators = ticks;
+            durationAxis.MinLimit = lower;
+            durationAxis.MaxLimit = upper;
             timeAxis.MinLimit = latestTime - HistorySeconds;
             timeAxis.MaxLimit = latestTime;
         }
@@ -164,7 +176,7 @@ public sealed class FrameTimeView : UserControl
         public string Metric { get; }
         public List<FramePoint> Points { get; } = new(Capacity);
         public List<TimingSample> Incoming { get; } = new();
-        public LineSeries<FramePoint> Series { get; }
+        public ScatterSeries<FramePoint> Series { get; }
         public TimingHistory? History;
         public long Cursor;
 
@@ -175,12 +187,9 @@ public sealed class FrameTimeView : UserControl
             {
                 Name = name,
                 Values = Points,
-                Stroke = new SolidColorPaint(color, 1),
-                GeometrySize = 0,
-                GeometryStroke = null,
-                GeometryFill = null,
-                Fill = null,
-                EnableNullSplitting = false,
+                Stroke = null,
+                GeometrySize = 3,
+                Fill = new SolidColorPaint(color),
                 IsHoverable = false,
                 DataPadding = new(0, 0),
             };

@@ -14,32 +14,6 @@ namespace AEther.Tests;
 [TestFixture, NonParallelizable, Apartment(ApartmentState.STA)]
 public class ShaderSilenceTests
 {
-    [Test, Category("GPU")]
-    public void CanvasPreviewSamplesTheRenderedSceneWithoutChangingIt()
-    {
-        using var shaders = new SceneShaders("Spectrum");
-        File.WriteAllText(Path.Combine(shaders.Path, "Scenes", "Spectrum.hlsl"),
-            "float4 PS(PSin input) : SV_Target { return float4(input.UV, 0.25, 1); }");
-        using var window = new HiddenWindow();
-        using var renderer = new Renderer(window.Handle, 160, 90, 8, 60, 1,
-            shaderDirectory: shaders.Path, initialScene: "Spectrum");
-        renderer.AttachPreviewOutput(window.Handle, 80, 45, _ => { });
-        renderer.Render(false, renderPreview: true);
-        Assert.That(renderer.PreviewOutputError, Is.Null);
-        Assert.That(renderer.PreviewDrawCount, Is.EqualTo(1));
-        var canvas = renderer.ReadPixels(false);
-        var preview = renderer.ReadPreviewPixels();
-        foreach (var (x, y) in new[] { (0, 0), (30, 10), (79, 44) })
-        {
-            var source = 4 * ((2 * y + 1) * 160 + 2 * x + 1);
-            var target = 4 * (y * 80 + x);
-            for (int channel = 0; channel < 3; channel++)
-                Assert.That(preview[target + channel], Is.EqualTo(canvas[source + channel]).Within(1));
-        }
-        renderer.Render(false, renderCanvas: false, renderDebug: false, renderPreview: true);
-        Assert.That(renderer.PreviewDrawCount, Is.EqualTo(1), "A hidden canvas must not update the preview.");
-    }
-
     [TestCase(true, false), TestCase(false, false), TestCase(true, true), TestCase(false, true), Category("GPU")]
     public void EmbeddedDebugSharesAudioWithoutChangingTheCanvas(bool drawCanvas, bool lowCost)
     {

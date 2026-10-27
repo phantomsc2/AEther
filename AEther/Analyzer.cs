@@ -13,6 +13,7 @@ namespace AEther
     public class Analyzer
     {
         public PipelineProfile Profile { get; } = new();
+        public PipelineProgress Progress { get; }
         public event EventHandler<SampleEvent<double>>? SamplesAnalyzed;
         public readonly SampleFormat Format;
         public readonly Domain Domain;
@@ -27,7 +28,7 @@ namespace AEther
         readonly Splitter[] Splitters;
         readonly SmoothingMode smoothingMode;
         readonly bool smoothingEnabled;
-        readonly record struct InputPacket(SampleEvent<byte> Event, long Arrival, AudioPacketTiming? Timing);
+        readonly record struct InputPacket(SampleEvent<byte> Event, long Arrival, AudioPacketTiming? Timing, SourceWatermark? Progress);
         readonly Channel<InputPacket> Input;
         readonly TimeProvider Clock;
         readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -54,6 +55,7 @@ namespace AEther
             Format = format;
             Options = options;
             Clock = timeProvider ?? TimeProvider.System;
+            Progress = new(format.SampleRate, Clock);
             BatchSize = Format.SampleRate / options.TimeResolution;
             Profile.Describe("Sample rate", Format.SampleRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Input gain dB", options.InputGainDb.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -100,7 +102,7 @@ namespace AEther
             Completion = Task.Run(RunAsync);
         }
 
-        public void Start() => Started.TrySetResult();
+        public void Start() { Progress.Start(); Started.TrySetResult(); }
 
         /// <summary>Never blocks capture. Copies memory owned by the capture device.</summary>
         public void PostSamples(ReadOnlyMemory<byte> data) => PostSampleSpan(data.Span);
@@ -117,6 +119,7 @@ namespace AEther
             if (timing.HasValue && data.Length % Format.Size != 0)
                 throw new ArgumentException("Timed capture packets must contain complete interleaved frames.", nameof(data));
             var arrival = AudioClock.Now(Clock);
+            var progress = Progress.Capture(timing, data.Length / Format.Size);
             var previous = Interlocked.Exchange(ref previousArrival, arrival);
             if (previous != 0)
                 Profile.Record("capture.arrival_interval_ms", Stopwatch.GetElapsedTime(previous, arrival).TotalMilliseconds);
@@ -127,12 +130,13 @@ namespace AEther
             if (timing?.Flags.HasFlag(AudioPacketFlags.Silent) == true)
                 evt.Samples.AsSpan(0, data.Length).Clear();
             else data.CopyTo(evt.Samples.AsSpan());
-            var packet = new InputPacket(evt, arrival, timing);
+            var packet = new InputPacket(evt, arrival, timing, progress);
             if (!Input.Writer.TryWrite(packet)) DropPacket(packet);
         }
 
         void DropPacket(InputPacket packet)
         {
+            Progress.MarkGap();
             Interlocked.Increment(ref Dropped);
             RecordLoss(packet.Event.SampleCount / Format.Size);
             ReturnEvent(packet.Event);
@@ -147,6 +151,7 @@ namespace AEther
 
         void ResetAnalysis()
         {
+            Progress.MarkGap();
             foreach (var processor in Spectrum) processor.Reset();
             foreach (var smoother in Smoothers) smoother.Reset();
             foreach (var splitter in Splitters) splitter.Reset();
@@ -170,6 +175,7 @@ namespace AEther
             long? expectedPosition = null, expectedTime = null, batchStart = null;
             AudioStreamClock? streamClock = null;
             long? lastPacketArrival = null;
+            SourceWatermark? batchProgress = null;
             AudioTimestampQuality quality = AudioTimestampQuality.Unspecified;
             try
             {
@@ -258,6 +264,8 @@ namespace AEther
                         lastPacketArrival = packet.Arrival;
                         while (offset < input.SampleCount)
                         {
+                            if (filled > 0 && (batchProgress?.Epoch != packet.Progress?.Epoch
+                                || batchProgress?.Segment != packet.Progress?.Segment)) batchProgress = null;
                             if (sourceStart.HasValue)
                             {
                                 var oldest = AudioClock.Now(Clock) - (long)(Options.MaxInputAgeMilliseconds / 1000 * Stopwatch.Frequency);
@@ -290,6 +298,8 @@ namespace AEther
                                     continue;
                                 }
                                 batchIndex = position / Batch.Length;
+                                batchProgress = packet.Progress is { } progress
+                                    ? progress with { Frame = checked((batchIndex + 1) * BatchSize) } : null;
                                 batchTime = audioOrigin + TimeSpan.FromSeconds(batchIndex * (double)BatchSize / Format.SampleRate);
                                 captureTimestamp = packet.Arrival;
                                 batchStart = streamClock is { } clock
@@ -307,7 +317,7 @@ namespace AEther
                                 // An observation contains exactly BatchSize device frames, including
                                 // when it spans packets with slightly different QPC correlations.
                                 var batchEnd = batchStart + AudioClock.Frames(BatchSize, Format.SampleRate);
-                                AnalyzeBatch(batchTime, batchIndex, captureTimestamp, batchStart, batchEnd, quality, streamClock);
+                                AnalyzeBatch(batchTime, batchIndex, captureTimestamp, batchStart, batchEnd, quality, streamClock, batchProgress);
                                 filled = 0;
                             }
                         }
@@ -324,11 +334,12 @@ namespace AEther
                 Input.Writer.TryComplete();
                 while (Input.Reader.TryRead(out var pending))
                     ReturnEvent(pending.Event);
+                Progress.Dispose();
             }
         }
 
         void AnalyzeBatch(DateTime time, long row, long captureTimestamp, long? start, long? end,
-            AudioTimestampQuality quality, AudioStreamClock? streamClock)
+            AudioTimestampQuality quality, AudioStreamClock? streamClock, SourceWatermark? progress)
         {
             using var totalTiming = Profile.Measure("analysis.total_ms");
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
@@ -394,6 +405,7 @@ namespace AEther
                     ComplexSmoothedAmplitude = complexSmoothed.Samples.AsMemory(0, Domain.Length * Format.ChannelCount),
                     SampleIndex = row * BatchSize, AnalysisRow = row,
                     StreamClock = streamClock,
+                    SourceWatermark = progress,
                     CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
                     SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                     DiscontinuityGeneration = Interlocked.Read(ref generation) };
@@ -403,6 +415,7 @@ namespace AEther
                 lastQuality = quality;
                 using (Profile.Measure("analysis.subscribers_ms"))
                     SamplesAnalyzed?.Invoke(this, output);
+                Progress.Analyzed(progress);
             }
             finally
             {

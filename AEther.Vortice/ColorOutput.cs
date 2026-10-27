@@ -28,7 +28,6 @@ internal sealed partial class ColorOutput : IDisposable
     public bool HighPrecision { get; }
     public WaitHandle FrameReady { get; } = null!;
     public ID3D11RenderTargetView? SceneTarget => directSdr ? backTarget : sceneTarget;
-    public ID3D11ShaderResourceView? SceneView => sceneView;
     public string Description => directSdr ? "8-bit SDR" : HighPrecision ? "FP16 scRGB" : "8-bit SDR (dithered)";
 
     public ColorOutput(ID3D11Device device, ID3D11DeviceContext context, IDXGIFactory2 factory,

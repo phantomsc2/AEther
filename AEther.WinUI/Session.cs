@@ -39,6 +39,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
         {
             Renderer = new(handle, width, height, options.GetAnalysisOutput(source.Format), shaderDirectory,
                 attachSwapChain: attachSwapChain, initialScene: initialScene, profile: Analyzer.Profile, graphicsOptions: graphicsOptions, logger: Logger);
+            Renderer.AttachProgress(Analyzer.Progress);
         }
         catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
         Subscribe();
@@ -79,6 +80,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
         {
             await StopAsync();
             Renderer.RestartAudio(next.Options.GetAnalysisOutput(nextSource.Format), next.Profile, logger);
+            Renderer.AttachProgress(next.Progress);
             DisposeSource();
         }
         catch

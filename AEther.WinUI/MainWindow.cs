@@ -18,7 +18,7 @@ public sealed class MainWindow : Window
     readonly SettingsPanel settings;
     readonly TitleBar? hubTitleBar;
     readonly AnalysisView analysis;
-    readonly CanvasPreview preview;
+    readonly FrameTimeView frameTime;
     readonly CanvasWindow canvasWindow;
     readonly AudioPanel audio = new();
     readonly GraphicsPanel graphics = new();
@@ -33,7 +33,7 @@ public sealed class MainWindow : Window
     FileSystemWatcher? watcher;
     IDXGISwapChain1? canvasChain;
     bool loaded, closing, shutdownComplete, fullscreen, visible;
-    bool changingSession, renderCanvas, renderDebug, renderPreview, canvasDismissed;
+    bool changingSession, renderCanvas, renderDebug, canvasDismissed;
     long restartVersion;
     RectInt32 windowBounds;
     PipelineWarnings? pipelineWarnings;
@@ -55,21 +55,14 @@ public sealed class MainWindow : Window
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         canvasWindow = new(root);
         analysis = new(this);
-        preview = new(this);
-        settings = new(audio, graphics, shaders, analysis, preview);
+        frameTime = new(this);
+        settings = new(audio, graphics, shaders, analysis, frameTime);
         SystemBackdrop = new MicaBackdrop();
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
-            // These built-in navigation controls and the settings button are visual placeholders.
             hubTitleBar = new TitleBar
             {
                 Title = Title,
-                Subtitle = "Hub",
-                IconSource = new FontIconSource { Glyph = "\uE189" },
-                IsBackButtonVisible = true,
-                IsBackButtonEnabled = false,
-                IsPaneToggleButtonVisible = true,
-                RightHeader = new Button { Content = new FontIcon { Glyph = "\uE713" }, IsEnabled = false },
             };
             var layout = new Grid();
             layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -189,7 +182,6 @@ public sealed class MainWindow : Window
         canvasWindow.VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
         canvasWindow.AppWindow.Changed += (_, _) => UpdateRendering();
         analysis.OutputChanged += (_, _) => UpdateRendering();
-        preview.OutputChanged += (_, _) => UpdateRendering();
         AppWindow.Closing += OnClosing;
     }
 
@@ -200,7 +192,7 @@ public sealed class MainWindow : Window
         var chrome = Math.Max(0, AppWindow.Size.Height - AppWindow.ClientSize.Height);
         var available = work.Y + work.Height - Math.Max(work.Y, AppWindow.Position.Y) - chrome;
         AppWindow.ResizeClient(new SizeInt32(Math.Min((int)Math.Ceiling(720 * scale), work.Width),
-            Math.Min((int)Math.Ceiling(680 * scale), Math.Max(1, available))));
+            Math.Min((int)Math.Ceiling(840 * scale), Math.Max(1, available))));
     }
 
     void AttachCanvasSwapChain(IDXGISwapChain1? chain)
@@ -254,6 +246,7 @@ public sealed class MainWindow : Window
                     replacement = CreateSource();
                     await current.RestartAnalysisAsync(replacement, audio.Options, attemptLogger, pipelineId);
                     current.Analyzer.Profile.DetailedGpuTimings = false;
+                    frameTime.Attach(current.Analyzer.Profile);
                     replacement = null; // Session now owns the new source.
                     if (closing) return;
                     ResizeRenderer();
@@ -289,7 +282,7 @@ public sealed class MainWindow : Window
                 next.Start();
                 session = next;
                 next.Analyzer.Profile.DetailedGpuTimings = false;
-                preview.Attach(next.Renderer);
+                frameTime.Attach(next.Analyzer.Profile);
                 analysis.Attach(next.Renderer);
                 shaders.Attach(next.Renderer);
                 watcher = new(next.Renderer.ShaderDirectory, "*.hlsl")
@@ -311,7 +304,7 @@ public sealed class MainWindow : Window
             {
                 renderWorker?.Dispose(); renderWorker = null;
                 session = null;
-                preview.Attach(null);
+                frameTime.Attach(null);
                 analysis.Attach(null);
                 shaders.Attach(null);
                 if (next != null) await next.DisposeAsync();
@@ -353,11 +346,10 @@ public sealed class MainWindow : Window
     {
         renderWorker?.Dispose();
         renderCanvas = CanvasVisible;
+        current.Renderer.SetCanvasProgressActive(renderCanvas);
         renderDebug = analysis.CanRender;
-        renderPreview = renderCanvas && preview.CanRender;
         var drawCanvas = renderCanvas;
         var drawDebug = renderDebug;
-        var drawPreview = renderPreview;
         var analyzer = current.Analyzer;
         var logger = current.Logger;
         // Present(1) can follow the slower primary monitor. On Windows 11 use
@@ -366,7 +358,7 @@ public sealed class MainWindow : Window
         bool compositorPacing = CompositorClock.IsSupported;
         renderWorker = new(!drawCanvas && drawDebug ? current.Renderer.DebugFrameReady! : current.Renderer.FrameReady,
             () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u,
-                renderCanvas: drawCanvas, renderDebug: drawDebug, renderPreview: drawPreview),
+                renderCanvas: drawCanvas, renderDebug: drawDebug),
             error =>
             {
                 logger.ForContext("PipelineBlocking", true).Error(error, "Rendering failed; stopping audio pipeline");
@@ -438,7 +430,7 @@ public sealed class MainWindow : Window
         reloadTimer.Stop();
         watcher?.Dispose(); watcher = null;
         var previous = session; session = null;
-        preview.Attach(null);
+        frameTime.Attach(null);
         renderWorker?.Dispose(); renderWorker = null;
         analysis.Attach(null);
         shaders.Attach(null);
@@ -468,8 +460,6 @@ public sealed class MainWindow : Window
 
     void RefreshScenePicker()
     {
-        Title = canvasDismissed ? "AEther" : $"AEther - {shaders.SelectedScene}";
-        if (hubTitleBar != null) hubTitleBar.Title = Title;
         settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [],
             canvasDismissed ? null : shaders.SelectedScene);
     }
@@ -486,14 +476,12 @@ public sealed class MainWindow : Window
 
     void UpdateRendering()
     {
-        preview.SetCanvasVisible(CanvasVisible);
         if (closing || changingSession || session == null)
         {
             renderWorker?.SetEnabled(false);
             return;
         }
-        if (renderWorker == null || renderCanvas != CanvasVisible || renderDebug != analysis.CanRender
-            || renderPreview != (CanvasVisible && preview.CanRender))
+        if (renderWorker == null || renderCanvas != CanvasVisible || renderDebug != analysis.CanRender)
             StartRenderWorker(session);
         renderWorker?.SetEnabled(renderCanvas || renderDebug);
     }
@@ -540,3 +528,4 @@ public sealed class MainWindow : Window
         }
     }
 }
+

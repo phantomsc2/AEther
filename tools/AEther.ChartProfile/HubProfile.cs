@@ -156,7 +156,7 @@ internal sealed class HubProfile(Application app)
                     }
                     var timestamp = origin + AudioClock.Frames(frame, 48000);
                     TimedDataAvailable?.Invoke(this, MemoryMarshal.AsBytes(samples.AsSpan()),
-                        new AudioPacketTiming(timestamp, frame, AudioTimestampQuality.Estimated));
+                        new AudioPacketTiming(timestamp, frame, AudioTimestampQuality.Device));
                     frame += 480;
                     var wait = TimeSpan.FromSeconds(AudioClock.Seconds(origin + AudioClock.Frames(frame + 480, 48000) - Stopwatch.GetTimestamp()));
                     if (wait > TimeSpan.Zero && stopped.WaitOne(wait)) break;
@@ -171,3 +171,4 @@ internal sealed class HubProfile(Application app)
     [DllImport("kernel32.dll")]
     static extern int GetCurrentThreadId();
 }
+

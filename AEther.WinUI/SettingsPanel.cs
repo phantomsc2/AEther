@@ -23,7 +23,7 @@ public sealed class SettingsPanel : UserControl
     public event EventHandler? InputChanged;
     public event Action<string>? SceneSelected;
 
-    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameworkElement frameTime)
+    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameTimeView backlog)
     {
         this.shaders = shaders;
         var layout = new Grid();
@@ -37,8 +37,7 @@ public sealed class SettingsPanel : UserControl
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        const double defaultAnalysisHeight = 240;
-        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(defaultAnalysisHeight), MinHeight = 32 }); // 0: live views
+        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 32 }); // 0: live views
         Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 1: divider
         var controlsRow = new RowDefinition { Height = new GridLength(1, GridUnitType.Star) };
         Columns.RowDefinitions.Add(controlsRow); // 2: controls
@@ -54,7 +53,7 @@ public sealed class SettingsPanel : UserControl
         ToolTipService.SetToolTip(divider, "Drag to resize. Arrow keys adjust; double-click restores the default height.");
         divider.DoubleTapped += (_, e) =>
         {
-            Columns.RowDefinitions[0].Height = new GridLength(defaultAnalysisHeight);
+            Columns.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
             controlsRow.Height = new GridLength(1, GridUnitType.Star);
             e.Handled = true;
         };
@@ -71,15 +70,24 @@ public sealed class SettingsPanel : UserControl
         };
         AutomationProperties.SetName(columnDivider, "Resize audio and video columns");
         Grid.SetColumn(columnDivider, 1);
-        Grid.SetRowSpan(columnDivider, 3);
         Columns.Children.Add(columnDivider);
+        var controlsDivider = new GridSplitter
+        {
+            Width = 8, VerticalAlignment = VerticalAlignment.Stretch,
+            ResizeDirection = GridSplitter.GridResizeDirection.Columns,
+            ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext,
+        };
+        AutomationProperties.SetName(controlsDivider, "Resize audio and video controls");
+        Grid.SetColumn(controlsDivider, 1);
+        Grid.SetRow(controlsDivider, 2);
+        Columns.Children.Add(controlsDivider);
 
-        // Row 0: Audio analysis (left), output preview (right).
+        // Row 0: Audio analysis (left), frame time (right).
         analysis.MinHeight = 32;
         Grid.SetRow(analysis, 0);
         Columns.Children.Add(analysis);
-        Grid.SetColumn(frameTime, 2);
-        Columns.Children.Add(frameTime);
+        Grid.SetColumn(backlog, 2);
+        Columns.Children.Add(backlog);
 
         // Row 2: Audio controls (left column)
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: input
@@ -136,3 +144,4 @@ public sealed class SettingsPanel : UserControl
         finally { refreshingScenes = false; }
     }
 }
+

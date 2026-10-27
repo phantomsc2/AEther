@@ -24,6 +24,7 @@ namespace AEther
         public long SampleIndex { get; init; }
         /// <summary>Device-frame/QPC correlation shared by all rows in this stream epoch.</summary>
         public AudioStreamClock? StreamClock { get; init; }
+        public SourceWatermark? SourceWatermark { get; init; }
         public long AnalysisRow { get; init; }
         public long ByteIndex { get; init; }
         public long CaptureTimestamp { get; init; }

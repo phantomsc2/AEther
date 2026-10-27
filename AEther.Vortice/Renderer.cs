@@ -394,14 +394,15 @@ public sealed partial class Renderer : IDisposable
     }
 
     public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null,
-        bool renderCanvas = true, bool renderDebug = false, bool renderPreview = false)
+        bool renderCanvas = true, bool renderDebug = false)
     {
         if (syncInterval > 4) throw new ArgumentOutOfRangeException(nameof(syncInterval));
-        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp, renderCanvas, renderDebug, renderPreview);
+        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp, renderCanvas, renderDebug);
     }
 
-    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug, bool renderPreview)
+    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug)
     {
+        PollCanvasProgress();
         if (output.SceneTarget == null || (!renderCanvas && !renderDebug)) return;
         var frameStart = Stopwatch.GetTimestamp();
         using var gpuFrame = gpu.BeginFrame(Audio.Profile, frameStart);
@@ -460,8 +461,11 @@ public sealed partial class Renderer : IDisposable
 
 
 
-        if (renderCanvas) DrawCanvas(now, dt);
-        bool previewDrawn = renderCanvas && renderPreview && DrawPreview(frameStart, present);
+        if (renderCanvas)
+        {
+            DrawCanvas(now, dt);
+            if (present) SubmitCanvasProgress();
+        }
         bool debugDrawn = false;
         if (renderDebug)
         {
@@ -470,7 +474,7 @@ public sealed partial class Renderer : IDisposable
             GpuMarker("Debug", false);
         }
         gpu.EndFrame();
-        Audio.Profile?.Elapsed("render.draw_cpu_ms", frameStart);
+        Audio.Profile?.Record("render.draw_cpu_ms", Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds, frameStart);
         if (Audio.LatestCaptureTimestamp != 0)
             Audio.Profile?.Elapsed("render.capture_to_submission_ms", Audio.LatestCaptureTimestamp);
         if (Audio.LatestSourceTimestamp.HasValue)
@@ -478,7 +482,6 @@ public sealed partial class Renderer : IDisposable
         var presentStart = Stopwatch.GetTimestamp();
         if (present && debugDrawn) PresentDebug(renderCanvas, syncInterval);
         if (present && renderCanvas) output.Present(syncInterval);
-        if (present && previewDrawn) PresentPreview();
         if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
     }
 
@@ -559,7 +562,6 @@ public sealed partial class Renderer : IDisposable
         disposed = true;
         context?.ClearState(); context?.Flush();
         DetachDebugOutput();
-        DetachPreviewOutput();
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();

@@ -35,7 +35,7 @@ public partial class App : Application
         var arguments = Environment.GetCommandLineArgs();
         var windowSeconds = FrameTimeView.HistorySeconds;
         var profile = new PipelineProfile();
-        window = new Window { Title = "AEther LiveCharts2 frame-time stress probe" };
+        window = new Window { Title = "AEther frame-time graph probe" };
         var view = new FrameTimeView(window);
         var refreshRate = arguments.Contains("--fast") ? 60 : 1 / view.RefreshInterval.TotalSeconds;
         view.RefreshInterval = TimeSpan.FromSeconds(1.0 / refreshRate);
@@ -51,7 +51,7 @@ public partial class App : Application
         // Both the chart-only and layout probes use at least 1280x720 client pixels.
         window.AppWindow.ResizeClient(new SizeInt32(1280, 720));
         view.Attach(profile);
-        const double inputRate = 240;
+        const double inputRate = 60;
         long generated = 0;
         var origin = Stopwatch.GetTimestamp() - (long)(windowSeconds * Stopwatch.Frequency);
         void GenerateUntil(long timestamp)
@@ -59,16 +59,10 @@ public partial class App : Application
             while (origin + (long)(generated * Stopwatch.Frequency / inputRate) <= timestamp)
             {
                 var time = origin + (long)(generated * Stopwatch.Frequency / inputRate);
-                var ms = 1000 / inputRate + .3 * Math.Sin(generated * .07) + (generated % 997 == 0 ? 12 : 0);
-                profile.Record("render.frame_interval_ms", ms, time);
-                // Emulate delayed GPU results, including reversed completion order within each pair.
-                if (generated % 2 == 1)
-                {
-                    profile.Record("gpu.frame_ms", 1.4 + .2 * Math.Sin(generated * .05), time);
-                    profile.Record("gpu.frame_ms", 1.4 + .2 * Math.Sin((generated - 1) * .05),
-                        origin + (long)((generated - 1) * Stopwatch.Frequency / inputRate));
-                }
-                profile.Record("render.total_audio_age_ms", 24 + 2 * Math.Sin(generated * .003), time);
+                var duration = generated % 120 == 0 ? 40 : 16.67 + 2 * Math.Sin(generated * .2);
+                profile.Record("render.frame_interval_ms", duration, time);
+                profile.Record("render.draw_cpu_ms", .6 + .15 * Math.Sin(generated * .17), time);
+                profile.Record("gpu.frame_ms", 2.5 + .5 * Math.Sin(generated * .13), time);
                 generated++;
             }
         }
@@ -96,10 +90,10 @@ public partial class App : Application
                 finishing = true;
                 timer.Stop();
                 var seconds = watch.Elapsed.TotalSeconds - 3;
-                if (view.PointCount < windowSeconds * inputRate - 2 || view.LostSamples != 0 || view.CompletedUpdates - initialUpdates < Math.Max(1, 5 * refreshRate))
+                if (view.PointCount < windowSeconds * 60 - 5 || view.LostSamples != 0 || view.CompletedUpdates - initialUpdates < Math.Max(1, 5 * refreshRate))
                     throw new Exception($"Chart stalled or lost samples: {view.PointCount} points, {view.CompletedUpdates} draws, {view.LostSamples} lost.");
-                if (view.GpuPointCount < windowSeconds * inputRate - 3 || view.AgePointCount < windowSeconds * inputRate - 2)
-                    throw new Exception($"Missing additional traces: {view.GpuPointCount} GPU points, {view.AgePointCount} age points.");
+                if (view.CpuPointCount != view.PointCount || view.GpuPointCount != view.PointCount)
+                    throw new Exception("CPU and GPU series must retain every synthetic frame sample.");
                 if (layout && (analysis!.ActualWidth > settings!.ActualWidth * .6 || view.ActualWidth < 100
                     || settings.AudioColumn.TransformToVisual(settings).TransformPoint(default).Y < analysis.ActualHeight))
                     throw new Exception("Expected audio/video views above their respective control columns.");
@@ -108,10 +102,8 @@ public partial class App : Application
                 profile.Describe("Chart DIPs", $"{view.ActualWidth:0}x{view.ActualHeight:0}");
                 profile.Describe("Rasterization scale", view.XamlRoot.RasterizationScale.ToString());
                 profile.Describe("Library", "LiveCharts2 2.0.4, default CPU Skia rendering");
-                profile.Describe("Workload", $"{windowSeconds} seconds at 240 samples/s; no averaging, animations or point markers; requested chart updates at {refreshRate} Hz");
+                profile.Describe("Workload", $"{windowSeconds} seconds; synthetic 60 Hz frame intervals with periodic spikes; chart updates at {refreshRate} Hz");
                 profile.Describe("Points", view.PointCount.ToString());
-                profile.Describe("GPU points", view.GpuPointCount.ToString());
-                profile.Describe("Age points", view.AgePointCount.ToString());
                 profile.Describe("Plotted points", view.PlottedPointCount.ToString());
                 profile.Describe("Completed chart updates/s", ((view.CompletedUpdates - initialUpdates) / seconds).ToString("F2"));
                 profile.Describe("CPU core equivalents", cpu.ToString("F3"));
@@ -146,3 +138,4 @@ public partial class App : Application
         window.Activate();
     }
 }
+

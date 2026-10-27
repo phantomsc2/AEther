@@ -8,7 +8,7 @@ public sealed class AudioHistory
 {
     const double Retention = .05, HandoffSeconds = .1;
     sealed record Row(long Index, long Capture, long Completed, double Start, double End,
-        double Arrival, float[] Samples, float[] Residual, float[] Momentary, long Generation, bool Live, AudioStreamClock? Clock);
+        double Arrival, float[] Samples, float[] Residual, float[] Momentary, long Generation, bool Live, AudioStreamClock? Clock, SourceWatermark? Progress);
     readonly Channel<Row> pending, offline;
     readonly Queue<Row> scheduled = new(), recent = new();
     readonly TimeProvider timeProvider;
@@ -57,6 +57,7 @@ public sealed class AudioHistory
     }
 
     public PipelineProfile? Profile { get; set; }
+    public PipelineProgress? Progress { get; set; }
     public double PresentationDelay { get; }
     public int Bands { get; }
     public int Rows { get; private set; }
@@ -88,6 +89,7 @@ public sealed class AudioHistory
     public long DroppedRows => Interlocked.Read(ref dropped);
     public long LatestCaptureTimestamp { get; private set; }
     public long? LatestSourceTimestamp { get; private set; }
+    public SourceWatermark? LatestProgress { get; private set; }
 
     public AudioHistory(int bands, double analysisRate, double seconds = 1, double presentationDelay = 0,
         TimeProvider? timeProvider = null)
@@ -147,7 +149,14 @@ public sealed class AudioHistory
     {
         SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest,
         AllowSynchronousContinuations = false,
-    }, _ => Interlocked.Increment(ref dropped));
+    }, _ => DropRows(1));
+
+    void DropRows(int count)
+    {
+        if (count <= 0) return;
+        Interlocked.Add(ref dropped, count);
+        Progress?.MarkGap();
+    }
 
     public void Post(SampleEvent<double> input, int channelCount)
     {
@@ -211,7 +220,7 @@ public sealed class AudioHistory
         var row = new Row(input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp,
             timed ? AudioClock.Seconds(input.SampleStartTimestamp!.Value) : input.AnalysisRow / rate,
             timed ? AudioClock.Seconds(input.SampleEndTimestamp!.Value) : (input.AnalysisRow + 1) / rate,
-            HostNow, owned, residual, momentary, input.DiscontinuityGeneration, timed, input.StreamClock);
+            HostNow, owned, residual, momentary, input.DiscontinuityGeneration, timed, input.StreamClock, input.SourceWatermark);
         (timed ? pending : offline).Writer.TryWrite(row);
     }
 
@@ -229,14 +238,14 @@ public sealed class AudioHistory
         {
             if (scheduled.Count > 0 && scheduled.Last().Generation != row.Generation)
             {
-                Interlocked.Add(ref dropped, scheduled.Count);
+                DropRows(scheduled.Count);
                 scheduled.Clear();
             }
             // Upload rows as soon as they arrive, even ahead of a delayed presentation
             // cursor. Visibility and live envelopes are selected separately below.
             if (!Store(row)) continue;
             scheduled.Enqueue(row);
-            while (scheduled.Count > handoffRows) { scheduled.Dequeue(); Interlocked.Increment(ref dropped); }
+            while (scheduled.Count > handoffRows) { scheduled.Dequeue(); DropRows(1); }
         }
         while (scheduled.TryPeek(out var row) && row.End <= target)
         {
@@ -292,12 +301,13 @@ public sealed class AudioHistory
             recent.Clear();
             haveCursor = false;
             haveConsumed = false;
+            LatestProgress = null;
             ClearLive();
             Flash = 0;
         }
         if (newestRow >= 0 && (row.Index <= newestRow || clockChanged))
         {
-            if (!changed && !clockChanged) { Interlocked.Increment(ref dropped); return false; }
+            if (!changed && !clockChanged) { DropRows(1); return false; }
             foreach (var history in History) Array.Clear(history);
             InvalidateHistory();
             newestRow = row.Index - 1;
@@ -347,6 +357,7 @@ public sealed class AudioHistory
                 row.Momentary.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockMomentaryResidual[channel]);
             }
         LatestCaptureTimestamp = row.Capture;
+        LatestProgress = row.Progress;
         LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;
         recent.Enqueue(row);
         double keepFrom = row.End - (row.Live ? Retention : Rows / rate);

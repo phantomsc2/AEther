@@ -34,22 +34,12 @@ internal static partial class Program
             {
                 var canvas = new SwapChainPanel();
                 var host = new Microsoft.UI.Xaml.Window { Content = canvas, Title = "AEther presentation profile" };
-                var previewPanel = new SwapChainPanel();
-                var previewHost = args.Contains("--preview-window")
-                    ? new Microsoft.UI.Xaml.Window { Content = previewPanel, Title = "AEther preview profile" } : null;
-                bool enablePreview = args.Contains("--preview");
-                if (enablePreview && previewHost == null) throw new ArgumentException("--preview requires --preview-window");
                 var screens = System.Windows.Forms.Screen.AllScreens;
                 string monitor = Option("--monitor", "primary");
                 var screen = monitor == "primary" ? System.Windows.Forms.Screen.PrimaryScreen!
                     : monitor == "secondary" ? screens.First(s => !s.Primary)
                     : screens.Single(s => s.DeviceName.Equals(monitor, StringComparison.OrdinalIgnoreCase));
                 host.AppWindow.MoveAndResize(new RectInt32(screen.Bounds.X, screen.Bounds.Y, width, height));
-                if (previewHost != null)
-                {
-                    var previewScreen = System.Windows.Forms.Screen.PrimaryScreen!;
-                    previewHost.AppWindow.MoveAndResize(new RectInt32(previewScreen.WorkingArea.X + 40, previewScreen.WorkingArea.Y + 40, 400, 280));
-                }
                 Renderer? renderer = null;
                 RenderWorker? worker = null;
                 // Explicit reference mode reproduces the old compositor-only
@@ -58,7 +48,6 @@ internal static partial class Program
                 var profile = new PipelineProfile();
                 var watch = new Stopwatch();
                 bool recording = false;
-                long previewStart = 0;
                 TimeSpan cpuStart = default;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 void Finish(Exception? error)
@@ -78,9 +67,6 @@ internal static partial class Program
                         profile.Describe("Swap-chain readiness", args.Contains("--bypass-swap-ready") ? "bypassed (reference only)" : "enabled");
                         profile.Describe("Path", "WinUI SwapChainPanel, compositor pacing, synthetic timestamped audio");
                         profile.Describe("Fluid work", renderer.FluidWork);
-                        profile.Describe("Preview", enablePreview ? "320x180 SDR, at most 10 Hz" : "disabled");
-                        profile.Describe("Preview monitor", previewHost == null ? "none" : System.Windows.Forms.Screen.FromHandle(WinRT.Interop.WindowNative.GetWindowHandle(previewHost)).DeviceName);
-                        profile.Describe("Preview updates per second", ((renderer.PreviewDrawCount - previewStart) / elapsed).ToString("F2"));
                         profile.Describe("Process CPU core equivalents", cpu.ToString("F3"));
                         Console.WriteLine(profile.Save(output));
                         Console.WriteLine($"{scene}, {renderer.AdapterDescription}, {width}x{height}");
@@ -89,26 +75,19 @@ internal static partial class Program
                             Console.WriteLine($"{stage}: {profile.Recent(stage)}");
                         renderer.Dispose(); renderer = null;
                     }
-                    failure = error; previewHost?.Close(); host.Close(); app.Exit();
+                    failure = error; host.Close(); app.Exit();
                 }
                 void StartIfReady()
                 {
                     try
                     {
-                        if (renderer != null || !canvas.IsLoaded || (previewHost != null &&
-                            (!previewPanel.IsLoaded || previewPanel.ActualWidth <= 0 || previewPanel.ActualHeight <= 0))) return;
+                        if (renderer != null || !canvas.IsLoaded) return;
                         var actual = System.Windows.Forms.Screen.FromHandle(WinRT.Interop.WindowNative.GetWindowHandle(host));
                         if (actual.DeviceName != screen.DeviceName) throw new InvalidOperationException($"Expected {screen.DeviceName}, window is on {actual.DeviceName}.");
                         renderer = new Renderer(WinRT.Interop.WindowNative.GetWindowHandle(host), width, height, 97, 1000,
                             initialScene: scene,
                             attachSwapChain: chain => SwapChainHost.Attach(canvas, chain));
                         renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
-                        if (enablePreview)
-                        {
-                            renderer.AttachPreviewOutput(WinRT.Interop.WindowNative.GetWindowHandle(previewHost!), 320, 180,
-                                chain => SwapChainHost.Attach(previewPanel, chain));
-                            renderer.ResizePreviewOutput(320, 180, (float)(320 / previewPanel.ActualWidth), (float)(180 / previewPanel.ActualHeight));
-                        }
                         renderer.RawPresentationClock = args.Contains("--raw-frame-clock");
                         renderer.FixedFluidMaterialCadence = args.Contains("--fixed-fluid-material");
                         if (args.Contains("--fast") && scene == "MandelFluidv4")
@@ -138,7 +117,7 @@ internal static partial class Program
                                 }, 2);
                                 row++;
                             }
-                            renderer.Render(syncInterval: 0u, renderPreview: enablePreview);
+                            renderer.Render(syncInterval: 0u);
                         }, error => host.DispatcherQueue.TryEnqueue(() => Finish(error)),
                             waitForTick: compositor ? CompositorClock.Wait : null,
                             waited: ms => profile.Record("render.pacing_wait_ms", ms));
@@ -147,19 +126,15 @@ internal static partial class Program
                     catch (Exception error) { Finish(error); }
                 }
                 canvas.Loaded += (_, _) => StartIfReady();
-                previewPanel.Loaded += (_, _) => StartIfReady();
-                previewPanel.SizeChanged += (_, _) => StartIfReady();
                 timer.Tick += (_, _) =>
                 {
                     if (!recording && watch.Elapsed.TotalSeconds >= 2)
                     {
-                        previewStart = renderer!.PreviewDrawCount;
                         cpuStart = Process.GetCurrentProcess().TotalProcessorTime;
                         profile.Start(); recording = true;
                     }
                     if (watch.Elapsed.TotalSeconds >= seconds + 2) Finish(null);
                 };
-                previewHost?.Activate();
                 host.Activate();
                 if (args.Contains("--fullscreen")) host.AppWindow.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
             };
