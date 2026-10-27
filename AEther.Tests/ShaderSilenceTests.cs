@@ -106,7 +106,7 @@ public class ShaderSilenceTests
     }
 
     [TestCase(false), TestCase(true), Category("GPU")]
-    public void DebugCombinesLiveStereoBarsWithUnchangedHistory(bool combined)
+    public void DebugCombinesLiveStereoBarsWithMeanHistory(bool combined)
     {
         const int width = 1000, height = 64, bands = 8;
         using var shaders = new SceneShaders("Debug");
@@ -117,7 +117,7 @@ public class ShaderSilenceTests
         var clock = new RenderClock();
         using var debug = new Renderer(window.Handle, width, height, bands, 24, 1,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Debug");
-        using var history = new Renderer(historyWindow.Handle, 700, height, bands, 24, 1,
+        using var history = new Renderer(historyWindow.Handle, 1600, height, bands, 24, 1,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Histogram");
         foreach (var renderer in new[] { debug, history })
         {
@@ -152,32 +152,33 @@ public class ShaderSilenceTests
             var pixels = debug.ReadPixels(false);
             var reference = history.ReadPixels(false);
             for (int y = 0; y < height; y++)
-            for (int x = 0; x < 700; x++)
+            for (int x = 0; x < 800; x++)
             for (int c = 0; c < 3; c++)
             {
-                int dx = x < 350 ? x : x + 300;
-                Assert.That(pixels[4 * (y * width + dx) + c],
-                    Is.EqualTo(reference[4 * (y * 700 + x) + c]).Within(1),
+                double mean = .5 * (reference[4 * (y * 1600 + x) + c] + reference[4 * (y * 1600 + 1599 - x) + c]);
+                Assert.That(pixels[4 * (y * width + x) + c],
+                    Is.EqualTo(mean).Within(1),
                     $"history frame {frame}, {x},{y}, channel {c}");
             }
             // Interior probes are well away from antialiasing and the total cap.
-            foreach (int x in new[] { 365, 440, 470, 529, 559, 634 })
+            foreach (int x in new[] { 810, 840, 870, 910, 940, 970 })
             for (int c = 0; c < 3; c++)
             {
-                double amplitude = c == 1 ? .5 : (x < 500) == (c == 0) ? .25 : .75;
-                bool filled = posted && Math.Abs((x + .5) / width - .5) / .15 < amplitude;
-                bool totalFilled = posted && Math.Abs((x + .5) / width - .5) / .15 < (frame == 145 ? 1.5 : .875);
+                double amplitude = c == 1 ? .5 : (x < 900) == (c == 0) ? .25 : .75;
+                double position = x < 900 ? (900 - (x + .5)) / 100 : (x + .5 - 900) / 100;
+                bool filled = posted && position < amplitude;
+                bool totalFilled = posted && position < (frame == 145 ? 1.5 : .875);
                 Assert.That(pixels[4 * (44 * width + x) + c], Is.EqualTo(!combined && filled ? 255 : totalFilled ? 64 : 0),
                     $"live frame {frame}, x={x}, channel {c}");
                 Assert.That(pixels[4 * (4 * width + x) + c], Is.Zero, "Inactive frequency bin");
             }
             if (posted)
             {
-                int background = frame == 145 ? 649 : 628;
+                int background = frame == 145 ? 999 : 985;
                 Assert.That(pixels.Skip(4 * (44 * width + background)).Take(3), Is.All.EqualTo(64).Within(1),
                     "The total fills a quarter-intensity grey bar, including clipped totals.");
                 if (frame != 145)
-                    Assert.That(pixels.Skip(4 * (44 * width + 631)).Take(3), Is.All.LessThanOrEqualTo(64),
+                    Assert.That(pixels.Skip(4 * (44 * width + 988)).Take(3), Is.All.LessThanOrEqualTo(64),
                         "The antialiased total edge must not become a white cap.");
             }
         }

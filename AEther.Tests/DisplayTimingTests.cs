@@ -231,6 +231,52 @@ public class DisplayTimingTests
     }
 
     [Test, Category("GPU")]
+    public void DebugShowsStereoSpectrumAndMeanHistoryScrollingLeft()
+    {
+        const int width = 1280, height = 720;
+        using var window = new Window();
+        using var renderer = new Renderer(window.Handle, width, height, 1, 100, .2,
+            initialScene: "Debug", timeProvider: new Clock());
+        for (int row = 0; row < 8; row++)
+        {
+            bool active = row == 2 || row == 7;
+            renderer.PostAudio(new(new[] { 0.0, active ? .8 : 0, 0, 0, 0, active ? .4 : 0, 0, 0 }, 4, DateTime.UnixEpoch) {
+                AnalysisRow = row, StreamClock = new(0, 0, 8000),
+                SampleStartTimestamp = Ms(row * 10), SampleEndTimestamp = Ms((row + 1) * 10),
+            }, 2);
+        }
+        renderer.Render(false, presentationTimestamp: Ms(80));
+        var pixels = renderer.ReadPixels(false);
+        int Green(int x) => pixels[((height / 2) * width + x) * 4 + 1];
+        Assert.That(Green(1088), Is.GreaterThan(200), "Channel 0 fills half of its strip.");
+        Assert.That(Green(1030), Is.Zero, "Channel 0 grows left from the shared seam.");
+        Assert.That(Green(1140), Is.GreaterThan(200), "Channel 0 is filled near the shared seam.");
+        Assert.That(Green(1190), Is.GreaterThan(200), "Channel 1 fills the start of its strip.");
+        Assert.That(Green(1216), Is.Zero, "Channel 1 stops at its own amplitude.");
+        double center = Center(pixels, out double mass);
+        Assert.That(mass, Is.EqualTo(.6 * 255 * width * .8 * .01 / .2).Within(4),
+            "History contains the mean of both channels.");
+        renderer.Render(false, presentationTimestamp: Ms(85));
+        double next = Center(renderer.ReadPixels(false), out _);
+        Assert.That(next, Is.EqualTo(center - width * .8 * .005 / .2).Within(.1));
+
+        static double Center(byte[] frame, out double mass)
+        {
+            mass = 0;
+            double weighted = 0;
+            // Isolate the older impulse from the newest one at the history seam.
+            for (int x = 0; x < 850; x++)
+            {
+                double value = frame[((height / 2) * width + x) * 4 + 1];
+                mass += value;
+                weighted += (x + .5) * value;
+            }
+            Assert.That(mass, Is.GreaterThan(0));
+            return weighted / mass;
+        }
+    }
+
+    [Test, Category("GPU")]
     public void SpectrumShowsNewBlocksWithoutAveragingOrHoldingAcrossGapsAt720p()
     {
         const int width = 1280, height = 720;

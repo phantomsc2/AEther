@@ -2,6 +2,7 @@ using AEther.NAudio;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Vortice.DXGI;
 using Windows.Graphics;
 using Windows.System;
@@ -37,6 +38,8 @@ public sealed class MainWindow : Window
         this.createSource = createSource;
         this.shaderDirectory = shaderDirectory;
         Title = "AEther";
+        AppWindow.TitleBar.PreferredTheme = TitleBarTheme.UseDefaultAppMode;
+        AppWindow.TitleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
         canvasDismissed = !Environment.GetCommandLineArgs().Any(argument => argument.StartsWith("--scene=", StringComparison.Ordinal));
         // A focusable host routes keyboard input without adding anything over the canvas.
         root = new UserControl { Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false };
@@ -44,8 +47,11 @@ public sealed class MainWindow : Window
         analysis = new(this);
         settings = new(audio, shaders, debug, analysis);
         Content = settings;
+        settings.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
+        UpdateTitleBarColors();
         settings.Loaded += async (_, _) =>
         {
+            UpdateTitleBarColors();
             if (loaded) return;
             loaded = true;
             InitializeHubSize();
@@ -407,6 +413,26 @@ public sealed class MainWindow : Window
         try { await StopSessionAsync(); }
         catch (Exception error) { if (!closing) debug.SetStatus(error.Message); }
         finally { sessionGate.Release(); }
+    }
+
+    void UpdateTitleBarColors()
+    {
+        var background = (SolidColorBrush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
+        settings.Columns.Background = background;
+        var foreground = settings.ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
+        var titleBar = AppWindow.TitleBar;
+        titleBar.BackgroundColor = titleBar.InactiveBackgroundColor = background.Color;
+        titleBar.ButtonBackgroundColor = titleBar.ButtonInactiveBackgroundColor = background.Color;
+        titleBar.ForegroundColor = titleBar.ButtonForegroundColor = foreground;
+        titleBar.InactiveForegroundColor = titleBar.ButtonInactiveForegroundColor = Blend(.6);
+        titleBar.ButtonHoverBackgroundColor = Blend(.08);
+        titleBar.ButtonPressedBackgroundColor = Blend(.05);
+        titleBar.ButtonHoverForegroundColor = titleBar.ButtonPressedForegroundColor = foreground;
+
+        Windows.UI.Color Blend(double amount) => Windows.UI.Color.FromArgb(255,
+            (byte)Math.Round(background.Color.R + (foreground.R - background.Color.R) * amount),
+            (byte)Math.Round(background.Color.G + (foreground.G - background.Color.G) * amount),
+            (byte)Math.Round(background.Color.B + (foreground.B - background.Color.B) * amount));
     }
 
     void OnClosing(AppWindow sender, AppWindowClosingEventArgs e)

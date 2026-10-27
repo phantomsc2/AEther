@@ -17,6 +17,8 @@ public abstract partial class ToolWindow : Window
     protected ToolWindow(string title, int width, int height)
     {
         Title = title;
+        AppWindow.TitleBar.PreferredTheme = TitleBarTheme.UseDefaultAppMode;
+        AppWindow.TitleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
         Content = Layout;
         Layout.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
         AppWindow.Resize(new SizeInt32(width, height));

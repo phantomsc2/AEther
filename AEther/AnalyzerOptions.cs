@@ -84,9 +84,9 @@ namespace AEther
 
         [Category("Smoother")]
         [DisplayName("Enabled")]
-        [DefaultValue(true)]
+        [DefaultValue(false)]
         [Description("Smooth the spectrum before the splitter. When off, both filters are bypassed and observed linear magnitudes feed the original splitter directly.")]
-        public bool SmoothingEnabled { get; set; } = true;
+        public bool SmoothingEnabled { get; set; } = false;
 
         [Category("Smoother")]
         [DisplayName("Splitter input")]
