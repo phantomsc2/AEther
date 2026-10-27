@@ -23,7 +23,7 @@ public sealed class SettingsPanel : UserControl
     public event EventHandler? InputChanged;
     public event Action<string>? SceneSelected;
 
-    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameTimeView frameTime)
+    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameworkElement frameTime)
     {
         this.shaders = shaders;
         var layout = new Grid();
@@ -74,7 +74,7 @@ public sealed class SettingsPanel : UserControl
         Grid.SetRowSpan(columnDivider, 3);
         Columns.Children.Add(columnDivider);
 
-        // Row 0: Audio analysis (left), frame-time timeline (right).
+        // Row 0: Audio analysis (left), output preview (right).
         analysis.MinHeight = 32;
         Grid.SetRow(analysis, 0);
         Columns.Children.Add(analysis);

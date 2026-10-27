@@ -18,7 +18,7 @@ public sealed class MainWindow : Window
     readonly SettingsPanel settings;
     readonly TitleBar? hubTitleBar;
     readonly AnalysisView analysis;
-    readonly FrameTimeView frameTime;
+    readonly CanvasPreview preview;
     readonly CanvasWindow canvasWindow;
     readonly AudioPanel audio = new();
     readonly GraphicsPanel graphics = new();
@@ -33,7 +33,7 @@ public sealed class MainWindow : Window
     FileSystemWatcher? watcher;
     IDXGISwapChain1? canvasChain;
     bool loaded, closing, shutdownComplete, fullscreen, visible;
-    bool changingSession, renderCanvas, renderDebug, canvasDismissed;
+    bool changingSession, renderCanvas, renderDebug, renderPreview, canvasDismissed;
     long restartVersion;
     RectInt32 windowBounds;
     PipelineWarnings? pipelineWarnings;
@@ -55,8 +55,8 @@ public sealed class MainWindow : Window
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         canvasWindow = new(root);
         analysis = new(this);
-        frameTime = new(this);
-        settings = new(audio, graphics, shaders, analysis, frameTime);
+        preview = new(this);
+        settings = new(audio, graphics, shaders, analysis, preview);
         SystemBackdrop = new MicaBackdrop();
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
@@ -189,6 +189,7 @@ public sealed class MainWindow : Window
         canvasWindow.VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
         canvasWindow.AppWindow.Changed += (_, _) => UpdateRendering();
         analysis.OutputChanged += (_, _) => UpdateRendering();
+        preview.OutputChanged += (_, _) => UpdateRendering();
         AppWindow.Closing += OnClosing;
     }
 
@@ -253,7 +254,6 @@ public sealed class MainWindow : Window
                     replacement = CreateSource();
                     await current.RestartAnalysisAsync(replacement, audio.Options, attemptLogger, pipelineId);
                     current.Analyzer.Profile.DetailedGpuTimings = false;
-                    frameTime.Attach(current.Analyzer.Profile);
                     replacement = null; // Session now owns the new source.
                     if (closing) return;
                     ResizeRenderer();
@@ -289,7 +289,7 @@ public sealed class MainWindow : Window
                 next.Start();
                 session = next;
                 next.Analyzer.Profile.DetailedGpuTimings = false;
-                frameTime.Attach(next.Analyzer.Profile);
+                preview.Attach(next.Renderer);
                 analysis.Attach(next.Renderer);
                 shaders.Attach(next.Renderer);
                 watcher = new(next.Renderer.ShaderDirectory, "*.hlsl")
@@ -311,7 +311,7 @@ public sealed class MainWindow : Window
             {
                 renderWorker?.Dispose(); renderWorker = null;
                 session = null;
-                frameTime.Attach(null);
+                preview.Attach(null);
                 analysis.Attach(null);
                 shaders.Attach(null);
                 if (next != null) await next.DisposeAsync();
@@ -354,8 +354,10 @@ public sealed class MainWindow : Window
         renderWorker?.Dispose();
         renderCanvas = CanvasVisible;
         renderDebug = analysis.CanRender;
+        renderPreview = renderCanvas && preview.CanRender;
         var drawCanvas = renderCanvas;
         var drawDebug = renderDebug;
+        var drawPreview = renderPreview;
         var analyzer = current.Analyzer;
         var logger = current.Logger;
         // Present(1) can follow the slower primary monitor. On Windows 11 use
@@ -364,7 +366,7 @@ public sealed class MainWindow : Window
         bool compositorPacing = CompositorClock.IsSupported;
         renderWorker = new(!drawCanvas && drawDebug ? current.Renderer.DebugFrameReady! : current.Renderer.FrameReady,
             () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u,
-                renderCanvas: drawCanvas, renderDebug: drawDebug),
+                renderCanvas: drawCanvas, renderDebug: drawDebug, renderPreview: drawPreview),
             error =>
             {
                 logger.ForContext("PipelineBlocking", true).Error(error, "Rendering failed; stopping audio pipeline");
@@ -436,7 +438,7 @@ public sealed class MainWindow : Window
         reloadTimer.Stop();
         watcher?.Dispose(); watcher = null;
         var previous = session; session = null;
-        frameTime.Attach(null);
+        preview.Attach(null);
         renderWorker?.Dispose(); renderWorker = null;
         analysis.Attach(null);
         shaders.Attach(null);
@@ -484,12 +486,14 @@ public sealed class MainWindow : Window
 
     void UpdateRendering()
     {
+        preview.SetCanvasVisible(CanvasVisible);
         if (closing || changingSession || session == null)
         {
             renderWorker?.SetEnabled(false);
             return;
         }
-        if (renderWorker == null || renderCanvas != CanvasVisible || renderDebug != analysis.CanRender)
+        if (renderWorker == null || renderCanvas != CanvasVisible || renderDebug != analysis.CanRender
+            || renderPreview != (CanvasVisible && preview.CanRender))
             StartRenderWorker(session);
         renderWorker?.SetEnabled(renderCanvas || renderDebug);
     }

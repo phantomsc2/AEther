@@ -43,6 +43,7 @@ internal static partial class Program
                 var settings = Field<SettingsPanel>("settings");
                 var canvasWindow = Field<CanvasWindow>("canvasWindow");
                 var analysis = Field<AnalysisView>("analysis");
+                var preview = Field<CanvasPreview>("preview");
                 var audio = Field<AudioPanel>("audio");
                 var eventLog = settings.EventLog;
                 var shaderPanel = Field<ShaderPanel>("shaders");
@@ -169,6 +170,11 @@ internal static partial class Program
                             case 2:
                                 if (!shadersVisible() || !canvasWindow.IsVisible || current.Renderer.SceneName != "Mandelbox")
                                     throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
+                                if (current.Renderer.PreviewOutputError != null)
+                                    throw new Exception($"Canvas preview failed: {current.Renderer.PreviewOutputError}");
+                                if (!preview.CanRender || current.Renderer.PreviewDrawCount == 0) return;
+                                if (!settings.Columns.Children.Contains(preview) || Grid.GetColumn(preview) != 2)
+                                    throw new Exception("Canvas preview must occupy the right live-view pane.");
                                 if (!Descendants(shaderPanel.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
                                     || !Descendants(shaderPanel.Content).OfType<Slider>().Any())
                                     throw new Exception("Dynamic shader parameter tree is missing.");

@@ -394,13 +394,13 @@ public sealed partial class Renderer : IDisposable
     }
 
     public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null,
-        bool renderCanvas = true, bool renderDebug = false)
+        bool renderCanvas = true, bool renderDebug = false, bool renderPreview = false)
     {
         if (syncInterval > 4) throw new ArgumentOutOfRangeException(nameof(syncInterval));
-        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp, renderCanvas, renderDebug);
+        lock (graphicsGate) RenderCore(present, syncInterval, presentationTimestamp, renderCanvas, renderDebug, renderPreview);
     }
 
-    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug)
+    unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug, bool renderPreview)
     {
         if (output.SceneTarget == null || (!renderCanvas && !renderDebug)) return;
         var frameStart = Stopwatch.GetTimestamp();
@@ -461,6 +461,7 @@ public sealed partial class Renderer : IDisposable
 
 
         if (renderCanvas) DrawCanvas(now, dt);
+        bool previewDrawn = renderCanvas && renderPreview && DrawPreview(frameStart, present);
         bool debugDrawn = false;
         if (renderDebug)
         {
@@ -477,6 +478,7 @@ public sealed partial class Renderer : IDisposable
         var presentStart = Stopwatch.GetTimestamp();
         if (present && debugDrawn) PresentDebug(renderCanvas, syncInterval);
         if (present && renderCanvas) output.Present(syncInterval);
+        if (present && previewDrawn) PresentPreview();
         if (present) Audio.Profile?.Elapsed("render.present_wait_ms", presentStart);
     }
 
@@ -557,6 +559,7 @@ public sealed partial class Renderer : IDisposable
         disposed = true;
         context?.ClearState(); context?.Flush();
         DetachDebugOutput();
+        DetachPreviewOutput();
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();
