@@ -66,7 +66,11 @@ public sealed class AnalysisView : UserControl
                 renderer.ResizeDebugOutput(width, height, (float)(width / graph.ActualWidth), (float)(height / graph.ActualHeight));
                 PreviewPixelSize = (width, height);
             }
-            catch (Exception error) { outputError = error.Message; }
+            catch (Exception error)
+            {
+                outputError = error.Message;
+                renderer.Logger.ForContext<AnalysisView>().Error(error, "Could not attach or resize analysis preview");
+            }
         }
         OutputChanged?.Invoke(this, EventArgs.Empty);
     }

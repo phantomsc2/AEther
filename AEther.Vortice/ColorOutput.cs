@@ -4,6 +4,7 @@ using Microsoft.Win32.SafeHandles;
 using SharpGen.Runtime;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
+using Serilog;
 
 namespace AEther.Vortice;
 
@@ -31,7 +32,7 @@ internal sealed partial class ColorOutput : IDisposable
 
     public ColorOutput(ID3D11Device device, ID3D11DeviceContext context, IDXGIFactory2 factory,
         IntPtr window, int width, int height, bool highPrecision, Action<IDXGISwapChain1?>? attachSwapChain = null,
-        bool directSdr = false)
+        bool directSdr = false, ILogger? logger = null)
     {
         this.device = device; this.context = context;
         this.window = window; this.attachSwapChain = attachSwapChain;
@@ -71,6 +72,7 @@ internal sealed partial class ColorOutput : IDisposable
                 }
                 catch (Exception error) when (error is SharpGenException or NotSupportedException)
                 {
+                    (logger ?? Log.Logger).ForContext<ColorOutput>().Warning(error, "High-precision presentation unavailable; falling back to SDR");
                     candidate?.Dispose(); candidate = null;
                     context.Flush();
                 }

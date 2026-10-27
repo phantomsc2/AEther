@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AEther.WinUI;
 using AEther.Smoke;
+using AEther.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -41,7 +42,7 @@ internal static partial class Program
                 var canvasWindow = Field<CanvasWindow>("canvasWindow");
                 var analysis = Field<AnalysisView>("analysis");
                 var audio = Field<AudioPanel>("audio");
-                var debug = Field<DebugWindow>("debug");
+                var eventLog = settings.EventLog;
                 var shaderPanel = Field<ShaderPanel>("shaders");
                 var graphics = Field<GraphicsPanel>("graphics");
                 bool shadersVisible() => shaderPanel.Visibility == Visibility.Visible;
@@ -100,8 +101,8 @@ internal static partial class Program
                                     throw new Exception("Audio categories must be DFT, Pipeline, Smoother and Splitter, without GPU or an outer Audio block.");
                                 if (Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
                                     - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1
-                                    || Math.Abs(analysis.ActualHeight - settings.AudioColumn.RowDefinitions[2].ActualHeight) > 1)
-                                    throw new Exception("Collapsed audio categories must remain bottom-aligned below a filling analysis view.");
+                                    || analysis.ActualHeight <= 0 || Grid.GetRow(analysis) != 0)
+                                    throw new Exception("Audio settings and live views must occupy bounded grid rows.");
                                 if (Descendants(audio).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds"))
                                     throw new Exception("HistorySeconds must not belong to audio settings.");
                                 if (!Descendants(graphics).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds")
@@ -109,32 +110,39 @@ internal static partial class Program
                                     || !settings.SceneColumn.Children.Contains(graphics))
                                     throw new Exception("HistorySeconds must remain visible above scene-specific controls in the right column.");
                                 foreach (var group in audioGroups) group.IsExpanded = true;
-                                debug.Show();
+                                if (eventLog.IsExpanded) throw new Exception("Event log must start collapsed.");
+                                Task.Run(() => current.Logger.Warning("Window warning smoke")).GetAwaiter().GetResult();
+                                eventLog.Refresh();
+                                if (eventLog.State != IndicatorState.Warning) throw new Exception("Background warnings must set yellow status.");
+                                eventLog.Toggle();
                                 stage++;
                                 break;
                             case 1:
                                 if (current.Renderer.DebugDrawCount == 0) return;
-                                if (!analysis.CanRender || !Descendants(settings.Content).OfType<SwapChainPanel>().Any() || Descendants(debug.Content).OfType<SwapChainPanel>().Any())
-                                    throw new Exception("The hub must contain the shared analysis graph; Debug must contain only text diagnostics.");
+                                if (!analysis.CanRender || !Descendants(settings.Content).OfType<SwapChainPanel>().Any()
+                                    || eventLog.Events.ActualHeight <= 0 || eventLog.ActualHeight > settings.ActualHeight * .4 + 40
+                                    || !Descendants(eventLog.Events).OfType<TextBlock>().Any(t => t.Text.Contains("Window warning smoke")))
+                                    throw new Exception("The event log must display real rows in a bounded panel beside the live graphics.");
+                                var warningRow = eventLog.Events.Items.Cast<EventLogView.EventRow>().First(row => row.Summary.Contains("Window warning smoke"));
+                                if (eventLog.Events.ContainerFromItem(warningRow) is not ListViewItem warningItem || warningItem.ActualHeight >= 40)
+                                    throw new Exception("Single-line event rows must use a compact ListView item height.");
                                 if (analysis.ActualHeight <= 0
-                                    || Math.Abs(analysis.ActualHeight - settings.AudioColumn.RowDefinitions[2].ActualHeight) > 1
                                     || Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
                                         - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1)
                                     throw new Exception("Analysis must fill the available space above bottom-aligned audio settings.");
                                 if (!host.AppWindow.IsVisible) throw new Exception("Settings did not open.");
                                 if (settings.Content is not Grid || Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
                                     throw new Exception("The hub must have two equal-width columns without an outer scroller.");
-                                if (settings.Columns.Children.OfType<Button>().Single().Content?.ToString() != "Debug")
-                                    throw new Exception("Only Debug remains a separate-window button.");
+                                if (Descendants(settings.Content).OfType<Expander>().Any(e => e.Header?.ToString() == "Debug"))
+                                    throw new Exception("Text debug diagnostics must be removed.");
                                 var selector = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
-                                if (selector.Header != null || selector.SelectedItem != null || shadersVisible()
-                                    || settings.AudioColumn.Children[2] != analysis || settings.SceneColumn.Children[0] != selector)
-                                    throw new Exception("Scene must start empty on the right, with analysis pinned on the left.");
+                                if (selector.SelectedItem != null || shadersVisible()
+                                    || !settings.Columns.Children.Contains(analysis) || settings.SceneColumn.Children[0] != selector)
+                                    throw new Exception("Scene must start empty with analysis above the audio controls.");
                                 if (!Descendants(audio.Content).OfType<NumberBox>().Any())
                                     throw new Exception("Analyzer property editor is missing.");
                                 if (!Descendants(settings.Content).OfType<ComboBox>().Any(c => c.Header?.ToString() == "Input")
-                                    || !Descendants(settings.Content).OfType<NumberBox>().Any(n => n.Header?.ToString() == "Gain")
-                                    || Descendants(audio.Content).OfType<NumberBox>().Any(n => n.Header?.ToString() == "Gain"))
+                                    || !Descendants(audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Gain"))
                                     throw new Exception("Input and Gain must live in the hub.");
                                 selector.SelectedItem = "Spectrum";
                                 selector.SelectedItem = "Mandelbox";
@@ -232,15 +240,14 @@ internal static partial class Program
                                 if (Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene").SelectedItem != null)
                                     throw new Exception("Closing canvas must clear scene selection.");
                                 host.Activate();
-                                foreach (var tool in new ToolWindow[] { debug })
-                                {
-                                    NativeClose(tool);
-                                    if (tool.IsVisible) throw new Exception("Closing a tool window did not hide it.");
-                                    tool.Show();
-                                }
+                                eventLog.Toggle();
+                                eventLog.Refresh();
+                                if (eventLog.State != IndicatorState.Warning)
+                                    throw new Exception("Collapsing event history cleared its sticky warning.");
+                                eventLog.Toggle();
                                 stage++;
                                 if (added != null) File.Delete(added);
-                                Descendants(settings.Content).OfType<NumberBox>().Single(n => n.Header?.ToString() == "Gain").Value += 1;
+                                Descendants(settings.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "Gain").Value += 1;
                                 break;
                             case 5:
                                 if (started != 2 || Field<RenderWorker?>("renderWorker") == null) return;
@@ -291,13 +298,13 @@ internal static partial class Program
                                 if (current.Renderer.DebugDrawCount <= debugDraws) return;
                                 if (current.Renderer.SceneName != "Mandelbox" || started != 3)
                                     throw new Exception("Debug-only rendering changed the canvas scene or restarted capture.");
-                                debug.Hide();
+                                if (eventLog.IsExpanded) eventLog.Toggle();
                                 debugDraws = current.Renderer.DebugDrawCount;
                                 stage++;
                                 break;
                             case 8:
                                 if (current.Renderer.DebugDrawCount <= debugDraws)
-                                    throw new Exception("Closing text diagnostics stopped the hub graph.");
+                                    throw new Exception("Closing event history stopped the hub graph.");
                                 host.AppWindow.Hide();
                                 debugDraws = current.Renderer.DebugDrawCount;
                                 stage++;
@@ -319,28 +326,31 @@ internal static partial class Program
                                 hubHeight = host.AppWindow.Size.Height;
                                 host.AppWindow.Resize(new SizeInt32(hubWidth + 80, hubHeight - 80));
                                 hubWidth += 80; hubHeight -= 80;
-                                Descendants(audio.Content).OfType<NumberBox>().Single(n => n.Header?.ToString() == "FrequencyResolution").Value = 48;
+                                Descendants(audio.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "FrequencyResolution").Value = 48;
                                 stage++;
                                 break;
                             case 11:
                                 if (started != 4 || current.Renderer.Audio.Bands < 300) return;
-                                if (current.Renderer.Audio.Bands < 300 || host.AppWindow.Size.Width != hubWidth || host.AppWindow.Size.Height != hubHeight || analysis.ActualHeight > settings.AudioColumn.RowDefinitions[2].ActualHeight + 1)
+                                if (current.Renderer.Audio.Bands < 300 || host.AppWindow.Size.Width != hubWidth || host.AppWindow.Size.Height != hubHeight || analysis.ActualHeight > settings.Columns.RowDefinitions[0].ActualHeight + 1)
                                     throw new Exception("More bands must fit the pinned analysis area without resizing the window or adding scrolling.");
                                 if (Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
                                     throw new Exception("Resizing the hub changed the equal column widths.");
-                                Descendants(audio.Content).OfType<NumberBox>().Single(n => n.Header?.ToString() == "FrequencyResolution").Value = 12;
+                                Descendants(audio.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "FrequencyResolution").Value = 12;
                                 stage++;
                                 break;
                             case 12:
                                 if (started != 5 || current.Renderer.Audio.Bands >= 300) return;
                                 if (host.AppWindow.Size.Width != hubWidth)
                                     throw new Exception("Restoring the band count changed the hub width.");
-                                debug.Hide();
+                                if (eventLog.IsExpanded) eventLog.Toggle();
                                 typeof(MainWindow).GetMethod("RenderFailed", BindingFlags.Instance | BindingFlags.NonPublic)!
                                     .Invoke(host, new object[] { new Exception("Window smoke diagnostic") });
-                                if (!debug.IsVisible || !Descendants(debug.Content).OfType<TextBlock>()
-                                    .Any(t => t.Text == "Window smoke diagnostic"))
-                                    throw new Exception("Rendering failures did not open Debug with the error.");
+                                eventLog.Refresh();
+                                if (eventLog.IsExpanded || eventLog.State != IndicatorState.Error
+                                    || !eventLog.Events.Items.Cast<EventLogView.EventRow>().Any(row => row.Summary.Contains("Window smoke diagnostic")))
+                                    throw new Exception("Rendering failures must set red and show the exception message without opening the log.");
+                                if (!eventLog.Events.Items.Cast<EventLogView.EventRow>().Any(row => row.Summary.Contains("Window warning smoke")))
+                                    throw new Exception("Restarts must preserve earlier event history.");
                                 stage++;
                                 NativeClose(host);
                                 break;

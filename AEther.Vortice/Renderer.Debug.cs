@@ -23,7 +23,7 @@ public sealed partial class Renderer
             DetachDebugOutput();
             using var factory = global::Vortice.DXGI.DXGI.CreateDXGIFactory1<IDXGIFactory2>();
             var candidate = new ColorOutput(device, context, factory, window, width, height,
-                output.HighPrecision, attachSwapChain, directSdr: lowCost);
+                output.HighPrecision, attachSwapChain, directSdr: lowCost, logger: Logger);
             try { candidate.Resize(width, height); }
             catch { candidate.Dispose(); throw; }
             debugOutput = candidate;
@@ -91,6 +91,7 @@ public sealed partial class Renderer
         catch (Exception error)
         {
             debugOutputError = error.Message;
+            Logger.Error(error, "Analysis preview rendering failed");
             return false;
         }
     }
@@ -102,6 +103,6 @@ public sealed partial class Renderer
             if (renderCanvas) debugCapacity = !debugOutput!.TryPresent();
             else { debugOutput!.Present(syncInterval); debugCapacity = false; }
         }
-        catch (Exception error) { debugOutputError = error.Message; }
+        catch (Exception error) { debugOutputError = error.Message; Logger.Error(error, "Analysis preview presentation failed"); }
     }
 }

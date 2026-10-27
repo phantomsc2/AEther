@@ -1,4 +1,6 @@
 using Microsoft.UI.Xaml;
+using AEther.Logging;
+using Serilog;
 
 namespace AEther.WinUI;
 
@@ -8,19 +10,21 @@ public partial class App : Application
 
     public App()
     {
-        CrashLog.Initialize();
-        UnhandledException += (_, e) => CrashLog.Write($"WinUI unhandled exception: {e.Message}; handled={e.Handled}", e.Exception);
+        ApplicationLog.Initialize();
+        UnhandledException += (_, e) => ApplicationLog.Fatal("WinUI unhandled exception", e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-            CrashLog.Write($"AppDomain unhandled exception; terminating={e.IsTerminating}; {e.ExceptionObject}", e.ExceptionObject as Exception);
-        TaskScheduler.UnobservedTaskException += (_, e) => CrashLog.Write("Unobserved task exception", e.Exception);
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => CrashLog.Write("Process exit");
+            ApplicationLog.Fatal("AppDomain unhandled exception", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => Log.Error(e.Exception, "Unobserved task exception");
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => ApplicationLog.Shutdown();
         InitializeComponent();
+        Log.ForContext<App>().Information("WinUI assembly version {WinUIVersion}; working directory {WorkingDirectory}",
+            typeof(Application).Assembly.GetName().Version?.ToString(), Environment.CurrentDirectory);
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         window = new MainWindow();
-        window.Closed += (_, _) => CrashLog.Write("Main window closed");
+        window.Closed += (_, _) => ApplicationLog.Shutdown();
         window.Activate();
     }
 }

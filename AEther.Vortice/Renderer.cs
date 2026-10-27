@@ -9,12 +9,16 @@ using Vortice.DXGI;
 using Vortice.Mathematics;
 using static Vortice.Direct3D11.D3D11;
 using static Vortice.DXGI.DXGI;
+using Serilog;
 
 namespace AEther.Vortice;
 
 /// <summary>D3D11 fullscreen passes. Frame rendering may run on the dedicated render thread.</summary>
 public sealed partial class Renderer : IDisposable
 {
+    public ILogger Logger { get; private set; }
+    bool initializing = true;
+    Exception? shaderException;
     readonly Lock graphicsGate = new();
     readonly List<IDisposable> resources = [];
     ID3D11Device device = null!;
@@ -121,9 +125,9 @@ public sealed partial class Renderer : IDisposable
 
     public Renderer(IntPtr window, int width, int height, AnalysisOutput input,
         string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null,
-        string? initialScene = null, PipelineProfile? profile = null, GraphicsOptions? graphicsOptions = null)
+        string? initialScene = null, PipelineProfile? profile = null, GraphicsOptions? graphicsOptions = null, ILogger? logger = null)
         : this(window, width, height, input.Domain.Length, input.AnalysisRate, graphicsOptions?.HistorySeconds ?? 2,
-            shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile)
+            shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile, logger: logger)
     {
         Input = input;
     }
@@ -131,8 +135,9 @@ public sealed partial class Renderer : IDisposable
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
         double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
         Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null,
-        string? initialScene = null, PipelineProfile? profile = null)
+        string? initialScene = null, PipelineProfile? profile = null, ILogger? logger = null)
     {
+        Logger = (logger ?? Log.Logger).ForContext<Renderer>();
         using var startup = profile?.Measure("startup.gpu_ms");
         Options = new(historySeconds);
         Options.Validate();
@@ -150,9 +155,10 @@ public sealed partial class Renderer : IDisposable
             using (var dxgiDevice = device.QueryInterface<IDXGIDevice>())
             using (var adapter = dxgiDevice.GetAdapter())
                 AdapterDescription = adapter.Description.Description;
-            Debug.WriteLine($"AEther GPU: {AdapterDescription}");
+            Logger.Information("Graphics adapter is {Adapter}", AdapterDescription);
             using (profile?.Measure("startup.gpu_output_ms"))
-                output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain));
+                output = Own(new ColorOutput(device, context, factory, window, width, height, highPrecisionOutput, attachSwapChain, logger: Logger));
+            Logger.Information("Graphics output is {Output}; dimensions {Width} x {Height}", output.Description, width, height);
             if (attachSwapChain == null)
                 factory.MakeWindowAssociation(window, WindowAssociationFlags.IgnoreAltEnter).CheckError();
             frameBuffer = Own(device.CreateBuffer((uint)Marshal.SizeOf<Frame>(), BindFlags.ConstantBuffer));
@@ -175,7 +181,8 @@ public sealed partial class Renderer : IDisposable
             context.RSSetState(rasterizer);
             Resize(width, height);
             using (profile?.Measure("startup.gpu_shaders_ms"))
-                if (!ReloadShaders()) throw new InvalidOperationException(ShaderError);
+                if (!ReloadShaders()) throw new InvalidOperationException(ShaderError, shaderException);
+            initializing = false;
         }
         catch { Dispose(); throw; }
     }
@@ -226,7 +233,9 @@ public sealed partial class Renderer : IDisposable
 
     public bool ReloadShaders() { lock (graphicsGate) return ReloadShadersCore(); }
 
-    public bool CompileScene(string name)
+    public bool CompileScene(string name) => CompileScene(name, reportFailure: true);
+
+    bool CompileScene(string name, bool reportFailure)
     {
         lock (graphicsGate)
         {
@@ -252,6 +261,8 @@ public sealed partial class Renderer : IDisposable
             catch (Exception error)
             {
                 ShaderError = error.Message;
+                shaderException = error;
+                if (reportFailure) ShaderFailed(error);
                 return false;
             }
         }
@@ -271,6 +282,7 @@ public sealed partial class Renderer : IDisposable
             catch (Exception error)
             {
                 ShaderError = error.Message;
+                ShaderFailed(error);
                 return false;
             }
         }
@@ -283,7 +295,7 @@ public sealed partial class Renderer : IDisposable
             var name = SceneName;
             if (!scenes.TryGetValue(name, out var scene)) return false;
             try { return ReloadSceneCore(name, scene); }
-            catch (Exception error) { ShaderError = error.Message; return false; }
+            catch (Exception error) { ShaderError = error.Message; ShaderFailed(error); return false; }
         }
     }
 
@@ -305,6 +317,7 @@ public sealed partial class Renderer : IDisposable
             fluid?.Dispose(); fluid = null;
         }
         ShaderError = null;
+        Logger.Information("Scene {Scene} reloaded", name);
         ShadersChanged?.Invoke(this, EventArgs.Empty);
         return true;
     }
@@ -353,10 +366,18 @@ public sealed partial class Renderer : IDisposable
             nextVertex?.Dispose(); nextOutput?.Dispose();
             foreach (var scene in nextScenes.Values) scene.Dispose();
             ShaderError = error.Message;
+            ShaderFailed(error);
             return false;
         }
         ShadersChanged?.Invoke(this, EventArgs.Empty);
+        if (!initializing) Logger.Information("Shaders reloaded; active scene {Scene}", SceneName);
         return true;
+    }
+
+    void ShaderFailed(Exception error)
+    {
+        shaderException = error;
+        if (!initializing) Logger.Error(error, "Shader operation failed; active scene remains {Scene}", SceneName);
     }
     public void Resize(int newWidth, int newHeight)
     {
@@ -462,7 +483,8 @@ public sealed partial class Renderer : IDisposable
     void DrawCanvas(double now, double dt)
     {
         var active = ActiveShader!;
-        if (!active.ProgramReady && !CompileScene(active.Name)) throw new InvalidOperationException(ShaderError);
+        if (!active.ProgramReady && !CompileScene(active.Name, reportFailure: false))
+            throw new InvalidOperationException(ShaderError, shaderException);
         active = ActiveShader!;
         if (active.Raster != null)
         {

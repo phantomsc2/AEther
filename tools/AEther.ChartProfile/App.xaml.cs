@@ -45,7 +45,7 @@ public partial class App : Application
         if (layout)
         {
             analysis = new AnalysisView(window);
-            settings = new SettingsPanel(new AudioPanel(), new ShaderPanel(), new DebugPanel(), analysis, view);
+            settings = new SettingsPanel(new AudioPanel(), new GraphicsPanel(), new ShaderPanel(), analysis, view);
         }
         window.Content = (UIElement?)settings ?? view;
         // Both the chart-only and layout probes use at least 1280x720 client pixels.

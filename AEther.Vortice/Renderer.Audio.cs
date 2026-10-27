@@ -4,6 +4,7 @@ using Vortice.Direct3D11;
 using Vortice.DXGI;
 using MapFlags = Vortice.Direct3D11.MapFlags;
 using Vortice.Mathematics;
+using Serilog;
 
 namespace AEther.Vortice;
 
@@ -68,7 +69,7 @@ public sealed partial class Renderer
     /// rebuilds dimension-dependent textures only. Device, swap chain, compiled
     /// scene programs and their parameter values survive every contract change.
     /// </summary>
-    public void RestartAudio(AnalysisOutput input, PipelineProfile? profile = null)
+    public void RestartAudio(AnalysisOutput input, PipelineProfile? profile = null, ILogger? logger = null)
     {
         lock (graphicsGate)
         {
@@ -83,6 +84,7 @@ public sealed partial class Renderer
             // Texture contents must be zeroed before any scene (including transport
             // preparation) can sample them. No old rows or queued packets survive.
             UploadAudio(reset: true);
+            if (logger != null) Logger = logger.ForContext<Renderer>();
         }
     }
 

@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using AEther.WinUI;
 using NUnit.Framework;
+using AEther.Logging;
+using Serilog;
 
 namespace AEther.Tests;
 
@@ -37,6 +39,7 @@ public class TimedSessionTests
         }
         public override void Stop() { Stops++; }
         public override void Dispose() { Disposals++; }
+        public void Fail(Exception error) => Stopped?.Invoke(this, error);
     }
 
     static AnalyzerOptions Options() => new() { MinFrequency = 100, MaxFrequency = 1000, TimeResolution = 100,
@@ -241,7 +244,11 @@ public class TimedSessionTests
     {
         using var window = new Window();
         var source = new Source();
-        var session = new Session(window.Handle, 1280, 720, source, Options());
+        var events = new EventLogStore();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(events).CreateLogger();
+        var id = events.BeginPipeline();
+        var session = new Session(window.Handle, 1280, 720, source, Options(),
+            logger: logger.ForContext("PipelineId", id), pipelineId: id);
         var failed = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         session.CaptureStopped += (_, error) => { if (error != null) failed.TrySetResult(error); };
         session.Analyzer.SamplesAnalyzed += (_, _) => throw new InvalidOperationException("subscriber failed");
@@ -249,10 +256,48 @@ public class TimedSessionTests
         {
             session.Start();
             Assert.That(await failed.Task.WaitAsync(TimeSpan.FromSeconds(5)), Is.TypeOf<InvalidOperationException>());
+            Assert.That(session.IsRunning, Is.False);
+            Assert.That(events.Snapshot().State, Is.EqualTo(IndicatorState.Error));
+            Assert.That(events.Snapshot().Events.Count(e => e.Event.Exception?.Message == "subscriber failed"), Is.EqualTo(1));
             await Assert.ThrowsAsync<InvalidOperationException>(async () => await session.StopAsync());
             Assert.That(source.TimedSubscribers, Is.Zero);
         }
         finally { session.Dispose(); }
+    }
+
+    [Test, Category("GPU")]
+    public async Task CaptureFailureAndRejectedRestartReflectWhetherAudioStillRuns()
+    {
+        using var shaders = new RestartShaders();
+        using var window = new Window();
+        var events = new EventLogStore();
+        using var logger = new LoggerConfiguration().WriteTo.Sink(events).CreateLogger();
+        var id = events.BeginPipeline();
+        var source = new Source { Emit = false };
+        await using var session = new Session(window.Handle, 1280, 720, source, Options(),
+            shaderDirectory: shaders.Root, initialScene: "Probe", logger: logger.ForContext("PipelineId", id), pipelineId: id);
+        session.Start();
+        events.PipelineStarted(id);
+        Assert.That(session.IsRunning, Is.True);
+        var rejected = new Source { Emit = false };
+        var invalid = Options(); invalid.TimeResolution = 0;
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await session.RestartAnalysisAsync(rejected, invalid));
+        Assert.That(session.IsRunning, Is.True, "Rejecting settings must not claim the retained audio pipeline stopped.");
+        var lateStop = source.Stopped;
+        var nextId = events.BeginPipeline();
+        var replacement = new Source { Emit = false };
+        await session.RestartAnalysisAsync(replacement, Options(), logger.ForContext("PipelineId", nextId), nextId);
+        session.Start();
+        events.PipelineStarted(nextId);
+        lateStop?.Invoke(source, new InvalidOperationException("late old capture failure"));
+        Assert.That(session.IsRunning, Is.True, "Retired capture callbacks must not stop the new generation.");
+        Assert.That(events.Snapshot().State, Is.EqualTo(IndicatorState.Neutral));
+        var error = new InvalidOperationException("capture device failed");
+        replacement.Fail(error);
+        Assert.That(session.IsRunning, Is.False);
+        Assert.That(events.Snapshot().State, Is.EqualTo(IndicatorState.Error));
+        Assert.That(events.Snapshot().Events.Single(e => e.Event.Exception == error).Event.Properties["PipelineBlocking"].ToString(), Is.EqualTo("True"));
+        rejected.Dispose();
     }
 
     [Test, Category("GPU")]

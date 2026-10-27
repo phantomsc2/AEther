@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using CommunityToolkit.WinUI.Controls;
+using Serilog;
 
 namespace AEther.WinUI;
 
@@ -17,18 +18,22 @@ public sealed class SettingsPanel : UserControl
     internal Grid AudioColumn { get; } = new() { RowSpacing = 8 };
     internal Grid SceneColumn { get; } = new() { RowSpacing = 8 };
     internal ScrollViewer AudioSettings { get; }
-    internal Expander Diagnostics { get; }
-    public bool DiagnosticsExpanded => Diagnostics.IsExpanded;
+    internal EventLogView EventLog { get; } = new();
     public string InputName => input.SelectedItem?.ToString() ?? Loopback;
-    public string? DeviceError { get; private set; }
     public event EventHandler? InputChanged;
     public event Action<string>? SceneSelected;
-    public event EventHandler? DiagnosticsRequested;
 
-    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, DebugPanel debug, AnalysisView analysis, FrameTimeView frameTime)
+    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameTimeView frameTime)
     {
         this.shaders = shaders;
-        Content = Columns;
+        var layout = new Grid();
+        layout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        layout.Children.Add(Columns);
+        Grid.SetRow(EventLog, 1);
+        layout.Children.Add(EventLog);
+        Content = layout;
+        SizeChanged += (_, _) => EventLog.SetAvailableHeight(ActualHeight);
         Columns.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -80,39 +85,12 @@ public sealed class SettingsPanel : UserControl
         // Row 2: Audio controls (left column)
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: input
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: AudioSettings
-        Diagnostics = new Expander
-        {
-            Header = "Debug", Content = debug, IsExpanded = false,
-            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-        };
-        Diagnostics.Expanding += (_, _) => DiagnosticsRequested?.Invoke(this, EventArgs.Empty);
         var audioStack = (StackPanel)audio.Content;
         audioStack.Children.Insert(0, audio.GainEditor);
-        audioStack.Children.Add(Diagnostics);
         AudioSettings = new ScrollViewer
         {
             Content = audio,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        };
-        Diagnostics.Expanding += (_, _) => CrashLog.Write("Debug panel expanding");
-        Diagnostics.Collapsed += (_, _) => CrashLog.Write("Debug panel collapsed");
-        AudioSettings.AddHandler(UIElement.PointerWheelChangedEvent,
-            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e) =>
-            {
-                if (!DiagnosticsExpanded) return;
-                var point = e.GetCurrentPoint(AudioSettings);
-                CrashLog.Write($"Debug scroll wheel: delta={point.Properties.MouseWheelDelta}; "
-                    + $"offset={AudioSettings.VerticalOffset:F1}; extent={AudioSettings.ExtentHeight:F1}; viewport={AudioSettings.ViewportHeight:F1}");
-            }), handledEventsToo: true);
-        AudioSettings.ViewChanging += (_, e) =>
-        {
-            if (DiagnosticsExpanded)
-                CrashLog.Write($"Debug scroll changing: current={AudioSettings.VerticalOffset:F1}; next={e.NextView.VerticalOffset:F1}; final={e.FinalView.VerticalOffset:F1}");
-        };
-        AudioSettings.ViewChanged += (_, e) =>
-        {
-            if (DiagnosticsExpanded && !e.IsIntermediate)
-                CrashLog.Write($"Debug scroll finished: offset={AudioSettings.VerticalOffset:F1}");
         };
         Grid.SetRow(input, 0); Grid.SetRow(AudioSettings, 1);
         AudioColumn.Children.Add(input);
@@ -140,15 +118,9 @@ public sealed class SettingsPanel : UserControl
         };
         input.Items.Add(Loopback);
         try { foreach (var name in Recorder.GetAvailableDeviceNames()) input.Items.Add(name); }
-        catch (Exception error) { DeviceError = error.Message; }
+        catch (Exception error) { Log.ForContext<SettingsPanel>().Warning(error, "Could not enumerate audio input devices"); }
         input.SelectedIndex = 0;
         input.SelectionChanged += (_, _) => InputChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void ShowDiagnostics()
-    {
-        Diagnostics.IsExpanded = true;
-        DispatcherQueue.TryEnqueue(() => Diagnostics.StartBringIntoView());
     }
 
     public void SetScenes(IEnumerable<string> names, string? selected)

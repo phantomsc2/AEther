@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Vortice.DXGI;
+using Serilog;
 
 namespace AEther.WinUI;
 
@@ -14,20 +15,30 @@ public sealed class Session : IDisposable, IAsyncDisposable
     public Analyzer Analyzer { get; private set; }
     public Renderer Renderer { get; }
     Task? stopTask;
-    int stopping;
+    sealed class RunState { public int Stopping, Running; }
+    RunState run = new();
+    SampleDataHandler? onAudio;
+    TimedSampleDataHandler? onTimedAudio;
+    EventHandler<SampleEvent<double>>? onAnalysis;
+    EventHandler<Exception?>? onStopped;
+    public bool IsRunning => Volatile.Read(ref run.Running) != 0;
+    public ILogger Logger { get; private set; }
+    public long PipelineId { get; private set; }
     public event EventHandler<Exception?>? CaptureStopped;
 
     public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options,
         string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null, string? initialScene = null,
-        GraphicsOptions? graphicsOptions = null)
+        GraphicsOptions? graphicsOptions = null, ILogger? logger = null, long pipelineId = 0)
     {
+        Logger = (logger ?? Log.Logger).ForContext<Session>();
+        PipelineId = pipelineId;
         this.source = source;
         Analyzer = new(source.Format, options);
         options = Analyzer.Options;
         try
         {
             Renderer = new(handle, width, height, options.GetAnalysisOutput(source.Format), shaderDirectory,
-                attachSwapChain: attachSwapChain, initialScene: initialScene, profile: Analyzer.Profile, graphicsOptions: graphicsOptions);
+                attachSwapChain: attachSwapChain, initialScene: initialScene, profile: Analyzer.Profile, graphicsOptions: graphicsOptions, logger: Logger);
         }
         catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
         Subscribe();
@@ -35,15 +46,31 @@ public sealed class Session : IDisposable, IAsyncDisposable
 
     void Subscribe()
     {
-        if (source is ITimedSampleSource timed) timed.TimedDataAvailable += OnTimedAudio;
-        else source.DataAvailable += OnAudio;
-        source.Stopped += OnStopped;
-        Analyzer.SamplesAnalyzed += OnAnalysis;
+        // Callbacks retain the analyzer, logger and running state of their own generation.
+        var analyzer = Analyzer;
+        var logger = Logger;
+        var state = run;
+        var input = source;
+        onAudio = (_, data) => analyzer.PostSampleSpan(data, new AudioPacketTiming(Quality: AudioTimestampQuality.Estimated));
+        onTimedAudio = (_, data, timing) => analyzer.PostSampleSpan(data, timing);
+        onAnalysis = (_, data) => Renderer.PostAudio(data, input.Format.ChannelCount);
+        onStopped = (_, error) =>
+        {
+            if (Volatile.Read(ref state.Stopping) != 0) return;
+            Interlocked.Exchange(ref state.Running, 0);
+            if (error != null) logger.ForContext("PipelineBlocking", true).Error(error, "Audio capture stopped");
+            else logger.Information("Audio capture completed");
+            if (ReferenceEquals(state, run)) CaptureStopped?.Invoke(this, error);
+        };
+        if (source is ITimedSampleSource timed) timed.TimedDataAvailable += onTimedAudio;
+        else source.DataAvailable += onAudio;
+        source.Stopped += onStopped;
+        Analyzer.SamplesAnalyzed += onAnalysis;
     }
 
     /// <summary>Restarts capture and every CPU stage, retaining compiled graphics programs.
     /// The caller owns nextSource until this method succeeds. Call Start afterwards.</summary>
-    public async Task RestartAnalysisAsync(SampleSource nextSource, AnalyzerOptions options)
+    public async Task RestartAnalysisAsync(SampleSource nextSource, AnalyzerOptions options, ILogger? logger = null, long pipelineId = 0)
     {
         if (ReferenceEquals(source, nextSource))
             throw new ArgumentException("Use a fresh capture source for the new analysis generation.", nameof(nextSource));
@@ -51,7 +78,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
         try
         {
             await StopAsync();
-            Renderer.RestartAudio(next.Options.GetAnalysisOutput(nextSource.Format), next.Profile);
+            Renderer.RestartAudio(next.Options.GetAnalysisOutput(nextSource.Format), next.Profile, logger);
             DisposeSource();
         }
         catch
@@ -63,38 +90,49 @@ public sealed class Session : IDisposable, IAsyncDisposable
         source = nextSource;
         sourceDisposed = false;
         Analyzer = next;
+        Logger = (logger ?? Logger).ForContext<Session>();
+        PipelineId = pipelineId;
         stopTask = null;
-        Interlocked.Exchange(ref stopping, 0);
+        run = new();
         Subscribe();
     }
 
-    void OnAudio(object? sender, ReadOnlySpan<byte> data) => Analyzer.PostSampleSpan(data,
-        new AudioPacketTiming(Quality: AudioTimestampQuality.Estimated));
-    void OnTimedAudio(object? sender, ReadOnlySpan<byte> data, AudioPacketTiming timing) => Analyzer.PostSampleSpan(data, timing);
-    void OnAnalysis(object? sender, SampleEvent<double> data) => Renderer.PostAudio(data, source.Format.ChannelCount);
-    void OnStopped(object? sender, Exception? error) => CaptureStopped?.Invoke(this, error);
-    public void Start() { _ = ObserveAnalysisAsync(Analyzer); Analyzer.Start(); source.Start(); }
-    async Task ObserveAnalysisAsync(Analyzer analyzer)
+    public void Start()
+    {
+        var state = run;
+        Interlocked.Exchange(ref state.Running, 1);
+        _ = ObserveAnalysisAsync(Analyzer, Logger, state);
+        try { Analyzer.Start(); source.Start(); }
+        catch { Interlocked.Exchange(ref state.Running, 0); throw; }
+    }
+    async Task ObserveAnalysisAsync(Analyzer analyzer, ILogger logger, RunState state)
     {
         try { await analyzer.Completion.ConfigureAwait(false); }
         catch (Exception error)
         {
-            if (Volatile.Read(ref stopping) == 0 && ReferenceEquals(analyzer, Analyzer)) CaptureStopped?.Invoke(this, error);
+            if (Volatile.Read(ref state.Stopping) == 0)
+            {
+                Interlocked.Exchange(ref state.Running, 0);
+                logger.ForContext("PipelineBlocking", true).Error(error, "Audio analysis failed");
+                if (ReferenceEquals(state, run)) CaptureStopped?.Invoke(this, error);
+            }
         }
     }
     public Task StopAsync() => stopTask ??= StopCoreAsync();
     async Task StopCoreAsync()
     {
-        Interlocked.Exchange(ref stopping, 1);
-        if (source is ITimedSampleSource timed) timed.TimedDataAvailable -= OnTimedAudio;
-        else source.DataAvailable -= OnAudio;
-        source.Stopped -= OnStopped;
+        Interlocked.Exchange(ref run.Stopping, 1);
+        Interlocked.Exchange(ref run.Running, 0);
+        Logger.Information("Stopping audio pipeline");
+        if (source is ITimedSampleSource timed) timed.TimedDataAvailable -= onTimedAudio;
+        else source.DataAvailable -= onAudio;
+        source.Stopped -= onStopped;
         try
         {
             try { source.Stop(); }
             finally { Analyzer.Stop(); await Analyzer.Completion; }
         }
-        finally { Analyzer.SamplesAnalyzed -= OnAnalysis; }
+        finally { Analyzer.SamplesAnalyzed -= onAnalysis; }
     }
     void DisposeSource()
     {

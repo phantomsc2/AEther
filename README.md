@@ -48,8 +48,19 @@ There is no outer Audio expander.
 The Scene picker starts empty above HistorySeconds. Selection opens the
 canvas and reveals dynamic shader parameters, Reload and Reset defaults below it.
 Only the Audio settings and shader settings scroll, independently inside their
-panels. The overall window and analysis view never scroll. Debug remains a separate
-window for status and timing text.
+panels. The overall window and analysis view never scroll. The bottom status strip
+expands into a bounded application event log with timestamps, severity, source and
+messages. Yellow means a warning or nonblocking error occurred;
+red means a failure prevented the audio pipeline from running. The indicator stays
+latched until a successful audio pipeline restart, including through collapse and
+recovery. Restarts preserve event history and any warnings from the new startup.
+
+Serilog writes Information and above to compact structured JSON (`.clef`) in
+`%LocalAppData%\AEther\logs`, asynchronously, rolling daily or at 10 MiB with
+14 files retained. The UI keeps the latest 2,000 events for this application run.
+Startup timings and configuration belong in these logs; continuous frame time,
+GPU time and estimated audio age remain in the live graphics. Detailed GPU stages
+remain available through explicit profiling and are not enabled by opening events.
 
 Audio edits restart analysis while retaining graphics. Drag the canvas to choose
 its display; monitor settings follow its location, and restarts leave it there.
@@ -68,7 +79,7 @@ canvas closed; hiding or minimizing the hub stops its drawing work. An explicit
 Scenes are the top-level files in `AEther.Vortice/Shaders/Scenes/*.hlsl`. Shared code
 lives in `Shaders/Common`. Save source files in the IDE to reload without a .NET build;
 adding or deleting a scene updates the shader selector. Failed reloads retain the
-previous programs and controls, with diagnostics in the shader panel and Debug window. Published apps
+previous programs and controls, with diagnostics in the shader panel and event log. Published apps
 use the `Shaders` tree beside the executable.
 
 Editable values are reflected from `cbuffer Parameters`; nested structs become groups,

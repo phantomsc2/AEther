@@ -6,6 +6,8 @@ using Microsoft.UI.Xaml.Media;
 using Vortice.DXGI;
 using Windows.Graphics;
 using Windows.System;
+using AEther.Logging;
+using Serilog;
 
 namespace AEther.WinUI;
 
@@ -19,7 +21,6 @@ public sealed class MainWindow : Window
     readonly CanvasWindow canvasWindow;
     readonly AudioPanel audio = new();
     readonly GraphicsPanel graphics = new();
-    readonly DebugPanel debug = new();
     readonly ShaderPanel shaders = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
     readonly DispatcherTimer reloadTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -34,9 +35,14 @@ public sealed class MainWindow : Window
     bool changingSession, renderCanvas, renderDebug, canvasDismissed;
     long restartVersion;
     RectInt32 windowBounds;
+    PipelineWarnings? pipelineWarnings;
+    DateTimeOffset nextHealthSample;
+    bool? presentationEstimated;
+    ILogger Logger => session?.Logger ?? Log.ForContext<MainWindow>();
 
     public MainWindow(Func<SampleSource>? createSource = null, string? shaderDirectory = null)
     {
+        ApplicationLog.Initialize();
         this.createSource = createSource;
         this.shaderDirectory = shaderDirectory;
         Title = "AEther";
@@ -49,7 +55,7 @@ public sealed class MainWindow : Window
         canvasWindow = new(root);
         analysis = new(this);
         frameTime = new(this);
-        settings = new(audio, graphics, shaders, debug, analysis, frameTime);
+        settings = new(audio, graphics, shaders, analysis, frameTime);
         Content = settings;
         settings.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
         UpdateTitleBarColors();
@@ -71,7 +77,6 @@ public sealed class MainWindow : Window
             await RestartAsync();
             if (!closing && !canvasDismissed && session != null) canvasWindow.Show();
         };
-        if (settings.DeviceError is { } error) { debug.SetStatus(error); settings.ShowDiagnostics(); }
         canvasWindow.SetOwner(this);
         shaders.SceneChanged += (_, _) => RefreshScenePicker();
         canvasWindow.Dismissed += (_, _) =>
@@ -91,29 +96,22 @@ public sealed class MainWindow : Window
             {
                 RefreshScenePicker();
                 shaders.SetStatus(error.Message);
-                debug.SetStatus(error.Message);
-                settings.ShowDiagnostics();
+                Logger.Error(error, "Could not select scene {Scene}", name);
             }
         };
         settings.InputChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
-        settings.DiagnosticsRequested += (_, _) =>
-        {
-            if (session != null) session.Analyzer.Profile.DetailedGpuTimings = true;
-            debug.SetTiming(session);
-        };
-        settings.Diagnostics.Collapsed += (_, _) =>
-        {
-            if (session != null) session.Analyzer.Profile.DetailedGpuTimings = false;
-        };
         audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
         graphics.SettingsChanged += (_, _) =>
         {
-            try { session?.Renderer.SetGraphicsOptions(graphics.Options); }
+            try
+            {
+                session?.Renderer.SetGraphicsOptions(graphics.Options);
+                Logger.Information("Graphics configuration changed to {@GraphicsOptions}", graphics.Options);
+            }
             catch (Exception error)
             {
                 graphics.SetOptions(session?.Renderer.Options ?? new());
-                debug.SetStatus(error.Message);
-                settings.ShowDiagnostics();
+                Logger.Error(error, "Could not apply graphics configuration");
             }
         };
         ToolWindow.AddShortcut(settings, VirtualKey.F11, ToggleFullscreen);
@@ -135,35 +133,32 @@ public sealed class MainWindow : Window
         {
             reloadTimer.Stop();
             if (session == null || closing) return;
-            var changedPath = pendingShaderPath;
-            pendingShaderPath = null;
-            var sceneDirectory = Path.Combine(session.Renderer.ShaderDirectory, "Scenes");
-            var sameScenes = Directory.EnumerateFiles(sceneDirectory, "*.hlsl")
-                .Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.Ordinal)
-                .SetEquals(session.Renderer.Scenes.Select(scene => scene.Name));
-            if (!sameScenes) shaders.Reload();
-            else if (changedPath != null && Path.GetDirectoryName(changedPath) == sceneDirectory)
+            try
             {
-                session.Renderer.ReloadScene(Path.GetFileNameWithoutExtension(changedPath));
-                shaders.RefreshParameters();
+                var changedPath = pendingShaderPath;
+                pendingShaderPath = null;
+                var sceneDirectory = Path.Combine(session.Renderer.ShaderDirectory, "Scenes");
+                var sameScenes = Directory.EnumerateFiles(sceneDirectory, "*.hlsl")
+                    .Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.Ordinal)
+                    .SetEquals(session.Renderer.Scenes.Select(scene => scene.Name));
+                if (!sameScenes) shaders.Reload();
+                else if (changedPath != null && Path.GetDirectoryName(changedPath) == sceneDirectory)
+                {
+                    session.Renderer.ReloadScene(Path.GetFileNameWithoutExtension(changedPath));
+                    shaders.RefreshParameters();
+                }
+                else if (changedPath != null && session.Renderer.ReloadActiveScene()) shaders.RefreshParameters();
+                else shaders.Reload();
+                analysis.RefreshOutput(resetError: true);
+                if (session.Renderer.ShaderError is { } error) shaders.SetStatus(error);
             }
-            else if (changedPath != null && session.Renderer.ReloadActiveScene()) shaders.RefreshParameters();
-            else shaders.Reload();
-            analysis.RefreshOutput(resetError: true);
-            if (session.Renderer.ShaderError is { } error)
-            {
-                shaders.SetStatus(error);
-                debug.SetStatus(error);
-                settings.ShowDiagnostics();
-            }
+            catch (Exception error) { Logger.Error(error, "Could not reload changed shaders"); }
         };
         // A Tick already queued before Stop can still arrive during window teardown.
         timingTimer.Tick += (_, _) =>
         {
             if (closing) return;
-            if (analysis.Error is { } error) debug.SetStatus($"Analysis view: {error}");
-            if (settings.DiagnosticsExpanded && AppWindow.IsVisible
-                && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized }) debug.SetTiming(session);
+            SamplePipelineHealth();
             UpdateRendering();
         };
         timingTimer.Start();
@@ -216,9 +211,15 @@ public sealed class MainWindow : Window
         var version = ++restartVersion;
         await sessionGate.WaitAsync();
         changingSession = true;
+        long pipelineId = 0;
+        ILogger attemptLogger = Logger;
         try
         {
             if (closing || version != restartVersion) return;
+            pipelineId = ApplicationLog.Events.BeginPipeline();
+            attemptLogger = Log.ForContext<MainWindow>().ForContext("PipelineId", pipelineId);
+            attemptLogger.Information("Starting audio pipeline with input {Input}; retaining graphics {RetainGraphics}; options {@Options}",
+                settings.InputName, preserveGraphics, audio.Options);
             if (preserveGraphics && session is { } current)
             {
                 renderWorker?.Dispose(); renderWorker = null;
@@ -226,8 +227,8 @@ public sealed class MainWindow : Window
                 try
                 {
                     replacement = CreateSource();
-                    await current.RestartAnalysisAsync(replacement, audio.Options);
-                    current.Analyzer.Profile.DetailedGpuTimings = settings.DiagnosticsExpanded;
+                    await current.RestartAnalysisAsync(replacement, audio.Options, attemptLogger, pipelineId);
+                    current.Analyzer.Profile.DetailedGpuTimings = false;
                     frameTime.Attach(current.Analyzer.Profile);
                     replacement = null; // Session now owns the new source.
                     if (closing) return;
@@ -235,6 +236,7 @@ public sealed class MainWindow : Window
                     analysis.RefreshOutput();
                     current.Start();
                     StartRenderWorker(current);
+                    PipelineStarted(current);
                     UpdateRendering();
                 }
                 catch
@@ -257,12 +259,12 @@ public sealed class MainWindow : Window
             {
                 var size = CanvasSize;
                 next = new(WinRT.Interop.WindowNative.GetWindowHandle(canvasWindow), size.Width, size.Height,
-                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene, graphics.Options);
+                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene, graphics.Options, attemptLogger, pipelineId);
                 next.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
-                next.Analyzer.Profile.DetailedGpuTimings = settings.DiagnosticsExpanded;
+                next.Analyzer.Profile.DetailedGpuTimings = false;
                 frameTime.Attach(next.Analyzer.Profile);
                 analysis.Attach(next.Renderer);
                 shaders.Attach(next.Renderer);
@@ -275,9 +277,10 @@ public sealed class MainWindow : Window
                 watcher.Created += ShaderChanged;
                 watcher.Renamed += ShaderChanged;
                 watcher.Deleted += ShaderChanged;
+                watcher.Error += WatcherFailed;
                 watcher.EnableRaisingEvents = true;
-                debug.SetStatus("Running. F11 or double-click canvas: fullscreen.");
                 StartRenderWorker(next);
+                PipelineStarted(next);
                 UpdateRendering();
             }
             catch
@@ -292,7 +295,12 @@ public sealed class MainWindow : Window
                 throw;
             }
         }
-        catch (Exception error) { debug.SetStatus(error.Message); settings.ShowDiagnostics(); }
+        catch (Exception error)
+        {
+            attemptLogger.ForContext("PipelineBlocking", session?.IsRunning != true)
+                .Error(error, "Could not start audio pipeline");
+            ApplicationLog.Events.PipelineFailed(pipelineId);
+        }
         finally { changingSession = false; sessionGate.Release(); UpdateRendering(); }
     }
 
@@ -302,8 +310,8 @@ public sealed class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (closing || !ReferenceEquals(sender, session)) return;
-            debug.SetStatus(error.Message);
-            settings.ShowDiagnostics();
+            // Session logs the original exception on the failing thread.
+            UpdateRendering();
         });
     }
 
@@ -325,6 +333,8 @@ public sealed class MainWindow : Window
         renderDebug = analysis.CanRender;
         var drawCanvas = renderCanvas;
         var drawDebug = renderDebug;
+        var analyzer = current.Analyzer;
+        var logger = current.Logger;
         // Present(1) can follow the slower primary monitor. On Windows 11 use
         // compositor cadence with Present(0), retaining swap-chain backpressure
         // before sampling audio rather than stalling on the output draw afterward.
@@ -332,12 +342,73 @@ public sealed class MainWindow : Window
         renderWorker = new(!drawCanvas && drawDebug ? current.Renderer.DebugFrameReady! : current.Renderer.FrameReady,
             () => current.Renderer.Render(syncInterval: compositorPacing ? 0u : 1u,
                 renderCanvas: drawCanvas, renderDebug: drawDebug),
-            error => DispatcherQueue.TryEnqueue(() => RenderFailed(error)),
+            error =>
+            {
+                logger.ForContext("PipelineBlocking", true).Error(error, "Rendering failed; stopping audio pipeline");
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!closing && ReferenceEquals(session, current) && ReferenceEquals(current.Analyzer, analyzer))
+                        _ = StopAfterRenderFailureAsync(current, current.PipelineId);
+                });
+            },
             waitForTick: compositorPacing ? CompositorClock.Wait : null,
-            waited: milliseconds => current.Analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
+            waited: milliseconds => analyzer.Profile.Record("render.pacing_wait_ms", milliseconds));
     }
 
     string? pendingShaderPath;
+
+    void PipelineStarted(Session current)
+    {
+        pipelineWarnings = new(current.Logger);
+        presentationEstimated = null;
+        nextHealthSample = DateTimeOffset.MinValue;
+        var format = current.Analyzer.Format;
+        current.Logger.Information("Audio configured: {SampleRate} Hz, {Channels} channels, analysis {AnalysisRate} Hz; history delay {HistoryDelayMilliseconds} ms; graphics {@GraphicsOptions}",
+            format.SampleRate, format.ChannelCount,
+            format.SampleRate / (double)(format.SampleRate / current.Analyzer.Options.TimeResolution),
+            current.Renderer.Audio.PresentationDelay * 1000, current.Renderer.Options);
+        foreach (var stage in new[] { "startup.analysis_ms", "startup.dft_ms", "startup.smoother_ms", "startup.splitter_ms",
+            "startup.gpu_ms", "startup.gpu_device_ms", "startup.gpu_output_ms", "startup.gpu_shaders_ms", "startup.gpu_audio_ms" })
+            if (current.Analyzer.Profile.Recent(stage) is { } timing)
+                current.Logger.Information("Startup stage {Stage} took {Milliseconds} ms", stage, timing.Mean);
+        if (current.IsRunning)
+        {
+            current.Logger.Information("Audio pipeline started; graphics programs retained {GraphicsRetained}",
+                !current.Analyzer.Profile.Recent("startup.gpu_ms").HasValue);
+            ApplicationLog.Events.PipelineStarted(current.PipelineId);
+        }
+        else ApplicationLog.Events.PipelineFailed(current.PipelineId);
+    }
+
+    void SamplePipelineHealth()
+    {
+        if (changingSession || session is not { IsRunning: true } current || pipelineWarnings == null) return;
+        var now = DateTimeOffset.UtcNow;
+        if (now < nextHealthSample) return;
+        nextHealthSample = now.AddSeconds(1);
+        var analyzer = current.Analyzer;
+        pipelineWarnings.Sample(analyzer.DroppedInputCount, analyzer.DroppedAudioMilliseconds,
+            current.Renderer.Audio.DroppedRows, analyzer.LastTimestampQuality);
+        var estimated = current.Renderer.LastPresentationTimestamp.HasValue;
+        if (presentationEstimated != estimated)
+        {
+            if (presentationEstimated == true && !estimated)
+                current.Logger.Warning("Presentation clock estimate unavailable; using host clock");
+            else current.Logger.Information("Presentation timing uses {Clock}", estimated ? "compositor estimate" : "host clock");
+            presentationEstimated = estimated;
+        }
+    }
+
+    void WatcherFailed(object sender, ErrorEventArgs e)
+    {
+        var error = e.GetException();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (closing || !ReferenceEquals(sender, watcher)) return;
+            // The watcher survives audio-only restarts, so this is an application event.
+            Log.ForContext<MainWindow>().Warning(error, "Shader file watcher failed; automatic reload may be unavailable");
+        });
+    }
 
     async Task StopSessionAsync()
     {
@@ -348,6 +419,7 @@ public sealed class MainWindow : Window
         renderWorker?.Dispose(); renderWorker = null;
         analysis.Attach(null);
         shaders.Attach(null);
+        pipelineWarnings = null;
         if (previous == null) return;
         previous.CaptureStopped -= CaptureStopped;
         await previous.DisposeAsync();
@@ -402,16 +474,15 @@ public sealed class MainWindow : Window
 
     void RenderFailed(Exception error)
     {
-        debug.SetStatus(error.Message);
-        settings.ShowDiagnostics();
-        _ = StopAfterRenderFailureAsync();
+        Logger.ForContext("PipelineBlocking", true).Error(error, "Rendering failed; stopping audio pipeline");
+        _ = StopAfterRenderFailureAsync(session, session?.PipelineId ?? 0);
     }
 
-    async Task StopAfterRenderFailureAsync()
+    async Task StopAfterRenderFailureAsync(Session? failed, long pipelineId)
     {
         await sessionGate.WaitAsync();
-        try { await StopSessionAsync(); }
-        catch (Exception error) { if (!closing) debug.SetStatus(error.Message); }
+        try { if (ReferenceEquals(session, failed) && session?.PipelineId == pipelineId) await StopSessionAsync(); }
+        catch (Exception error) { Log.Error(error, "Could not stop failed pipeline"); }
         finally { sessionGate.Release(); }
     }
 
@@ -419,6 +490,7 @@ public sealed class MainWindow : Window
     {
         var background = (SolidColorBrush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
         settings.Columns.Background = background;
+        settings.Background = background;
         var foreground = settings.ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
         var titleBar = AppWindow.TitleBar;
         titleBar.BackgroundColor = titleBar.InactiveBackgroundColor = background.Color;
@@ -452,7 +524,7 @@ public sealed class MainWindow : Window
         timingTimer.Stop();
         await sessionGate.WaitAsync();
         try { await StopSessionAsync(); }
-        catch (Exception error) { System.Diagnostics.Debug.WriteLine(error); }
+        catch (Exception error) { Log.Error(error, "Could not stop pipeline during shutdown"); }
         finally
         {
             sessionGate.Release();
