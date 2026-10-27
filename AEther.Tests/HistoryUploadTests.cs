@@ -13,6 +13,73 @@ namespace AEther.Tests;
 [TestFixture]
 public class HistoryUploadTests
 {
+    [TestCase(.08), TestCase(.02), TestCase(.0399), TestCase(.01), TestCase(60), Category("GPU"), NonParallelizable, Apartment(ApartmentState.STA)]
+    public void HistoryChangesClearOnlyRetentionAndAcceptTheNextRow(double seconds)
+    {
+        using var fixture = new Fixture();
+        using var renderer = fixture.Renderer(2, 100, .04);
+        renderer.PostAudio(Input(2, 10), 2);
+        renderer.Render(false);
+        var audio = renderer.Audio;
+        var program = renderer.ActiveShader!.Program.Pixel;
+        var ready = renderer.FrameReady;
+        var views = (Array)typeof(Renderer).GetField("views", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(renderer)!;
+        var originalViews = views.Cast<object>().ToArray();
+        int originalRows = audio.Rows;
+        var spectrum = audio.Spectrum.Select(c => c.ToArray()).ToArray();
+        var musicalTime = audio.MusicalTime;
+        var velocity = audio.MusicalVelocity;
+        var components = audio.Components;
+        var flash = audio.Flash;
+        var now = audio.Now;
+        renderer.PostAudio(Input(2, 11), 2); // Pending input must survive reconfiguration.
+        renderer.SetGraphicsOptions(new(seconds));
+        Assert.That(renderer.Audio, Is.SameAs(audio));
+        Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
+        Assert.That(renderer.FrameReady, Is.SameAs(ready));
+        Assert.That(views.GetValue(0), Is.SameAs(originalViews[0]));
+        Assert.That(views.GetValue(1), Is.SameAs(originalViews[1]));
+        if (audio.Rows == originalRows)
+        {
+            Assert.That(views.GetValue(2), Is.SameAs(originalViews[2]));
+            Assert.That(views.GetValue(3), Is.SameAs(originalViews[3]));
+        }
+        Assert.That(audio.Now, Is.EqualTo(now));
+        Assert.That(audio.MusicalTime, Is.EqualTo(musicalTime));
+        Assert.That(audio.MusicalVelocity, Is.EqualTo(velocity));
+        Assert.That(audio.Components, Is.EqualTo(components));
+        Assert.That(audio.Flash, Is.EqualTo(flash));
+        Assert.That(audio.Spectrum, Is.EqualTo(spectrum));
+        Assert.That(audio.AvailableSpan, Is.Zero);
+        Assert.That(audio.Seconds, Is.EqualTo(seconds));
+        Assert.That(audio.Rows, Is.EqualTo(Math.Clamp((int)Math.Ceiling(seconds * 100) + 2, 4, 16384)));
+        Assert.That(renderer.ReadHistogram(0), Is.All.Zero);
+        Assert.That(renderer.ReadHistogram(1), Is.All.Zero);
+        var history = audio.History;
+        renderer.SetGraphicsOptions(new(seconds));
+        Assert.That(audio.History, Is.SameAs(history), "An unchanged setting must not clear or allocate.");
+        renderer.Render(false);
+        Assert.That(audio.DroppedRows, Is.Zero);
+        Assert.That(renderer.ReadHistogram(0).Any(v => v > 0), Is.True);
+        Assert.That(renderer.ReadHistogram(1).Any(v => v > 0), Is.True);
+        Assert.That(audio.MusicalTime, Is.GreaterThanOrEqualTo(musicalTime));
+    }
+
+    [TestCase(double.NaN), TestCase(double.PositiveInfinity), TestCase(double.NegativeInfinity)]
+    [TestCase(0), TestCase(.009), TestCase(60.001), Category("GPU"), NonParallelizable, Apartment(ApartmentState.STA)]
+    public void InvalidGraphicsDurationLeavesTheRendererUntouched(double seconds)
+    {
+        using var fixture = new Fixture();
+        using var renderer = fixture.Renderer(1, 100, .04);
+        renderer.PostAudio(Input(1, 0), 2); renderer.Render(false);
+        var history = renderer.Audio.History;
+        var pixels = renderer.ReadHistogram(0);
+        Assert.Throws<ArgumentOutOfRangeException>(() => renderer.SetGraphicsOptions(new(seconds)));
+        Assert.That(renderer.Options.HistorySeconds, Is.EqualTo(.04));
+        Assert.That(renderer.Audio.History, Is.SameAs(history));
+        Assert.That(renderer.ReadHistogram(0), Is.EqualTo(pixels));
+    }
+
     [Test, Category("GPU"), NonParallelizable, Apartment(ApartmentState.STA)]
     public void CollapsedDiagnosticsOnlyQueriesFrameTotalsWhileCsvKeepsStageDetail()
     {

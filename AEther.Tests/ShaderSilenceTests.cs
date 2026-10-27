@@ -85,7 +85,7 @@ public class ShaderSilenceTests
         renderer.ResizeDebugOutput(200, 100);
         clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
         Assert.That(renderer.ReadDebugPixels().Length, Is.EqualTo(200 * 100 * 4));
-        renderer.RestartAudio(new(new Domain(30, 12, 8), 60, 1));
+        renderer.RestartAudio(new(new Domain(30, 12, 8), 60));
         clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
         Assert.That(renderer.ReadDebugPixels().Where((_, i) => i % 4 != 3), Is.All.Zero);
         var path = Path.Combine(shaders.Path, "Scenes", "Debug.hlsl");
@@ -182,7 +182,7 @@ public class ShaderSilenceTests
                         "The antialiased total edge must not become a white cap.");
             }
         }
-        debug.RestartAudio(new(new Domain(30, 12, bands), 24, 1));
+        debug.RestartAudio(new(new Domain(30, 12, bands), 24));
         clock.Advance(); debug.Render(false);
         Assert.That(debug.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero);
     }
@@ -392,7 +392,7 @@ public class ShaderSilenceTests
             if (restartAudio)
             {
                 var program = renderer.ActiveShader!.Program.Pixel;
-                renderer.RestartAudio(new(new Domain(30, 12, Bands), 60, 1));
+                renderer.RestartAudio(new(new Domain(30, 12, Bands), 60));
                 Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
             }
 
@@ -651,6 +651,31 @@ public class ShaderSilenceTests
             if (component == 2) Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True, "B drives launch velocity.");
             else Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero, "S and T cannot drive launch velocity.");
         }
+    }
+
+    [Test, Category("GPU")]
+    public void GraphicsHistoryChangesPreserveFluidAndShaderState()
+    {
+        using var shaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        var clock = new FluidClock(120);
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        clock.Frame = 1; renderer.Render(false);
+        var fluid = renderer.Fluid;
+        fluid.SeedFilamentsForCheck(speed: 2);
+        var dye = fluid.ReadDye();
+        var material = fluid.ReadAge();
+        var velocity = fluid.ReadVelocity();
+        var program = renderer.ActiveShader!.Program.Pixel;
+        renderer.SetGraphicsOptions(new(.5));
+        Assert.That(renderer.Fluid, Is.SameAs(fluid));
+        Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
+        Assert.That(fluid.ReadDye(), Is.EqualTo(dye));
+        Assert.That(fluid.ReadAge(), Is.EqualTo(material));
+        Assert.That(fluid.ReadVelocity(), Is.EqualTo(velocity));
+        clock.Frame = 2; renderer.Render(false);
+        Assert.That(fluid.LastMaterialSteps, Is.EqualTo(1), "Transport continues on the next display frame.");
     }
 
     [TestCase(false), TestCase(true), Category("GPU")]

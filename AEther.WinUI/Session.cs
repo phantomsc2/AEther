@@ -18,15 +18,16 @@ public sealed class Session : IDisposable, IAsyncDisposable
     public event EventHandler<Exception?>? CaptureStopped;
 
     public Session(IntPtr handle, int width, int height, SampleSource source, AnalyzerOptions options,
-        string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null, string? initialScene = null)
+        string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null, string? initialScene = null,
+        GraphicsOptions? graphicsOptions = null)
     {
         this.source = source;
         Analyzer = new(source.Format, options);
         options = Analyzer.Options;
         try
         {
-            Renderer = new(handle, width, height, options.GetGraphicsInput(source.Format), shaderDirectory,
-                attachSwapChain: attachSwapChain, initialScene: initialScene, profile: Analyzer.Profile);
+            Renderer = new(handle, width, height, options.GetAnalysisOutput(source.Format), shaderDirectory,
+                attachSwapChain: attachSwapChain, initialScene: initialScene, profile: Analyzer.Profile, graphicsOptions: graphicsOptions);
         }
         catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
         Subscribe();
@@ -50,7 +51,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
         try
         {
             await StopAsync();
-            Renderer.RestartAudio(next.Options.GetGraphicsInput(nextSource.Format), next.Profile);
+            Renderer.RestartAudio(next.Options.GetAnalysisOutput(nextSource.Format), next.Profile);
             DisposeSource();
         }
         catch

@@ -382,9 +382,10 @@ spanning orders of magnitude, and rounding for discrete choices.
 The application opens a resizable hub with two equal-width columns. Input, Gain
 (dB), and Analysis are pinned on the left. DFT, Pipeline, Smoother and Splitter
 appear below as independently expandable blocks, all closed initially, inside one
-shared bounded scroller. HistorySeconds is in Pipeline; the GPU category and outer
+shared bounded scroller. HistorySeconds is in the right column below the scene
+selector and updates graphics history without restarting analysis; the GPU category and outer
 Audio expander are removed. The unlabeled
-Scene picker is pinned on the right and starts empty. Selecting a scene opens the
+Scene picker is pinned above HistorySeconds on the right and starts empty. Selecting a scene opens the
 canvas and shows Reload, Reset defaults, the parameter tree and shader diagnostics
 below the picker. Shader settings scroll independently of Audio settings; the hub
 and Analysis view do not scroll. Debug remains a separate status/timing window.

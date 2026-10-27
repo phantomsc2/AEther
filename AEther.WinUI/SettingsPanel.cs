@@ -25,7 +25,7 @@ public sealed class SettingsPanel : UserControl
     public event Action<string>? SceneSelected;
     public event EventHandler? DiagnosticsRequested;
 
-    public SettingsPanel(AudioPanel audio, ShaderPanel shaders, DebugPanel debug, AnalysisView analysis, FrameTimeView frameTime)
+    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, DebugPanel debug, AnalysisView analysis, FrameTimeView frameTime)
     {
         this.shaders = shaders;
         Content = Columns;
@@ -122,11 +122,14 @@ public sealed class SettingsPanel : UserControl
 
         // Row 2: Video controls (right column)
         SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: scenePicker
-        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: shaders
+        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 1: graphics
+        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 2: shaders
         AutomationProperties.SetName(scenePicker, "Scene");
+        Grid.SetRow(graphics, 1);
         Grid.SetRow(scenePicker, 0);
-        Grid.SetRow(shaders, 1);
+        Grid.SetRow(shaders, 2);
         SceneColumn.Children.Add(scenePicker);
+        SceneColumn.Children.Add(graphics);
         SceneColumn.Children.Add(shaders);
         Grid.SetRow(SceneColumn, 2);
         Grid.SetColumn(SceneColumn, 2);

@@ -52,7 +52,8 @@ public sealed partial class Renderer : IDisposable
     // Reference cadence for repeatable before/after developer profiling only.
     internal bool FixedFluidMaterialCadence { get; set; }
     public AudioHistory Audio { get; private set; }
-    public GraphicsInput? Input { get; private set; }
+    public AnalysisOutput? Input { get; private set; }
+    public GraphicsOptions Options { get; private set; }
     public string SceneName { get; private set; } = "Mandelbox";
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
     public ShaderScene? ActiveShader { get { lock (graphicsGate) return scenes.GetValueOrDefault(SceneName); } }
@@ -118,10 +119,10 @@ public sealed partial class Renderer : IDisposable
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
-    public Renderer(IntPtr window, int width, int height, GraphicsInput input,
+    public Renderer(IntPtr window, int width, int height, AnalysisOutput input,
         string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null,
-        string? initialScene = null, PipelineProfile? profile = null)
-        : this(window, width, height, input.Domain.Length, input.AnalysisRate, input.HistorySeconds,
+        string? initialScene = null, PipelineProfile? profile = null, GraphicsOptions? graphicsOptions = null)
+        : this(window, width, height, input.Domain.Length, input.AnalysisRate, graphicsOptions?.HistorySeconds ?? 2,
             shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile)
     {
         Input = input;
@@ -133,6 +134,8 @@ public sealed partial class Renderer : IDisposable
         string? initialScene = null, PipelineProfile? profile = null)
     {
         using var startup = profile?.Measure("startup.gpu_ms");
+        Options = new(historySeconds);
+        Options.Validate();
         Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
         Audio.Profile = profile;
         if (initialScene != null) SceneName = initialScene;

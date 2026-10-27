@@ -42,8 +42,10 @@ properties use standard WinUI controls with the system's default appearance.
 The resizable hub has two equal-width columns. Input, Gain and the live analysis
 view are pinned on the left. Below them, DFT, Pipeline, Smoother and Splitter are
 separate expandable blocks, all closed initially, inside one shared scroller.
-HistorySeconds belongs to Pipeline; there is no GPU block or outer Audio expander.
-The right column starts with an empty Scene picker. Selection opens the
+HistorySeconds is a graphics setting in the right column, below the scene selector
+and above shader controls. Changing it clears the histogram without restarting audio.
+There is no outer Audio expander.
+The Scene picker starts empty above HistorySeconds. Selection opens the
 canvas and reveals dynamic shader parameters, Reload and Reset defaults below it.
 Only the Audio settings and shader settings scroll, independently inside their
 panels. The overall window and analysis view never scroll. Debug remains a separate

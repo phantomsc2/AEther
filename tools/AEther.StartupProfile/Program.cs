@@ -37,7 +37,7 @@ internal static class Program
                 {
                     var rate = format.SampleRate / (double)(format.SampleRate / options.TimeResolution);
                     var renderer = new Renderer(handle, 1280, 720, options.Domain.Length, rate,
-                        options.HistorySeconds, initialScene: scene, profile: profile);
+                        initialScene: scene, profile: profile);
                     try
                     {
                         if (run == 0) Console.WriteLine($"{(swift ? "SWIFT" : "DFT")} / {scene}: {renderer.AdapterDescription}; {renderer.OutputDescription}; {options.Domain.Length} bins");

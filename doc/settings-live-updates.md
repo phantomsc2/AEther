@@ -6,7 +6,7 @@ FP16 scRGB, 1280x720, 48 kHz stereo, default 97 frequency bins,
 
 ## Current update path
 
-`SettingsWindow` builds its analyzer editors from `AnalyzerOptions` property
+`AudioPanel` builds its analyzer editors from `AnalyzerOptions` property
 metadata. Each committed edit raises `SettingsChanged`; the host pauses rendering,
 stops capture, drains analysis, and constructs a fresh capture source and analyzer.
 `Session.RestartAnalysisAsync` resets the graphics audio handoff while retaining
@@ -17,14 +17,14 @@ graph. Invalid options are rejected before the active analyzer is stopped.
 
 Pointer sliders now preview their numeric value during the gesture and commit
 once on release (also on cancellation/capture loss). A gesture ending at its
-original value does not commit. The same helper handles analyzer and shader
+original value does not commit. The same helper handles analyzer, graphics, and shader
 sliders. Keyboard/automation changes and typed numbers still apply immediately.
 
 Each analyzer now copies its input options at construction. Previously the UI and
 running analyzer shared the same mutable object: most settings were copied into
 fields, but `MaxInputAgeMilliseconds` was read from that object during processing,
 and timing UI could describe settings newer than the running pipeline. Session
-construction now uses the analyzer's copy for GPU dimensions/rate/history too.
+construction now uses the analyzer's copy for graphics bin meaning and publication rate; history duration belongs to graphics.
 
 GPU authoring has a separate existing path: scene selection compiles the selected
 scene if needed; shader parameter edits update its parameter block; file changes
@@ -34,16 +34,33 @@ implementation preserves that behavior. Shader parameters remain live GPU edits.
 
 ## Graphics rebuild contract
 
-`GraphicsInput` is the immutable analysis-to-graphics DTO, resolved by
-`AnalyzerOptions.GetGraphicsInput(format)` from the running analyzer's settings
+`AnalysisOutput` is the immutable analysis-to-graphics DTO, resolved by
+`AnalyzerOptions.GetAnalysisOutput(format)` from the running analyzer's settings
 copy. It extends the original `Domain` concept with the **actual** publication
-rate and history duration:
+rate. Graphics retention is configured separately:
 
 | Contract field | Why graphics needs it | Rebuild rule |
 | --- | --- | --- |
 | `Domain` | Bin count and meaning (minimum frequency and bins per octave) | Reset history on a new generation; reallocate textures when band count changes |
 | `AnalysisRate` | Map rows to time; size history and handoff buffers | Reset history; reallocate textures if the computed row count changes |
-| `HistorySeconds` | Retention and age-based history lookup | Reset history; reallocate textures if the computed row count changes |
+
+`GraphicsOptions.HistorySeconds` belongs to `AEther.Vortice`, defaults to 2 seconds,
+and accepts finite values from 0.01 to 60 seconds. Its control is always visible
+in the right column below the scene selector and above shader parameters. Pointer slider
+edits commit on release; numeric edits apply immediately.
+
+`Renderer.SetGraphicsOptions` clears retained histogram data and reallocates only
+histogram textures when their row count changes. Same-row-count edits still clear
+history and update the visual time scale; an unchanged value does nothing. CPU/GPU
+allocations are prepared before committing the new configuration. Failed edits
+leave the active setting intact and restore the UI to its effective value.
+
+Capture, analysis, mailboxes, source timing, live spectrum, feature envelopes,
+musical clocks, fluid state, compiled shaders and swap chains survive a graphics
+edit. The existing AudioHistory instance is retained. Analysis restarts preserve
+the graphics duration. The main window keeps the selection across scene changes
+and session recreation, without adding disk persistence. The existing row cap
+and history-dependent shader decay are unchanged.
 
 The rate is `sampleRate / floor(sampleRate / requestedRate)`, rather than the
 requested rate. Domain equality includes bin meaning, even when texture width is
@@ -52,11 +69,11 @@ the handoff already normalizes capture to two RGBA channels (mono is mirrored).
 
 Backend selection, DFT window/SIMD, SWIFT tuning, Kalman implementation/mode/noise,
 splitter windows, gain and input queue policy do **not** change the graphics
-contract. Their output layout and units stay compatible. Every accepted edit still
+contract. Their output layout and units stay compatible. Every accepted analysis edit still
 restarts all CPU analysis and clears history; this avoids mixing results produced
 with different algorithms/settings without introducing per-filter lifecycle rules.
 
-`Renderer.RestartAudio` consumes only `GraphicsInput`, not the analyzer settings.
+`Renderer.RestartAudio` consumes only `AnalysisOutput`, not the analyzer settings.
 It resets row counters, pending packets, spectral envelopes and CPU history,
 uploads zeros to the audio textures, and swaps in a new profiling destination.
 Only band/row dimensions trigger texture reallocation. The renderer clock keeps

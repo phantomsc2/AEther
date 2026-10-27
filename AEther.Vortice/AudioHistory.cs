@@ -25,6 +25,7 @@ public sealed class AudioHistory
     bool haveCursor, haveState, haveConsumed, live;
     long dropped;
     int dirtyStart, dirtyCount;
+    bool historyCleared;
 
     internal readonly record struct HistoryRange(int Start, int Count);
 
@@ -58,10 +59,10 @@ public sealed class AudioHistory
     public PipelineProfile? Profile { get; set; }
     public double PresentationDelay { get; }
     public int Bands { get; }
-    public int Rows { get; }
-    public double Seconds { get; }
+    public int Rows { get; private set; }
+    public double Seconds { get; private set; }
     /// <summary>Physical ring storage. Direct edits require InvalidateHistory before rendering.</summary>
-    public float[][] History { get; }
+    public float[][] History { get; private set; }
     public float[][] Spectrum { get; }
     /// <summary>Newest analysis block consumed this display frame; zero when no new block became due.</summary>
     internal float[][] BlockSpectrum { get; }
@@ -82,7 +83,7 @@ public sealed class AudioHistory
     double HostNow => AudioClock.Seconds(AudioClock.Now(timeProvider));
     public float Shift => (float)(((position % Rows + Rows) % Rows + .5) / Rows);
     public float TimeScale => (float)(Seconds * rate / Rows);
-    public float AvailableSpan => (float)(Math.Max(0, position - Math.Max(firstRow, newestRow - Rows + 1)) / Rows);
+    public float AvailableSpan => historyCleared ? 0 : (float)(Math.Max(0, position - Math.Max(firstRow, newestRow - Rows + 1)) / Rows);
     public float NewestAge => (float)(Math.Max(0, position - newestRow) / Rows);
     public long DroppedRows => Interlocked.Read(ref dropped);
     public long LatestCaptureTimestamp { get; private set; }
@@ -114,13 +115,33 @@ public sealed class AudioHistory
         ResidualSpectrum = [new float[bands], new float[bands]];
         handoffRows = Math.Max(2, (int)Math.Ceiling((HandoffSeconds + presentationDelay) * rate));
         pending = Mailbox(handoffRows);
-        // Legacy/offline fixtures can seed an entire history without pretending it is live capture.
+        // Offline input has an initially history-sized mailbox. Retention edits preserve its queue and capacity.
         offline = Mailbox(Math.Min(32768, Rows * 2));
     }
 
     // A new analysis generation rewinds row numbers, but must not rewind the renderer clock.
-    internal AudioHistory Restart(GraphicsInput input) => new(input.Domain.Length, input.AnalysisRate,
-        input.HistorySeconds, PresentationDelay, timeProvider, started);
+    internal AudioHistory Restart(AnalysisOutput input) => new(input.Domain.Length, input.AnalysisRate,
+        Seconds, PresentationDelay, timeProvider, started);
+
+    internal sealed record HistoryConfiguration(double Seconds, int Rows, float[][] History);
+
+    // Allocate first so a failed GPU allocation can leave the current history intact.
+    internal HistoryConfiguration PrepareHistory(double seconds)
+    {
+        new GraphicsOptions(seconds).Validate();
+        int rows = (int)Math.Clamp(Math.Ceiling((seconds + PresentationDelay) * rate) + 2, 4, 16384);
+        return new(seconds, rows, [new float[4 * Bands * rows], new float[4 * Bands * rows]]);
+    }
+
+    internal void CommitHistory(HistoryConfiguration configuration)
+    {
+        Seconds = configuration.Seconds;
+        Rows = configuration.Rows;
+        History = configuration.History;
+        firstRow = newestRow + 1;
+        historyCleared = true;
+        InvalidateHistory();
+    }
 
     Channel<Row> Mailbox(int capacity) => Channel.CreateBounded<Row>(new BoundedChannelOptions(capacity)
     {
@@ -297,6 +318,7 @@ public sealed class AudioHistory
         }
         if (!row.Live) haveHistoryClock = false;
         if (newestRow < 0 && row.Live) firstRow = row.Index;
+        if (historyCleared) { firstRow = row.Index; historyCleared = false; }
         long clearFrom = Math.Max(newestRow + 1, row.Index - Rows + 1);
         MarkHistoryRows((int)((clearFrom % Rows + Rows) % Rows), (int)(row.Index - clearFrom + 1));
         for (long clear = clearFrom; clear <= row.Index; clear++)

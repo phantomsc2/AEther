@@ -8,10 +8,10 @@ namespace AEther
         /// <summary>Independent settings for one pipeline generation. All option values are scalars.</summary>
         public AnalyzerOptions Copy() => (AnalyzerOptions)MemberwiseClone();
 
-        public GraphicsInput GetGraphicsInput(SampleFormat format)
+        public AnalysisOutput GetAnalysisOutput(SampleFormat format)
         {
             Validate(format);
-            return new(Domain, format.SampleRate / (double)(format.SampleRate / TimeResolution), HistorySeconds);
+            return new(Domain, format.SampleRate / (double)(format.SampleRate / TimeResolution));
         }
 
         [Browsable(false)]
@@ -63,10 +63,6 @@ namespace AEther
         [DefaultValue(DFTWindow.Hann)]
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
-
-        [Category("Pipeline")]
-        [Description("Seconds of spectral history retained for age-based shader lookups. Longer values allow longer fluid tails and use more memory.")]
-        public double HistorySeconds { get; set; } = 2;
 
         [Category("Input")]
         [DisplayName("Input gain (dB)")]
@@ -139,8 +135,6 @@ namespace AEther
             if (UseSwift && SwiftTuning.Bandwidth(highestFrequency, FrequencyResolution, SwiftWidthScale) >= format.SampleRate)
                 throw new ArgumentOutOfRangeException(nameof(SwiftWidthScale),
                     "SWIFT bandwidth must be smaller than the sample rate. Reduce width or increase bins per octave.");
-            if (!double.IsFinite(HistorySeconds) || HistorySeconds <= 0 || HistorySeconds > 60)
-                throw new ArgumentOutOfRangeException(nameof(HistorySeconds));
             ValidateSmoother();
             ValidateSplitter(FrequencyResolution, format.SampleRate / (double)(format.SampleRate / TimeResolution));
         }

@@ -18,6 +18,7 @@ public sealed class MainWindow : Window
     readonly FrameTimeView frameTime;
     readonly CanvasWindow canvasWindow;
     readonly AudioPanel audio = new();
+    readonly GraphicsPanel graphics = new();
     readonly DebugPanel debug = new();
     readonly ShaderPanel shaders = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
@@ -48,7 +49,7 @@ public sealed class MainWindow : Window
         canvasWindow = new(root);
         analysis = new(this);
         frameTime = new(this);
-        settings = new(audio, shaders, debug, analysis, frameTime);
+        settings = new(audio, graphics, shaders, debug, analysis, frameTime);
         Content = settings;
         settings.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
         UpdateTitleBarColors();
@@ -105,6 +106,16 @@ public sealed class MainWindow : Window
             if (session != null) session.Analyzer.Profile.DetailedGpuTimings = false;
         };
         audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
+        graphics.SettingsChanged += (_, _) =>
+        {
+            try { session?.Renderer.SetGraphicsOptions(graphics.Options); }
+            catch (Exception error)
+            {
+                graphics.SetOptions(session?.Renderer.Options ?? new());
+                debug.SetStatus(error.Message);
+                settings.ShowDiagnostics();
+            }
+        };
         ToolWindow.AddShortcut(settings, VirtualKey.F11, ToggleFullscreen);
         ToolWindow.AddShortcut(root, VirtualKey.F11, ToggleFullscreen);
         root.DoubleTapped += (_, e) => { ToggleFullscreen(); e.Handled = true; };
@@ -246,7 +257,7 @@ public sealed class MainWindow : Window
             {
                 var size = CanvasSize;
                 next = new(WinRT.Interop.WindowNative.GetWindowHandle(canvasWindow), size.Width, size.Height,
-                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene);
+                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene, graphics.Options);
                 next.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
                 next.CaptureStopped += CaptureStopped;
                 next.Start();

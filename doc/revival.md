@@ -74,7 +74,7 @@ SIMD now uses the same Hann window as scalar processing, with scalar fallback on
 Tests compare recursive output to a direct windowed DFT through startup and ring wrap, check sine
 gain/phase stability and splitter silence/attack behavior.
 
-Histogram history defaults to one second (`HistorySeconds`).
+Histogram history defaults to two seconds (`GraphicsOptions.HistorySeconds`), owned by graphics.
 A continuous fractional playhead follows the analysis sample rate, independent of capture packet
 bursts. History presentation delay defaults to zero. An optional positive
 `HistoryPresentationDelayMilliseconds` supplies adjacent recorded rows for time interpolation when

@@ -9,12 +9,66 @@ namespace AEther.Vortice;
 
 public sealed partial class Renderer
 {
+    /// <summary>Clear retained graphics history without restarting capture, analysis, or simulation.</summary>
+    public void SetGraphicsOptions(GraphicsOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
+        lock (graphicsGate)
+        {
+            if (Options == options) return;
+            var configuration = Audio.PrepareHistory(options.HistorySeconds);
+            if (configuration.Rows != Audio.Rows) ReplaceHistogramTextures(configuration.Rows);
+            Audio.CommitHistory(configuration);
+            Options = options;
+            UploadAudio(reset: true);
+        }
+    }
+
+    void ReplaceHistogramTextures(int rows)
+    {
+        var nextTextures = new ID3D11Texture2D[2];
+        var nextViews = new ID3D11ShaderResourceView[2];
+        try
+        {
+            for (int channel = 0; channel < 2; channel++)
+            {
+                nextTextures[channel] = device.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = (uint)Audio.Bands, Height = (uint)rows, MipLevels = 1, ArraySize = 1,
+                    Format = Format.R32G32B32A32_Float, SampleDescription = new(1, 0),
+                    Usage = ResourceUsage.Default, BindFlags = BindFlags.ShaderResource,
+                });
+                nextTextures[channel].DebugName = $"Histogram{channel}";
+                nextViews[channel] = device.CreateShaderResourceView(nextTextures[channel]);
+            }
+        }
+        catch
+        {
+            for (int channel = 0; channel < 2; channel++)
+            { nextViews[channel]?.Dispose(); nextTextures[channel]?.Dispose(); }
+            throw;
+        }
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
+        for (int channel = 0; channel < 2; channel++)
+        {
+            int slot = channel + 2;
+            resources.Remove(views[slot]); views[slot].Dispose();
+            resources.Remove(textures[slot]); textures[slot].Dispose();
+            textures[slot] = Own(nextTextures[channel]);
+            views[slot] = Own(nextViews[channel]);
+            namedTextures[$"Histogram{channel}"] = views[slot];
+            namedTextures[$"FilteredHistogram{channel}"] = views[slot];
+        }
+    }
+
     /// <summary>
     /// Call after draining the old analyzer. Resets its row/history generation;
     /// rebuilds dimension-dependent textures only. Device, swap chain, compiled
     /// scene programs and their parameter values survive every contract change.
     /// </summary>
-    public void RestartAudio(GraphicsInput input, PipelineProfile? profile = null)
+    public void RestartAudio(AnalysisOutput input, PipelineProfile? profile = null)
     {
         lock (graphicsGate)
         {

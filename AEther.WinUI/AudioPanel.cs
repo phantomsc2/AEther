@@ -170,7 +170,6 @@ public sealed class AudioPanel : UserControl
         nameof(AnalyzerOptions.TimeResolution) => (16, 1024),
         nameof(AnalyzerOptions.SwiftWidthScale) => (.25, 8),
         nameof(AnalyzerOptions.SwiftImbalance) => (0, 1),
-        nameof(AnalyzerOptions.HistorySeconds) => (.01, 60),
         nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
         nameof(AnalyzerOptions.LogAccelerationIntensity) => (0, 1e3),
         nameof(AnalyzerOptions.ComplexAccelerationIntensity) => (0, 1e3),

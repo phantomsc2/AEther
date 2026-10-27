@@ -43,6 +43,32 @@ public class TimedSessionTests
         MaxInputAgeMilliseconds = 1000 };
 
     [Test, Category("GPU")]
+    public async Task GraphicsHistoryChangesDoNotRestartCaptureOrAnalysis()
+    {
+        using var shaders = new RestartShaders();
+        using var window = new Window();
+        var source = new Source { Emit = false };
+        await using var session = new Session(window.Handle, 1280, 720, source, Options(),
+            shaderDirectory: shaders.Root, initialScene: "Probe", graphicsOptions: new(1));
+        session.Start();
+        var analyzer = session.Analyzer;
+        var renderer = session.Renderer;
+        var output = renderer.Input;
+        foreach (double seconds in new[] { 3.0, .25, 2 })
+        {
+            renderer.SetGraphicsOptions(new(seconds));
+            Assert.That(session.Analyzer, Is.SameAs(analyzer));
+            Assert.That(analyzer.Completion.IsCompleted, Is.False);
+            Assert.That(source.Starts, Is.EqualTo(1));
+            Assert.That(source.Stops, Is.Zero);
+            Assert.That(source.Disposals, Is.Zero);
+            Assert.That(source.TimedSubscribers, Is.EqualTo(1));
+            Assert.That(renderer.Input, Is.SameAs(output));
+            Assert.That(renderer.Audio.Seconds, Is.EqualTo(seconds));
+        }
+    }
+
+    [Test, Category("GPU")]
     public async Task AnalysisRestartsKeepCompiledProgramsAcrossEveryGraphicsContractChange()
     {
         using var shaders = new RestartShaders();
@@ -52,6 +78,7 @@ public class TimedSessionTests
             shaderDirectory: shaders.Root, initialScene: "Probe");
         session.Start();
         var renderer = session.Renderer;
+        renderer.SetGraphicsOptions(new(3));
         var frameReady = renderer.FrameReady;
         var originalAnalyzer = session.Analyzer;
         var rejectedSource = new Source { Emit = false };
@@ -88,7 +115,6 @@ public class TimedSessionTests
             ("domain meaning", o => { o.MinFrequency = 200; o.MaxFrequency = 2000; }, 8000, 1),
             ("bands", o => o.FrequencyResolution = 24, 8000, 1),
             ("actual tick rate", o => o.TimeResolution = 101, 8000, 1),
-            ("history", o => o.HistorySeconds = 3, 8000, 1),
             ("sample rate/channels", _ => { }, 44100, 2),
         ];
         foreach (var edit in edits)
@@ -108,7 +134,9 @@ public class TimedSessionTests
             Assert.That(source.Starts, Is.EqualTo(1), edit.Name);
             Assert.That(session.Renderer, Is.SameAs(renderer), edit.Name);
             Assert.That(renderer.FrameReady, Is.SameAs(frameReady), edit.Name);
-            Assert.That(renderer.Input, Is.EqualTo(options.GetGraphicsInput(source.Format)), edit.Name);
+            Assert.That(renderer.Input, Is.EqualTo(options.GetAnalysisOutput(source.Format)), edit.Name);
+            Assert.That(renderer.Options.HistorySeconds, Is.EqualTo(3), edit.Name);
+            Assert.That(renderer.Audio.Seconds, Is.EqualTo(3), edit.Name);
             Assert.That(renderer.ActiveShader, Is.SameAs(scene), edit.Name);
             Assert.That(scene.Program.Pixel, Is.SameAs(program), edit.Name);
             Assert.That(renderer.Scenes.Single(s => s.Name == "Other").Program.Pixel, Is.SameAs(other), edit.Name);

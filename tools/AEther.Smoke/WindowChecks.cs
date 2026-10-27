@@ -10,6 +10,7 @@ using AEther.WinUI;
 using AEther.Smoke;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
@@ -42,6 +43,7 @@ internal static partial class Program
                 var audio = Field<AudioPanel>("audio");
                 var debug = Field<DebugWindow>("debug");
                 var shaderPanel = Field<ShaderPanel>("shaders");
+                var graphics = Field<GraphicsPanel>("graphics");
                 bool shadersVisible() => shaderPanel.Visibility == Visibility.Visible;
                 Session? original = null;
                 Task? restart = null;
@@ -100,10 +102,12 @@ internal static partial class Program
                                     - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1
                                     || Math.Abs(analysis.ActualHeight - settings.AudioColumn.RowDefinitions[2].ActualHeight) > 1)
                                     throw new Exception("Collapsed audio categories must remain bottom-aligned below a filling analysis view.");
-                                var pipeline = audioGroups.Single(g => g.Header?.ToString() == "Pipeline");
-                                if (!LogicalChildren((DependencyObject)pipeline.Content).OfType<NumberBox>()
-                                    .Any(n => n.Header?.ToString() == "HistorySeconds"))
-                                    throw new Exception("HistorySeconds must belong to Pipeline.");
+                                if (Descendants(audio).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds"))
+                                    throw new Exception("HistorySeconds must not belong to audio settings.");
+                                if (!Descendants(graphics).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds")
+                                    || graphics.Visibility != Visibility.Visible || Grid.GetRow(graphics) >= Grid.GetRow(shaderPanel)
+                                    || !settings.SceneColumn.Children.Contains(graphics))
+                                    throw new Exception("HistorySeconds must remain visible above scene-specific controls in the right column.");
                                 foreach (var group in audioGroups) group.IsExpanded = true;
                                 debug.Show();
                                 stage++;
