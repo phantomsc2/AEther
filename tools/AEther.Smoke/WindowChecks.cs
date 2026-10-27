@@ -13,6 +13,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using Windows.System;
@@ -35,6 +36,7 @@ internal static partial class Program
             };
             app.StartChecks = () =>
             {
+                CheckEventSummary();
                 var started = 0;
                 var host = new MainWindow(() => new SyntheticSource(() => started++), shaders);
                 T Field<T>(string name) => (T)typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
@@ -93,6 +95,10 @@ internal static partial class Program
                                 var shortcuts = ((UserControl)canvasWindow.Content).KeyboardAccelerators;
                                 if (shortcuts.Count != 1 || shortcuts[0].Key != VirtualKey.F11)
                                     throw new Exception("The canvas must have only the F11 shortcut.");
+                                if (((UserControl)canvasWindow.Content).KeyboardAcceleratorPlacementMode != KeyboardAcceleratorPlacementMode.Hidden
+                                    || settings.KeyboardAcceleratorPlacementMode != KeyboardAcceleratorPlacementMode.Hidden
+                                    || settings.KeyboardAccelerators.Count != 1 || settings.KeyboardAccelerators[0].Key != VirtualKey.F11)
+                                    throw new Exception("Fullscreen shortcuts must remain available without automatic tooltips.");
                                 host.Activate();
                                 var audioGroups = ((StackPanel)audio.Content).Children.OfType<Expander>().ToArray();
                                 if (canvasWindow.IsVisible || shadersVisible() || audioGroups.Any(g => g.IsExpanded))
@@ -111,9 +117,11 @@ internal static partial class Program
                                     throw new Exception("HistorySeconds must remain visible above scene-specific controls in the right column.");
                                 foreach (var group in audioGroups) group.IsExpanded = true;
                                 if (eventLog.IsExpanded) throw new Exception("Event log must start collapsed.");
+                                for (int i = 0; i < 24; i++) current.Logger.Information("Window event table history {Index}", i);
                                 Task.Run(() => current.Logger.Warning("Window warning smoke")).GetAwaiter().GetResult();
                                 eventLog.Refresh();
-                                if (eventLog.State != IndicatorState.Warning) throw new Exception("Background warnings must set yellow status.");
+                                if (!eventLog.StatusSummary.Children.Any(item => AutomationProperties.GetName(item).StartsWith("Warning:")))
+                                    throw new Exception("Background warnings must appear in the event counts.");
                                 eventLog.Toggle();
                                 stage++;
                                 break;
@@ -123,9 +131,14 @@ internal static partial class Program
                                     || eventLog.Events.ActualHeight <= 0 || eventLog.ActualHeight > settings.ActualHeight * .4 + 40
                                     || !Descendants(eventLog.Events).OfType<TextBlock>().Any(t => t.Text.Contains("Window warning smoke")))
                                     throw new Exception("The event log must display real rows in a bounded panel beside the live graphics.");
-                                var warningRow = eventLog.Events.Items.Cast<EventLogView.EventRow>().First(row => row.Summary.Contains("Window warning smoke"));
-                                if (eventLog.Events.ContainerFromItem(warningRow) is not ListViewItem warningItem || warningItem.ActualHeight >= 40)
-                                    throw new Exception("Single-line event rows must use a compact ListView item height.");
+                                if (eventLog.Events.Columns.Count != 4
+                                    || !eventLog.Events.Columns.Select(c => c.Header?.ToString()).SequenceEqual(new[] { "Time", "Severity", "Source", "Message" })
+                                    || !Descendants(eventLog.Events).OfType<FontIcon>().Any(icon => AutomationProperties.GetName(icon) == "Warning"))
+                                    throw new Exception("Event table must expose four aligned columns and icon-only severity cells.");
+                                var latestMessage = Descendants(eventLog.Events).OfType<TextBlock>().First(t => t.Text.Contains("Window warning smoke"));
+                                var latestY = latestMessage.TransformToVisual(eventLog.Events).TransformPoint(default).Y;
+                                if (latestY < 0 || latestY + latestMessage.ActualHeight > eventLog.Events.ActualHeight)
+                                    throw new Exception("Opening a long event table must scroll to the latest event.");
                                 if (analysis.ActualHeight <= 0
                                     || Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
                                         - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1)
@@ -240,10 +253,13 @@ internal static partial class Program
                                 if (Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene").SelectedItem != null)
                                     throw new Exception("Closing canvas must clear scene selection.");
                                 host.Activate();
+                                current.Logger.Warning("Window warning before collapse");
+                                eventLog.Refresh();
+                                var countsBeforeCollapse = eventLog.StatusSummary.Children.Select(AutomationProperties.GetName).ToArray();
                                 eventLog.Toggle();
                                 eventLog.Refresh();
-                                if (eventLog.State != IndicatorState.Warning)
-                                    throw new Exception("Collapsing event history cleared its sticky warning.");
+                                if (!countsBeforeCollapse.SequenceEqual(eventLog.StatusSummary.Children.Select(AutomationProperties.GetName)))
+                                    throw new Exception("Collapsing the event log changed its severity counts.");
                                 eventLog.Toggle();
                                 stage++;
                                 if (added != null) File.Delete(added);
@@ -346,10 +362,10 @@ internal static partial class Program
                                 typeof(MainWindow).GetMethod("RenderFailed", BindingFlags.Instance | BindingFlags.NonPublic)!
                                     .Invoke(host, new object[] { new Exception("Window smoke diagnostic") });
                                 eventLog.Refresh();
-                                if (eventLog.IsExpanded || eventLog.State != IndicatorState.Error
-                                    || !eventLog.Events.Items.Cast<EventLogView.EventRow>().Any(row => row.Summary.Contains("Window smoke diagnostic")))
-                                    throw new Exception("Rendering failures must set red and show the exception message without opening the log.");
-                                if (!eventLog.Events.Items.Cast<EventLogView.EventRow>().Any(row => row.Summary.Contains("Window warning smoke")))
+                                if (eventLog.IsExpanded || !eventLog.StatusSummary.Children.Any(item => AutomationProperties.GetName(item).StartsWith("Error:"))
+                                    || !((IEnumerable<EventLogView.EventRow>)eventLog.Events.ItemsSource).Any(row => row.Message.Contains("Window smoke diagnostic")))
+                                    throw new Exception("Rendering failures must be counted and logged without opening the event table.");
+                                if (!((IEnumerable<EventLogView.EventRow>)eventLog.Events.ItemsSource).Any(row => row.Message.Contains("Window warning smoke")))
                                     throw new Exception("Restarts must preserve earlier event history.");
                                 stage++;
                                 NativeClose(host);
@@ -375,6 +391,33 @@ internal static partial class Program
             yield return child;
             foreach (var descendant in Descendants(child)) yield return descendant;
         }
+    }
+
+    static void CheckEventSummary()
+    {
+        var store = new EventLogStore(5);
+        using var log = new Serilog.LoggerConfiguration().WriteTo.Sink(store).CreateLogger();
+        var view = new EventLogView(store);
+        view.Refresh();
+        if (view.StatusSummary.Children.Count != 0)
+            throw new Exception("An empty event history must have an empty status summary.");
+        log.Information("Info");
+        log.Warning("First warning");
+        log.Warning("Second warning");
+        log.Error("Error");
+        log.Fatal("Fatal");
+        view.Refresh();
+        var pairs = view.StatusSummary.Children.Cast<StackPanel>().ToArray();
+        if (!pairs.Select(AutomationProperties.GetName).SequenceEqual(new[] { "Fatal: 1", "Error: 1", "Warning: 2", "Information: 1" })
+            || pairs.Any(pair => pair.Children.Count != 2 || pair.Children[0] is not FontIcon || pair.Children[1] is not TextBlock)
+            || !pairs.Select(pair => ((TextBlock)pair.Children[1]).Text).SequenceEqual(new[] { "1", "1", "2", "1" }))
+            throw new Exception("The status bar must show one icon and count per retained severity.");
+        log.Information("New info 1");
+        log.Information("New info 2");
+        log.Information("New info 3");
+        view.Refresh();
+        if (!view.StatusSummary.Children.Select(AutomationProperties.GetName).SequenceEqual(new[] { "Fatal: 1", "Error: 1", "Information: 3" }))
+            throw new Exception("Severity counts must follow history eviction and omit empty categories.");
     }
 
     static void NativeClose(Window window) => SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(window), 0x10, IntPtr.Zero, IntPtr.Zero);

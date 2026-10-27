@@ -299,7 +299,6 @@ public sealed class MainWindow : Window
         {
             attemptLogger.ForContext("PipelineBlocking", session?.IsRunning != true)
                 .Error(error, "Could not start audio pipeline");
-            ApplicationLog.Events.PipelineFailed(pipelineId);
         }
         finally { changingSession = false; sessionGate.Release(); UpdateRendering(); }
     }
@@ -375,9 +374,7 @@ public sealed class MainWindow : Window
         {
             current.Logger.Information("Audio pipeline started; graphics programs retained {GraphicsRetained}",
                 !current.Analyzer.Profile.Recent("startup.gpu_ms").HasValue);
-            ApplicationLog.Events.PipelineStarted(current.PipelineId);
         }
-        else ApplicationLog.Events.PipelineFailed(current.PipelineId);
     }
 
     void SamplePipelineHealth()

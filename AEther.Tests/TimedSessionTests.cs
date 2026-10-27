@@ -257,7 +257,6 @@ public class TimedSessionTests
             session.Start();
             Assert.That(await failed.Task.WaitAsync(TimeSpan.FromSeconds(5)), Is.TypeOf<InvalidOperationException>());
             Assert.That(session.IsRunning, Is.False);
-            Assert.That(events.Snapshot().State, Is.EqualTo(IndicatorState.Error));
             Assert.That(events.Snapshot().Events.Count(e => e.Event.Exception?.Message == "subscriber failed"), Is.EqualTo(1));
             await Assert.ThrowsAsync<InvalidOperationException>(async () => await session.StopAsync());
             Assert.That(source.TimedSubscribers, Is.Zero);
@@ -277,7 +276,6 @@ public class TimedSessionTests
         await using var session = new Session(window.Handle, 1280, 720, source, Options(),
             shaderDirectory: shaders.Root, initialScene: "Probe", logger: logger.ForContext("PipelineId", id), pipelineId: id);
         session.Start();
-        events.PipelineStarted(id);
         Assert.That(session.IsRunning, Is.True);
         var rejected = new Source { Emit = false };
         var invalid = Options(); invalid.TimeResolution = 0;
@@ -288,14 +286,12 @@ public class TimedSessionTests
         var replacement = new Source { Emit = false };
         await session.RestartAnalysisAsync(replacement, Options(), logger.ForContext("PipelineId", nextId), nextId);
         session.Start();
-        events.PipelineStarted(nextId);
         lateStop?.Invoke(source, new InvalidOperationException("late old capture failure"));
         Assert.That(session.IsRunning, Is.True, "Retired capture callbacks must not stop the new generation.");
-        Assert.That(events.Snapshot().State, Is.EqualTo(IndicatorState.Neutral));
+        Assert.That(events.Snapshot().Events.Any(e => e.Event.Exception?.Message == "late old capture failure"), Is.False);
         var error = new InvalidOperationException("capture device failed");
         replacement.Fail(error);
         Assert.That(session.IsRunning, Is.False);
-        Assert.That(events.Snapshot().State, Is.EqualTo(IndicatorState.Error));
         Assert.That(events.Snapshot().Events.Single(e => e.Event.Exception == error).Event.Properties["PipelineBlocking"].ToString(), Is.EqualTo("True"));
         rejected.Dispose();
     }

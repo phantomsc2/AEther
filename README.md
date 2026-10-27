@@ -49,11 +49,10 @@ The Scene picker starts empty above HistorySeconds. Selection opens the
 canvas and reveals dynamic shader parameters, Reload and Reset defaults below it.
 Only the Audio settings and shader settings scroll, independently inside their
 panels. The overall window and analysis view never scroll. The bottom status strip
-expands into a bounded application event log with timestamps, severity, source and
-messages. Yellow means a warning or nonblocking error occurred;
-red means a failure prevented the audio pipeline from running. The indicator stays
-latched until a successful audio pipeline restart, including through collapse and
-recovery. Restarts preserve event history and any warnings from the new startup.
+expands into a compact TableView with aligned Time, Severity, Source and Message
+columns. Severity is shown as an icon with a tooltip. The status strip shows an
+icon and count for each severity present in the retained event history. Counts
+follow that history, including across pipeline restarts.
 
 Serilog writes Information and above to compact structured JSON (`.clef`) in
 `%LocalAppData%\AEther\logs`, asynchronously, rolling daily or at 10 MiB with

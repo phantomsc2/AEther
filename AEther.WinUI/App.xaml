@@ -6,6 +6,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <TabularControlsResources xmlns="using:Microsoft.UI.Xaml.Controls.Tabular" />
                 <ResourceDictionary Source="ms-appx:///Microsoft.UI.Xaml/DensityStyles/Compact.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <x:Double x:Key="ExpanderMinHeight">32</x:Double>

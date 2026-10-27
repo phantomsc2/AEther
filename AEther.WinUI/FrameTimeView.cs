@@ -18,7 +18,7 @@ public sealed class FrameTimeView : UserControl
 {
     const string FrameMetric = "render.frame_interval_ms";
     const int Capacity = 32768;
-    internal const int HistorySeconds = 10;
+    internal const int HistorySeconds = 7;
     static readonly double[] LogTicks = Enumerable.Range(-6, 16)
         .SelectMany(exponent => new[] { (double)exponent, exponent + Math.Log10(2), exponent + Math.Log10(5) })
         .ToArray();

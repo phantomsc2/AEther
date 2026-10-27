@@ -3,12 +3,12 @@
 Build with `dotnet build tools/AEther.ChartProfile -c Release -p:Platform=x64`.
 Run `tools/AEther.ChartProfile/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/AEther.ChartProfile.exe` from the repository root.
 
-The probe opens a 1280×720 client area, preloads 10 seconds of timestamped synthetic
+The probe opens a 1280×720 client area, preloads 7 seconds of timestamped synthetic
 frame intervals, GPU durations and total audio ages at 240 samples/second, and continues adding samples while the chart
 scrolls. It measures for ten seconds after a three-second warmup. Results (CSV,
 summary text and a PNG of the XAML tree) go into `artifacts/chart-profile`.
 
-- Default: plot 10 seconds (2,400 points per series), refresh at the production rate of 1 Hz.
+- Default: plot 7 seconds (1,680 points per series), refresh at the production rate of 1 Hz.
 - `--fast`: request 60 Hz chart refresh to stress LiveCharts independently of production settings.
 - `--layout`: exercise the full audio/video and views/controls layout instead of the isolated chart.
 
@@ -41,8 +41,8 @@ Results go into `artifacts/hub-profile/<tag>`. Each phase has a pipeline CSV and
 summary; `process.csv` includes process/UI-thread CPU, allocations and chart draws.
 The spectrum uses its normal preview resolution, recorded in each summary; the
 main scene remains 720p throughout. CSV profiling enables detailed GPU queries for
-measurement. In normal operation, collapsed diagnostics request only the two GPU
-timestamps needed for frame time.
+measurement. In normal operation, the hub requests only the two GPU timestamps
+needed for frame time.
 
 See [main-window performance notes](../../doc/main-window-performance.md) for the
 measured changes and the decision to retain full-resolution chart samples.

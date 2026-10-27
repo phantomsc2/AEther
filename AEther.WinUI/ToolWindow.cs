@@ -46,6 +46,7 @@ public abstract partial class ToolWindow : Window
 
     internal static void AddShortcut(UIElement root, VirtualKey key, Action action)
     {
+        root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
         var accelerator = new KeyboardAccelerator { Key = key };
         accelerator.Invoked += (_, e) => { e.Handled = true; action(); };
         root.KeyboardAccelerators.Add(accelerator);

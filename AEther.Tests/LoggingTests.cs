@@ -14,61 +14,31 @@ namespace AEther.Tests;
 public class LoggingTests
 {
     [Test]
-    public void HealthEscalatesAndOnlySuccessfulStartResetsIt()
+    public void EventsRemainInHistoryAcrossPipelineGenerations()
     {
         var store = new EventLogStore();
         using var log = new LoggerConfiguration().WriteTo.Sink(store).CreateLogger();
         var first = store.BeginPipeline();
-        store.PipelineStarted(first);
         var pipeline = log.ForContext("PipelineId", first);
         pipeline.Warning("Overload");
         pipeline.Information("Recovered");
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Warning));
         pipeline.ForContext("PipelineBlocking", true).Error("Capture stopped");
-        pipeline.Warning("Another warning");
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Error));
-        var failed = store.BeginPipeline();
-        log.ForContext("PipelineId", failed).Error("Rejected configuration; previous status remains");
-        store.PipelineFailed(failed);
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Error));
-        var next = store.BeginPipeline();
-        store.PipelineStarted(next);
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Neutral));
-        Assert.That(store.Snapshot().Events, Has.Length.EqualTo(5), "Restarts retain application history.");
-    }
-
-    [Test]
-    public void NewStartupWarningsSurviveResetAndOldCallbacksCannotRelightIt()
-    {
-        var store = new EventLogStore();
-        using var log = new LoggerConfiguration().WriteTo.Sink(store).CreateLogger();
-        var old = store.BeginPipeline();
-        store.PipelineStarted(old);
-        log.ForContext("PipelineId", old).ForContext("PipelineBlocking", true).Error("Old failure");
         var next = store.BeginPipeline();
         log.ForContext("PipelineId", next).Warning("SDR fallback during startup");
-        store.PipelineStarted(next);
-        log.ForContext("PipelineId", old).ForContext("PipelineBlocking", true).Error("Late failure");
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Warning));
-        Assert.That(store.Snapshot().Events, Has.Length.EqualTo(3));
-        var clean = store.BeginPipeline();
-        store.PipelineStarted(clean);
-        log.ForContext("PipelineId", next).Warning("Late warning");
-        store.PipelineStarted(next);
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Neutral));
+        pipeline.Error("Late failure");
+        Assert.That(next, Is.GreaterThan(first));
+        Assert.That(store.Snapshot().Events, Has.Length.EqualTo(5));
     }
 
     [Test]
-    public void NonblockingErrorsAreYellowAndHistoryEvictionDoesNotClearHealth()
+    public void HistoryEvictsOldestEvents()
     {
         var store = new EventLogStore(2);
         using var log = new LoggerConfiguration().WriteTo.Sink(store).CreateLogger();
         log.Error("Shader reload failed");
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Warning));
         log.Information("One");
         log.Information("Two");
         Assert.That(store.Snapshot().Events.Select(e => e.Event.RenderMessage()), Is.EqualTo(new[] { "One", "Two" }));
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Warning));
         Assert.That(store.ChangesSince(store.Snapshot().Version), Is.Null);
     }
 
@@ -115,7 +85,7 @@ public class LoggingTests
             var store = new EventLogStore();
             using var log = ApplicationLog.CreateLogger(store, path);
             log.Information("Application continues");
-            Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Warning));
+            Assert.That(store.Snapshot().Events.Any(e => e.Event.Level == LogEventLevel.Warning), Is.True);
             Assert.That(store.Snapshot().Events.Any(e => e.Event.Exception is IOException), Is.True);
             Assert.That(store.Snapshot().Events.Last().Event.RenderMessage(), Is.EqualTo("Application continues"));
         }
@@ -138,7 +108,7 @@ public class LoggingTests
         warnings.Sample(0, 0, 0, AudioTimestampQuality.Estimated);
         clock.Now = clock.Now.AddMinutes(1);
         warnings.Sample(0, 0, 0, AudioTimestampQuality.Estimated);
-        Assert.That(store.Snapshot().State, Is.EqualTo(IndicatorState.Neutral));
+        Assert.That(store.Snapshot().Events.Any(e => e.Event.Level >= LogEventLevel.Warning), Is.False);
         warnings.Sample(1, 10, 2, AudioTimestampQuality.Device);
         clock.Now = clock.Now.AddSeconds(1);
         warnings.Sample(4, 40, 8, AudioTimestampQuality.Device);
