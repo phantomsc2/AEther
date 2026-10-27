@@ -45,7 +45,7 @@ public sealed class FrameTimeView : UserControl
         CustomSeparators = Array.Empty<double>(),
         Labeler = value => Math.Pow(10, value).ToString("G3"),
     };
-    readonly DispatcherTimer refresh = new() { Interval = TimeSpan.FromSeconds(1) };
+    readonly DispatcherTimer refresh = new() { Interval = TimeSpan.FromMilliseconds(100) };
     readonly Window owner;
     PipelineProfile? profile;
     long origin, lost, measureStart;

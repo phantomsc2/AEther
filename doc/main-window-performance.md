@@ -21,7 +21,7 @@ The capture/analyzer continued running in all phases. Results are under
   sixteen decades. Default font antialiasing and curve smoothing are retained.
 - When diagnostics are collapsed, GPU profiling uses only the frame's start/end
   queries. Opening diagnostics or recording a CSV enables the detailed stage queries.
-- The chart retains every raw sample in its ten-second window and refreshes at 1 Hz.
+- At the time of these measurements, the chart retained every raw sample in its ten-second window and refreshed at 1 Hz. It now uses a seven-second window and refreshes at 10 Hz.
 
 ## Measurements
 

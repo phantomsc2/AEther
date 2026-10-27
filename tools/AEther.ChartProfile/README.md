@@ -8,7 +8,7 @@ frame intervals, GPU durations and total audio ages at 240 samples/second, and c
 scrolls. It measures for ten seconds after a three-second warmup. Results (CSV,
 summary text and a PNG of the XAML tree) go into `artifacts/chart-profile`.
 
-- Default: plot 7 seconds (1,680 points per series), refresh at the production rate of 1 Hz.
+- Default: plot 7 seconds, refresh at the production rate of 10 Hz.
 - `--fast`: request 60 Hz chart refresh to stress LiveCharts independently of production settings.
 - `--layout`: exercise the full audio/video and views/controls layout instead of the isolated chart.
 
@@ -28,6 +28,9 @@ and private memory. Performance results should be compared in Release at 720p or
 
 Run with `--hub --scene=MandelFluidv4 --tag=my-run` to exercise the production
 `MainWindow`, timestamped synthetic stereo capture, analyzer and scene renderer.
+Add `--chart-hz=10` to request a different chart refresh rate (up to 60 Hz);
+without it the production interval is used. The process CSV records completed
+draws, which can be fewer than requested timer ticks.
 It keeps the scene at 1280×720 and the hub client at 1280×720, then samples these
 configurations for eight seconds each after warmup:
 

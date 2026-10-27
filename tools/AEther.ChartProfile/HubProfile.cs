@@ -37,6 +37,13 @@ internal sealed class HubProfile(Application app)
         scene = Field<CanvasWindow>("canvasWindow");
         analysis = Field<AnalysisView>("analysis");
         chart = Field<FrameTimeView>("frameTime");
+        var rateArgument = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--chart-hz="));
+        if (rateArgument != null)
+        {
+            var rate = double.Parse(rateArgument[11..], System.Globalization.CultureInfo.InvariantCulture);
+            if (!double.IsFinite(rate) || rate <= 0 || rate > 60) throw new ArgumentOutOfRangeException(nameof(rateArgument));
+            chart.RefreshInterval = TimeSpan.FromSeconds(1 / rate);
+        }
         process = Process.GetCurrentProcess();
         ui = process.Threads.Cast<ProcessThread>().Single(t => t.Id == GetCurrentThreadId());
         app.UnhandledException += (_, e) => { e.Handled = true; Finish(e.Exception); };
@@ -91,6 +98,7 @@ internal sealed class HubProfile(Application app)
                     profile.Describe("Hub client resolution", "1280x720");
                     profile.Describe("Spectrum render resolution", $"{analysis.PreviewPixelSize.Width}x{analysis.PreviewPixelSize.Height}");
                     profile.Describe("Plotted points", chart.PlottedPointCount.ToString());
+                    profile.Describe("Chart refresh interval", chart.RefreshInterval.ToString());
                     profile.Describe("Source", "48 kHz timestamped synthetic stereo, same analyzer for all phases");
                     profile.Describe("Timing", "Release, compositor paced, 8 s sample after warmup; GPU Debug is the entire secondary output");
                     process.Refresh();
