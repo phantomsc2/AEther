@@ -1,14 +1,6 @@
 #include "../Common/Inputs.hlsl"
 #include "../Common/FractalTypes.hlsl"
-struct FluidParameters
-{
-    float Flow;
-    float HalfLife;
-    float Diffusion;
-    float Background;
-    float Curl;
-    bool PeriodicBoundary;
-};
+#include "../Common/RingFluidParameters.hlsl"
 struct CometParameters
 {
     float Size;
@@ -21,14 +13,15 @@ cbuffer Parameters
 {
     GeometryParameters Geometry = { 0.3125, 0.45, 0.5, 0.44, 0.5 };
     QualityParameters Quality = { false, 0.37931034, 0.45 };
-    FluidParameters Fluid = { 0.544, 0.385, 0.609, 0.45, 0.986, false };
+    EmitterParameters Emitter = RING_EMITTER_DEFAULTS;
+    FluidParameters Fluid = RING_FLUID_DEFAULTS;
     CometParameters Comet = { 1, 0.726, 0.679, 1, 0.472 };
 };
 // The shared orbit supplies both the foreground silhouette and the original
 // direct slice, projected separately as the fine background structure.
+#include "../Common/RingEmitter.hlsl"
 #define MANDELBOX_CUSTOM_PS
 #include "../Common/Mandelbox.hlsl"
-#define MANDEL_COMET
 #include "../Common/MandelComet.hlsl"
 Texture2D<float4> FluidDye;
 SamplerState FluidSampler;

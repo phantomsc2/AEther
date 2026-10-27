@@ -1,7 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using Vortice.D3DCompiler;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
@@ -20,8 +19,6 @@ internal sealed class MandelFluidSimulation : IDisposable
     {
         internal readonly Dictionary<Pass, ShaderProgram> Shaders = [];
         public ID3D11PixelShader this[Pass pass] => Shaders[pass].Pixel;
-        public bool CorrectedAdvection => Shaders[Pass.AdvectVelocity].Uses("Advected");
-        public bool TransportsAge => Shaders[Pass.PredictDye].Uses("DyeAge");
         public bool RingFluid { get; }
         public Programs(ID3D11Device device, string source)
         {
@@ -30,7 +27,7 @@ internal sealed class MandelFluidSimulation : IDisposable
             {
                 foreach (var pass in Enum.GetValues<Pass>())
                 {
-                    if (!RingFluid && pass is Pass.DiffuseVelocityX or Pass.DiffuseVelocityY or Pass.ProjectUnforced) continue;
+                    if (!RingFluid && pass is Pass.PredictVelocity or Pass.PredictDye or Pass.DiffuseVelocityX or Pass.DiffuseVelocityY or Pass.ProjectUnforced) continue;
                     Shaders.Add(pass, new ShaderProgram(device, source, pass.ToString(), "FluidSimulation.hlsl"));
                 }
             }
@@ -319,22 +316,21 @@ internal sealed class MandelFluidSimulation : IDisposable
     }
     void EnsureAge()
     {
-        if (!programs.TransportsAge) return;
+        if (!programs.RingFluid) return;
         var format = Format.R32G32_Float;
         if (age != null && age.Texture.Description.Format == format) return;
         age = Create(Width, Height, format);
         nextAge = Create(Width, Height, format);
         predictedAge = Create(Width, Height, format);
         // A material layout change on shader reload invalidates the old dye too.
-        if (programs.RingFluid) Clear();
-        else context.ClearRenderTargetView(age.Target, new(0, 0, 0, 0));
+        Clear();
     }
     void StepVelocity()
     {
         LastSteps++;
         PassMarker?.Invoke("Fluid velocity", true);
         Grid(velocity);
-        if (programs.CorrectedAdvection)
+        if (programs.RingFluid)
         {
             predictedVelocity ??= Create(Width, Height, Format.R32G32_Float);
             Draw(Pass.PredictVelocity, predictedVelocity, v: velocity);
@@ -368,28 +364,17 @@ internal sealed class MandelFluidSimulation : IDisposable
         LastMaterialSteps++;
         PassMarker?.Invoke("Fluid material", true);
         Grid(dye);
-        if (programs.CorrectedAdvection)
+        if (programs.RingFluid)
         {
             predictedDye ??= Create(Width, Height, dye.Texture.Description.Format);
             Draw(Pass.PredictDye, predictedDye!, v: velocity, pigment: dye,
-                ageInput: age, ageTarget: programs.TransportsAge ? predictedAge : null);
+                ageInput: age, ageTarget: predictedAge);
         }
         Draw(Pass.AdvectDye, nextDye, v: velocity, pigment: dye, advected: predictedDye,
-            ageInput: age, agePrediction: predictedAge, ageTarget: programs.TransportsAge ? nextAge : null);
+            ageInput: age, agePrediction: predictedAge, ageTarget: programs.RingFluid ? nextAge : null);
         (dye, nextDye) = (nextDye, dye);
-        if (programs.TransportsAge) (age, nextAge) = (nextAge, age);
+        if (programs.RingFluid) (age, nextAge) = (nextAge, age);
         PassMarker?.Invoke("Fluid material", false);
-    }
-
-    // GPU smoke checks use the actual production passes at deterministic time steps.
-    internal void AdvanceForCheck(Programs shaders, int steps, float halfLife = 1.4f)
-    {
-        programs = shaders;
-        parameters.B = new((float)TimeStep, 0, MathF.Log(2) / halfLife, .001f);
-        parameters.C = default;
-        for (int i = 0; i < steps; i++) Step();
-        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
     }
 
     internal unsafe (double Before, double After, double CurlError) CheckProjection(Programs shaders)
@@ -465,7 +450,7 @@ internal sealed class MandelFluidSimulation : IDisposable
     internal unsafe void SeedRecirculationForCheck(float densityScale = 1, float speed = .8f)
     {
         var flow = new float[Width * Height * 2];
-        var pigment = new Half[Width * Height * 4];
+        var pigment = new float[Width * Height * 4];
         var residence = new float[Width * Height * 2];
         for (int y = 0; y < Height; y++)
             for (int x = 0; x < Width; x++)
@@ -475,26 +460,26 @@ internal sealed class MandelFluidSimulation : IDisposable
                 double px = (2 * (x + .5) / Width - 1) * Aspect;
                 double py = 2 * (y + .5) / Height - 1;
                 float density = densityScale * (float)Math.Exp(-((px - Aspect + .16) * (px - Aspect + .16) + py * py) / .003);
-                pigment[4 * cell] = pigment[4 * cell + 3] = (Half)density;
-                residence[2 * cell] = .5f * (float)(Half)density;
-                residence[2 * cell + 1] = (float)(Half)density;
+                pigment[4 * cell] = pigment[4 * cell + 3] = density;
+                residence[2 * cell] = .5f * density;
+                residence[2 * cell + 1] = .5f * density;
             }
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         fixed (float* p = flow) context.UpdateSubresource(velocity.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
-        fixed (Half* p = pigment) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+        if (dye.Texture.Description.Format == Format.R32G32B32A32_Float)
+        {
+            fixed (float* p = pigment) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 16), 0);
+        }
+        else
+        {
+            var half = pigment.Select(v => (Half)v).ToArray();
+            fixed (Half* p = half) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+        }
         if (age != null)
             fixed (float* p = residence) context.UpdateSubresource(age.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
     }
     internal float[] ReadAge() => ReadFloatSurface(age!, 2);
-    internal unsafe void AddAgeForCheck(float seconds)
-    {
-        var values = ReadAge();
-        for (int i = 0; i < values.Length; i += 2) values[i] += seconds * values[i + 1];
-        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-        fixed (float* p = values) context.UpdateSubresource(age!.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
-    }
     internal float[] ReadDye()
     {
         if (dye.Texture.Description.Format == Format.R32G32B32A32_Float)

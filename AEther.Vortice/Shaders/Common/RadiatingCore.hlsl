@@ -1,5 +1,4 @@
-// V3's dark Mandelbox core. The fluid emitter and the display use this same
-// field and projection, so clouds leave the actual silhouette rather than a jet.
+// V3's dark Mandelbox core, composited over the shared ring fluid.
 float RadiatingTime() { return S * Quality.MovementSpeed * 10; }
 float RadiatingShapeTime()
 {
@@ -23,8 +22,4 @@ float2 RadiatingDistances(float2 p)
     float depth = max(1, (1 + round(Quality.MaximumIterations * 29))
         * lerp(.3, 1, saturate(PoseX + PoseZ)));
     return max(1e-8, BoxDistanceAtDepth(q, t, depth));
-}
-float3 RadiatingPalette(float frequency)
-{
-    return .5 + .5 * cos(6.2831853 * (frequency * .85 + float3(.04, .38, .62)));
 }

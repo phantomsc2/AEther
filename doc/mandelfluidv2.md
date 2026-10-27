@@ -20,8 +20,7 @@ seconds. This gives distortion inertia without moving or zooming the whole camer
 The expensive five-depth volumetric reconstruction has been replaced in
 this scene by a single advected fluid sheet. Three dye samples supply soft pigment,
 density relief and a small local background refraction. Existing fractal relief
-adds wisps without new orbit or procedural noise evaluations. The fluid grid stays
-at most 256 by 256, independent of window size. Tail and fluid controls are restored.
+adds wisps without new orbit or procedural noise evaluations. The fluid uses the shared v4 square grid: 512x512, or 128x128 with LowQuality.
 Local deformation skips
 spectral/history reads outside the object's influence. The background filter
 reuses its center sample instead of fetching it twice.
@@ -32,7 +31,7 @@ off by default; enabling it shades four samples per pixel.
 - **Comet.Size** controls apparent object size.
 - **Comet.Morph** controls depth traversal.
 - **Comet.Tail** controls soft wake illumination.
-- **Fluid** controls flow, half-life, diffusion, noise and curl.
+- **Emitter** and **Fluid** use the [shared v4 ring fluid](ring-fluid.md): S emits material, B controls launch velocity, and T illuminates it.
 - **Comet.Shockwaves** controls flashes and fronts.
 - **Comet.Background** controls the direct slice and fine structure.
 - **Geometry** retains scale, Julia blend, fold rotation, anisotropy and slice depth.

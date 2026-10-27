@@ -481,13 +481,8 @@ public sealed partial class Renderer : IDisposable
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.Fluid != null)
         {
-            int gridLimit = SceneName switch
-            {
-                "MandelFluidv4" => ReadBoolean("Fluid.LowQuality") ? 128 : 512,
-                "MandelFluidv3" => 512,
-                _ => 256,
-            };
-            bool squareGrid = SceneName == "MandelFluidv4";
+            bool squareGrid = active.Fluid.RingFluid;
+            int gridLimit = squareGrid ? (ReadBoolean("Fluid.LowQuality") ? 128 : 512) : 256;
             if (fluid != null && (fluid.GridLimit != gridLimit || fluid.SquareGrid != squareGrid))
             { fluid.Dispose(); fluid = null; }
             fluid ??= new(device, context, width, height, gridLimit, squareGrid);

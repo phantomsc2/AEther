@@ -61,6 +61,7 @@ internal static partial class Program
             using var form = new Form { ClientSize = new(640, 360), ShowInTaskbar = false };
             if (args.Contains("--shader-authoring-only") || !args.Any(arg => arg.StartsWith("--", StringComparison.Ordinal)))
             { CheckShaderAuthoring(form.Handle, shaderDirectory, output); CheckShaderWindows(shaderDirectory); return 0; }
+            if (args.Contains("--fluid-only")) { CheckFluid(form.Handle, shaderDirectory, output); return 0; }
             CheckColorOutput(form.Handle, shaderDirectory, output);
             if (args.Contains("--output-only")) return 0;
             CheckTransientSpectrum(form.Handle, shaderDirectory, output);
@@ -68,7 +69,6 @@ internal static partial class Program
             CheckVariations(form.Handle, shaderDirectory, output);
             if (args.Contains("--variation-only")) return 0;
             CheckFluid(form.Handle, shaderDirectory, output);
-            if (args.Contains("--fluid-only")) return 0;
             CheckBilateral(form.Handle, shaderDirectory, output);
             CheckMidrange(form.Handle, shaderDirectory);
             if (args.Contains("--bilateral-only")) { CheckWindows(); return 0; }
@@ -228,246 +228,48 @@ internal static partial class Program
 
     static void CheckFluid(IntPtr window, string shaders, string output)
     {
-        var fixture = Path.Combine(output, "fluid-check");
-        Directory.CreateDirectory(fixture);
-        foreach (var file in Directory.GetFiles(shaders, "*.hlsl"))
-            File.Copy(file, Path.Combine(fixture, Path.GetFileName(file)), true);
-        File.AppendAllText(Path.Combine(fixture, "Common.hlsl"), "\n#define MovementTime 0.0\n#define S 0.0\n#define FractalDepth 8.5\n");
-        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture);
-        renderer.SelectScene("MandelFluid");
-        SetParameter(renderer, "Quality.Antialiasing", false);
-        renderer.Render(false);
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 10);
-        if (renderer.Fluid.ReadDye().Any(v => v != 0)) throw new Exception("Fluid generated pigment in silence.");
-        var projection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
-        Console.WriteLine($"Fluid projection: RMS divergence {projection.Before:F6} -> {projection.After:F6}");
-        if (projection.After > projection.Before * .08) throw new Exception("Multigrid projection did not remove divergence.");
-
-        void Input(int component, bool stereo = false)
+        string? reference = null;
+        foreach (var scene in new[] { "MandelFluidv4", "MandelFluid", "MandelFluidv2", "MandelFluidv3" })
         {
-            var data = new double[512];
-            for (int c = stereo ? 1 : 0; c < 2; c++)
-                for (int k = component == 2 ? 0 : 27; k < (component == 2 ? 64 : 37); k++)
-                {
-                    int i = c * 256 + k * 4;
-                    data[i + component] = .65;
-                    data[i + 3] = .65;
-                }
-            var first = nextSeedRow; nextSeedRow += 256;
-            for (int row = 0; row < 256; row++)
-                renderer.PostAudio(new(data, 256, DateTime.Now) { AnalysisRow = first + row }, 2);
+            var clock = new FluidSmokeClock();
+            using var renderer = new Renderer(window, 1280, 720, 64, 60,
+                shaderDirectory: shaders, timeProvider: clock, initialScene: scene);
+            if (renderer.ShaderError != null) throw new Exception(renderer.ShaderError);
             renderer.Render(false);
-        }
-        double Mass(float[] dye) => dye.Where((_, i) => i % 4 == 3).Sum(v => (double)v);
-        double OuterMass(float[] dye)
-        {
-            double mass = 0;
-            int w = renderer.Fluid.Width, h = renderer.Fluid.Height;
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    double px = (2 * (x + .5) / w - 1) * renderer.Fluid.Aspect;
-                    double py = 2 * (y + .5) / h - 1;
-                    if (px * px + py * py > .5 * .5) mass += dye[4 * (y * w + x) + 3];
-                }
-            return mass;
-        }
-        Input(0, true);
-        renderer.Fluid.Clear();
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 90);
-        var tonal = renderer.Fluid.ReadDye();
-        var mass = Mass(tonal);
-        if (tonal.Any(v => !float.IsFinite(v) || v < 0) || mass < 10)
-            throw new Exception("Sustained tones failed to supply finite body material.");
-        var velocity = renderer.Fluid.ReadVelocity();
-        if (velocity.Any(v => !float.IsFinite(v) || Math.Abs(v) > 1e-6))
-            throw new Exception("Pure tones agitated the crystalline field without noise or attacks.");
-        // Identical stationary input over one second must produce the same fluid
-        // whether the display submits 30, 60 or 120 frames in that interval.
-        float[] Scheduled(int frames, float diffusion = .001f)
-        {
-            renderer.Fluid.Clear();
-            for (int i = 0; i < frames; i++)
-                renderer.Fluid.Advance(1.0 / frames, renderer.Audio, renderer.FluidPrograms, renderer.ActiveShader!.Parameters);
-            return renderer.Fluid.ReadDye();
-        }
-        var at60 = Scheduled(60);
-        foreach (int frames in new[] { 30, 120 })
-            if (Scheduled(frames).Zip(at60, (a, b) => Math.Abs(a - b)).Max() > .002)
-                throw new Exception($"Fluid behavior changed at {frames} display frames per second.");
-        if (!at60.SequenceEqual(Scheduled(60, .01f)))
-            throw new Exception("The diffusion setting blurred pure tones despite zero noise.");
-        // The scheduled runs can exceed the renderer's .5-second stall limit.
-        // Refresh presentation timing, then seed a fresh release fixture so its
-        // material is not cleared as stale when the screenshot is rendered.
-        Input(0, true);
-        renderer.Fluid.Clear();
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 60);
-        renderer.Render(false);
-        Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-tone.png"));
-        Console.WriteLine($"Crystalline tone: pigment mass {mass:F1}, zero turbulent velocity.");
-
-        // No source remains: transport must persist while pigment dissipates.
-        var releaseStartMass = Mass(renderer.Fluid.ReadDye());
-        foreach (var history in renderer.Audio.History) Array.Clear(history);
-        renderer.Audio.InvalidateHistory();
-        renderer.Render(false);
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 120);
-        var released = renderer.Fluid.ReadDye();
-        var releasedMass = Mass(released);
-        Console.WriteLine($"Fluid release: mass {releaseStartMass:F1} -> {releasedMass:F1} after two seconds");
-        if (releasedMass <= 0 || releasedMass >= releaseStartMass * .5)
-            throw new Exception("Fluid did not linger and dissipate after sustained input ended.");
-        renderer.Render(false);
-        Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-release.png"));
-
-        Input(3); // Aggregate magnitude alone must keep the underlying field visible.
-        renderer.Fluid.Clear();
-        renderer.Render(false);
-        var energyField = renderer.ReadPixels();
-        if (energyField.Where((v, i) => i % 4 != 3 && v > 10).Count() < 1000)
-            throw new Exception("Aggregate energy failed to reveal the persistent fractal field.");
-        Save(energyField, 640, 360, Path.Combine(output, "mandelfluid-energy-field.png"));
-
-        Input(2);
-        renderer.Fluid.Clear();
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 90);
-        var noise = renderer.Fluid.ReadDye();
-        if (noise.Any(v => !float.IsFinite(v) || v < 0) || Mass(noise) < 10)
-            throw new Exception("Noise failed to inject diffusing mist.");
-        if (OuterMass(noise) < Mass(noise) * .25 || renderer.Fluid.ReadVelocity().All(v => Math.Abs(v) < .001))
-            throw new Exception("Noise did not create global material and movement.");
-        var unmixedNoise = Scheduled(60, 0);
-        var mixedNoise = Scheduled(60, .01f);
-        if (unmixedNoise.Zip(mixedNoise, (a, b) => Math.Abs(a - b)).Sum() < Mass(unmixedNoise) * .001)
-            throw new Exception("Noise did not enable diffusion and mixing.");
-        renderer.Render(false);
-        Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-noise.png"));
-
-        Seed(renderer);
-        renderer.Render(false);
-        renderer.Fluid.Clear();
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 90);
-        renderer.Render(false);
-        Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-mixed.png"));
-
-        Input(0);
-        renderer.Fluid.Clear();
-        System.Threading.Thread.Sleep(180);
-        renderer.Render(false);
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 60);
-        if (Mass(renderer.Fluid.ReadDye()) != 0)
-            throw new Exception("Silent capture kept injecting the last nonzero row.");
-
-        // Transients are light, never pigment: clear any pre-existing body,
-        // feed a recorded pulse, and inspect its center-to-edge history front.
-        renderer.Fluid.Clear();
-        Input(1);
-        renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 20);
-        if (Mass(renderer.Fluid.ReadDye()) != 0)
-            throw new Exception("Transient-only input accumulated fluid material.");
-        renderer.Render(false);
-        Save(renderer.ReadPixels(), 640, 360, Path.Combine(output, "mandelfluid-shockwave.png"));
-        var withAttack = renderer.ReadPixels();
-        foreach (var history in renderer.Audio.History) Array.Clear(history);
-        renderer.Audio.InvalidateHistory();
-        renderer.Render(false);
-        var withoutAttack = renderer.ReadPixels();
-        if (withAttack.Zip(withoutAttack, (a, b) => Math.Abs(a - b)).Average() < 2)
-            throw new Exception("Recorded transient history did not highlight the field.");
-        var excessive = new double[512];
-        for (int i = 0; i < excessive.Length; i += 4)
-        { excessive[i] = excessive[i + 1] = excessive[i + 2] = 1e6; excessive[i + 3] = 1; }
-        for (int burst = 0; burst < 16; burst++)
-        {
-            for (int row = 0; row < 16; row++)
-                renderer.PostAudio(new(excessive, 256, DateTime.Now) { AnalysisRow = nextSeedRow++ }, 2);
-            renderer.Render(false);
-            renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 3);
-        }
-        if (renderer.Fluid.ReadDye().Any(v => !float.IsFinite(v) || v < 0 || v > 12))
-            throw new Exception("Repeated extreme input escaped the fluid's positive finite capacity.");
-        if (renderer.Fluid.ReadVelocity().Any(v => !float.IsFinite(v) || Math.Abs(v) > 8))
-            throw new Exception("Repeated extreme input destabilized the fluid velocity.");
-        Console.WriteLine("Fluid stability: repeated million-amplitude tone/noise/attack bursts stayed finite and within pigment capacity.");
-        foreach (var history in renderer.Audio.History) Array.Clear(history);
-        renderer.Audio.InvalidateHistory();
-        renderer.SelectScene("Mandelbox");
-        renderer.Render(false);
-        renderer.SelectScene("MandelFluid");
-        renderer.Render(false);
-        if (Mass(renderer.Fluid.ReadDye()) != 0)
-            throw new Exception("Scene re-entry retained stale pigment.");
-
-        // Reload is transactional across both the scene and every solver pass.
-        string simulationPath = Path.Combine(fixture, "FluidSimulation.hlsl");
-        var working = File.ReadAllText(simulationPath);
-        try
-        {
-            File.WriteAllText(simulationPath, working + "\nINVALID FLUID PROGRAM\n");
-            if (renderer.ReloadShaders()) throw new Exception("Invalid fluid shader was accepted.");
-            renderer.Render(false);
-        }
-        finally { File.WriteAllText(simulationPath, working); }
-        if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-        foreach (var size in new[] { new Size(191, 97), new Size(97, 191), new Size(16, 16) })
-        {
-            renderer.Resize(size.Width, size.Height);
-            Input(2);
-            renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 5);
-            var resizedProjection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
-            if (resizedProjection.After > resizedProjection.Before * .1)
-                throw new Exception("Projection failed after aspect/size change.");
-        }
-        // Freeze presentation time and energy, place one pulse at two history
-        // ages, and measure only the light added over the persistent field.
-        string commonPath = Path.Combine(fixture, "Common.hlsl");
-        var originalCommon = File.ReadAllText(commonPath);
-        try
-        {
-            File.AppendAllText(commonPath, "\n#define HistogramShift .75\n#define HistoryAvailable 1.0\n#define HistoryNewestAge 0.0\n#define VisualBreath .5\n#define VisualFlash 0.0\n#define PoseX .5\n#define PoseY .5\n#define PoseZ .5\n");
-            if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-            renderer.Resize(640, 360);
-            foreach (var history in renderer.Audio.History) Array.Clear(history);
-            renderer.Audio.InvalidateHistory();
-            renderer.Render(false);
-            var unlit = renderer.ReadPixels(false);
-            double FrontRadius(float age)
+            if (renderer.Fluid.ReadDye().Any(v => v != 0)) throw new Exception("Fluid emitted in silence.");
+            var projection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
+            if (projection.After > .01 * projection.Before || projection.CurlError > 1e-4)
+                throw new Exception("Pressure projection changed divergence or circulation.");
+            for (int frame = 1; frame <= 60; frame++)
             {
-                foreach (var history in renderer.Audio.History) Array.Clear(history);
-                renderer.Audio.InvalidateHistory();
-                int row = (int)Math.Round((.75 - age * renderer.Audio.TimeScale) * renderer.Audio.Rows - .5);
-                foreach (var history in renderer.Audio.History)
-                    for (int y = row - 1; y <= row + 1; y++)
-                        for (int band = 0; band < 64; band++)
-                            history[(((y + renderer.Audio.Rows) % renderer.Audio.Rows) * 64 + band) * 4 + 1] = .8f;
-                renderer.Fluid.Clear();
-                renderer.Render(false);
-                var lit = renderer.ReadPixels(false);
-                double sum = 0, weighted = 0;
-                for (int y = 0; y < 360; y++)
-                    for (int x = 0; x < 640; x++)
-                    {
-                        int i = 4 * (y * 640 + x);
-                        double added = Math.Max(0, lit[i] + lit[i + 1] + lit[i + 2] - unlit[i] - unlit[i + 1] - unlit[i + 2]);
-                        double px = (2 * (x + .5) / 640 - 1) * (640.0 / 360), py = 2 * (y + .5) / 360 - 1;
-                        sum += added; weighted += added * Math.Sqrt(px * px + py * py);
-                    }
-                if (sum < 1000) throw new Exception("History shockwave failed to illuminate the field.");
-                Save(lit, 640, 360, Path.Combine(output, age < .1 ? "mandelfluid-front-early.png" : "mandelfluid-front-late.png"));
-                return weighted / sum;
+                var samples = Enumerable.Range(0, 64 * 8).Select(i => .05 + .02 * (i % 7)).ToArray();
+                renderer.PostAudio(new(samples, 256, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
+                clock.Frame = frame; renderer.Render(false);
             }
-            var early = FrontRadius(.06f);
-            var late = FrontRadius(.32f);
-            if (late <= early * 1.3) throw new Exception("Transient shockwaves did not travel from center to edge.");
-            Console.WriteLine($"History shockwave: mean radius {early:F3} -> {late:F3}, no deposited pigment.");
+            var dye = renderer.Fluid.ReadDye();
+            if (dye.Any(v => !float.IsFinite(v) || v < 0) || dye.Max() < .01)
+                throw new Exception("Live input failed to emit finite material.");
+            string Hash(float[] values) => Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(values.AsSpan())));
+            var state = Hash(dye) + Hash(renderer.Fluid.ReadAge()) + Hash(renderer.Fluid.ReadVelocity());
+            if (reference != null && state != reference) throw new Exception($"{scene} differs from the v4 simulation.");
+            reference = state;
+            Save(renderer.ReadPixels(false), 1280, 720, Path.Combine(output, scene.ToLowerInvariant() + "-shared-fluid.png"));
+            foreach (var size in new[] { new Size(191, 97), new Size(97, 191), new Size(16, 16) })
+            {
+                renderer.Resize(size.Width, size.Height);
+                renderer.Render(false);
+                if (renderer.Fluid.Width != 512 || renderer.Fluid.Height != 512)
+                    throw new Exception("Shared fluid grid changed with viewport size.");
+            }
+            Console.WriteLine($"{scene}: shared v4 material/motion, projection, silence and resize checks passed.");
         }
-        finally
-        {
-            File.WriteAllText(commonPath, originalCommon);
-            if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-        }
-        Console.WriteLine("MandelFluid: energy field, crystalline tones, noise-driven mixing, history shockwaves, release, stability and lifecycle checks passed.");
+    }
+
+    sealed class FluidSmokeClock : TimeProvider
+    {
+        public long Frame;
+        public override long TimestampFrequency => 60;
+        public override long GetTimestamp() => Frame;
     }
 
     static void CheckMidrange(IntPtr window, string shaders)

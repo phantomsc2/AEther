@@ -1,14 +1,6 @@
 #include "../Common/Inputs.hlsl"
 #include "../Common/FractalTypes.hlsl"
-struct FluidParameters
-{
-    float Flow;
-    float HalfLife;
-    float Diffusion;
-    float Background;
-    float Curl;
-    bool PeriodicBoundary;
-};
+#include "../Common/RingFluidParameters.hlsl"
 struct LightingParameters
 {
     float Strobe;
@@ -19,13 +11,13 @@ cbuffer Parameters
 {
     GeometryParameters Geometry = { 0.3125, 0.45, 0.5, 0.526, 0.5 };
     QualityParameters Quality = { false, 0.37931034, 0.45 };
-    FluidParameters Fluid = { 0.089, 0.145, 0, 0.324, 0.243, false };
+    EmitterParameters Emitter = RING_EMITTER_DEFAULTS;
+    FluidParameters Fluid = RING_FLUID_DEFAULTS;
     LightingParameters Lighting = { .7, .008, 0.5 };
 };
-#define MANDEL_FLUID_V3
+#include "../Common/RingEmitter.hlsl"
 #include "../Common/MandelboxField.hlsl"
 #include "../Common/RadiatingCore.hlsl"
-#include "../Common/RadiatingFluid.hlsl"
 Texture2D<float4> FluidDye;
 SamplerState FluidSampler;
 
@@ -36,8 +28,7 @@ float3 RadiatingShade(float2 uv, float sampleWidth, float pulse)
     float surface = RadiatingDistances(p).x - RadiatingBoundary();
     float pixel = max(1e-5, fwidth(surface) * sampleWidth);
     float outside = smoothstep(-pixel, pixel, surface);
-    // Direct projection preserves the solver's outward explosion. The
-    // emitter applies the inverse projection to follow the same fractal.
+    // Project the shared ring fluid around this scene's dark core.
     float2 fluidPoint = .55 * q;
     float2 fluidUV = .5 + .5 * fluidPoint / float2(AspectRatio, 1);
     float4 dye = FluidDye.Sample(FluidSampler, fluidUV);

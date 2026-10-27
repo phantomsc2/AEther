@@ -305,13 +305,10 @@ No comments or annotations are parsed for metadata. Reflection supplies names, t
 defaults, offsets and bindings. Byte offsets are used only to serialize values into
 the compiled layout. No author-assigned `register` or `packoffset` is required.
 
-Fluid scenes expose `Fluid.PeriodicBoundary` as a boolean. The host selects the
-matching wrap samplers, while the simulation wraps pressure, velocity, pigment
-and residence-age stencils. Periodic mode uses a translating music-driven
-carrier and keeps HalfLife decay, with no boundary sink or expansion dilution.
-Changing the checkbox preserves simulation state. Every fluid parameter struct
-used with the shared simulation must include this boolean; source defaults are
-false in the bundled scenes.
+Fluid scenes expose `Fluid.PeriodicBoundary`. Changing the checkbox preserves
+simulation state. All four MandelFluid variants use the [shared v4 ring fluid](ring-fluid.md),
+including its common emitter/fluid controls, FP32 material and square grid.
+The flight scenes retain their optical-flow fluid and half-life controls.
 
 ## Shared inputs and capabilities
 
@@ -338,11 +335,11 @@ callback are restored. Spectrum's `CompareSmoothers` view uses diagnostic row 1:
 It displays A left/red and B right/cyan using the same stereo average and linear
 scale. `FilteredHistogram0/1` remain aliases for `Histogram0/1`.
 
-Referencing `FluidDye` requests the existing fluid simulation;
-`FluidSampler` samples it. The simulation's shared HLSL uses the `Fluid` and `Quality`
-structures declared in `Scenes/MandelFluid.hlsl`. These are contracts of shared shader
-code, not host interpretations of editable parameter names. Arbitrary simulation pass
-schedules are not configurable in this version.
+Referencing `FluidDye` requests fluid simulation; `FluidSampler` samples it.
+The `RING_FLUID` capability in `Common/RingFluidParameters.hlsl` selects the
+shared MandelFluid backend. Its `Emitter` and `Fluid` types and defaults are
+the common shader contract. `FluidAge` contains density-weighted birth timestamp
+and frequency. Scenes without that capability use the flight simulation.
 
 ## Existing scene mappings
 
@@ -356,10 +353,10 @@ The HLSL source is authoritative. Current normalized controls map to these units
 | `Quality.MaximumIterations` | nearest integer from 1 to 30; default 10 |
 | `Quality.Antialiasing` | boolean checkbox: false uses one sample; true uses 2x2 |
 | `Quality.MovementSpeed` | 0 to 10; default 3 |
-| `Fluid.Flow`, `Noise` | 0 to 3 |
-| `Fluid.HalfLife` | 0.1 to 10 seconds |
-| `Fluid.Diffusion` | 0 to 0.01 |
-| `Fluid.Curl` | 0 to 2 |
+| `Fluid.EmissionVelocity` | 0 to 20, scaled by local B |
+| `Emitter.Rate` | 0 to 200 density units per second, scaled by local S |
+| `Fluid.Viscosity` | `0.1 * value^3`, no dye diffusion |
+| `Fluid.Curl` | 0 to 20, scaled by local B and angular variation |
 
 Other float controls use their normalized value directly. Movement speed currently
 scales the shared musical phase in HLSL: changing it can shift the pose, and zero

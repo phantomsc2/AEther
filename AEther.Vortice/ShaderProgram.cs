@@ -147,7 +147,7 @@ public sealed class ShaderScene : IDisposable
             {
                 if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
                 if (nextProgram.Uses("FluidDye"))
-                    nextFluid = new(device, source + ShaderSource.Read(root, Name == "MandelFluidv4"
+                    nextFluid = new(device, source + ShaderSource.Read(root, source.Contains("#define RING_FLUID", StringComparison.Ordinal)
                         ? "Common/RingFluidSimulation.hlsl" : "Common/FluidSimulation.hlsl"));
                 program = nextProgram;
                 raster = nextRaster;

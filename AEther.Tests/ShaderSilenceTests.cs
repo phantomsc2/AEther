@@ -571,8 +571,86 @@ public class ShaderSilenceTests
         var check = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
         TestContext.Progress.WriteLine($"{width}x{height}, periodic={periodic}: divergence {check.Before:G5} -> {check.After:G5}, relative curl error {check.CurlError:G5}");
         Assert.That(check.Before, Is.GreaterThan(.01), "The fixture needs a divergent velocity field.");
-        Assert.That(check.After, Is.LessThan(check.Before * .01), "Remove at least 99% of RMS divergence.");
+        // V4's square grid and fixed coarse solve have the same bounded budget
+        // at every aspect. Preserve that solver, including its 4:1 convergence,
+        // and verify that older scene shading cannot select a different path.
+        using var referenceWindow = new HiddenWindow();
+        using var reference = new Renderer(referenceWindow.Handle, width, height, Bands, 60,
+            shaderDirectory: ShaderDirectory, timeProvider: clock, initialScene: "MandelFluidv4");
+        var referenceParameters = reference.ActiveShader!.Parameters!;
+        referenceParameters.SetBoolean(referenceParameters.Items.Single(p => p.Name == "Fluid").Children
+            .Single(p => p.Name == "PeriodicBoundary"), periodic);
+        clock.Advance(); reference.Render(false);
+        var expected = reference.Fluid.CheckProjection(reference.FluidPrograms);
+        Assert.That(check.After, Is.EqualTo(expected.After).Within(1e-8), "Match the unchanged v4 projection.");
+        Assert.That(check.After, Is.LessThan(check.Before * .1), "Remove at least 90% of RMS divergence even at 4:1.");
         Assert.That(check.CurlError, Is.LessThan(1e-4), "Pressure projection must preserve rotational motion.");
+    }
+
+    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), Category("GPU")]
+    public void MandelFluidVariantsShareV4MaterialAndMotion(string scene)
+    {
+        using var shaders = new SceneShaders(scene);
+        using var referenceShaders = new SceneShaders("MandelFluidv4");
+        using var window = new HiddenWindow();
+        using var referenceWindow = new HiddenWindow();
+        var clock = new FluidClock(165);
+        using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock);
+        using var reference = new Renderer(referenceWindow.Handle, 160, 90, Bands, 60,
+            shaderDirectory: referenceShaders.Path, timeProvider: clock);
+        foreach (var target in new[] { renderer, reference })
+        {
+            var parameters = target.ActiveShader!.Parameters!;
+            var fluid = parameters.Items.Single(p => p.Name == "Fluid");
+            parameters.SetBoolean(fluid.Children.Single(p => p.Name == "LowQuality"), true);
+            parameters.SetFloat(fluid.Children.Single(p => p.Name == "Viscosity"), .2f);
+            parameters.SetFloat(fluid.Children.Single(p => p.Name == "Curl"), .15f);
+        }
+        var data = Enumerable.Range(0, Bands * 8).Select(i => .05 + .02 * (i % 7)).ToArray();
+        for (int frame = 1; frame <= 20; frame++)
+        {
+            clock.Frame = frame;
+            foreach (var target in new[] { renderer, reference })
+            {
+                target.PostAudio(new(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
+                target.Render(false);
+                Assert.That(target.Fluid.Width, Is.EqualTo(128));
+                Assert.That(target.Fluid.Height, Is.EqualTo(128));
+                Assert.That(target.Fluid.LastMaterialSteps, Is.EqualTo(1));
+            }
+            Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(reference.Fluid.LastSteps));
+        }
+        Assert.That(reference.Fluid.ReadDye().Max(), Is.GreaterThan(.01), "The shared fixture must emit material.");
+        Assert.That(renderer.Fluid.ReadDye(), Is.EqualTo(reference.Fluid.ReadDye()));
+        Assert.That(renderer.Fluid.ReadAge(), Is.EqualTo(reference.Fluid.ReadAge()));
+        Assert.That(renderer.Fluid.ReadVelocity(), Is.EqualTo(reference.Fluid.ReadVelocity()));
+    }
+
+    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), TestCase("MandelFluidv4"), Category("GPU")]
+    public void MandelFluidSeparatesMaterialFromBackgroundMotion(string scene)
+    {
+        using var shaders = new SceneShaders(scene);
+        using var window = new HiddenWindow();
+        foreach (int component in new[] { 0, 1, 2 })
+        {
+            var clock = new RenderClock();
+            using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
+                shaderDirectory: shaders.Path, timeProvider: clock);
+            var parameters = renderer.ActiveShader!.Parameters!;
+            parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "LowQuality"), true);
+            var data = new double[Bands * 8];
+            for (int i = 0; i < data.Length; i += 4) { data[i + component] = .2; data[i + 3] = .2; }
+            for (int frame = 0; frame < 8; frame++)
+            {
+                renderer.PostAudio(new(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
+                clock.Advance(); renderer.Render(false);
+            }
+            if (component == 0) Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(.01), "S emits material.");
+            else Assert.That(renderer.Fluid.ReadDye(), Is.All.Zero, "B and T cannot emit material.");
+            if (component == 2) Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True, "B drives launch velocity.");
+            else Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero, "S and T cannot drive launch velocity.");
+        }
     }
 
     [TestCase(false), TestCase(true), Category("GPU")]
@@ -779,7 +857,7 @@ public class ShaderSilenceTests
         }
     }
 
-    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), Category("GPU")]
+    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), TestCase("MandelFluidv4"), Category("GPU")]
     public void PeriodicFluidReturnsPigmentAcrossTheSeamAndKeepsItsAge(string scene)
     {
         using var window = new HiddenWindow();
@@ -798,9 +876,8 @@ public class ShaderSilenceTests
             var fluid = parameters.Items.Single(p => p.Name == "Fluid");
             var boundary = fluid.Children.Single(p => p.Name == "PeriodicBoundary");
             parameters.SetBoolean(boundary, periodic);
-            foreach (var name in new[] { "Flow", "Curl", "Diffusion" })
+            foreach (var name in new[] { "EmissionVelocity", "Curl", "Viscosity" })
                 parameters.SetFloat(fluid.Children.Single(p => p.Name == name), 0);
-            parameters.SetFloat(fluid.Children.Single(p => p.Name == "HalfLife"), .4f);
             clock.Advance(); renderer.Render(false);
             renderer.Fluid.SeedRecirculationForCheck();
             var initial = renderer.Fluid.ReadDye().Where((_, i) => i % 4 == 3).Sum(v => (double)v);
@@ -816,13 +893,17 @@ public class ShaderSilenceTests
                     total += density;
                     if (x < renderer.Fluid.Width / 4) left += density;
                 }
-            if (periodic && scene == "MandelFluidv3")
+            if (periodic)
             {
                 var age = renderer.Fluid.ReadAge();
                 for (int cell = 0; cell < age.Length / 2; cell++)
-                    if (age[2 * cell + 1] > .001)
-                        Assert.That(age[2 * cell] / age[2 * cell + 1], Is.EqualTo(1.5).Within(.03),
-                            "Residence age must travel with wrapped pigment.");
+                    if (dye[4 * cell + 3] > .001)
+                    {
+                        Assert.That(age[2 * cell] / dye[4 * cell + 3], Is.EqualTo(.5).Within(.03),
+                            "Birth timestamp must travel with wrapped pigment.");
+                        Assert.That(age[2 * cell + 1] / dye[4 * cell + 3], Is.EqualTo(.5).Within(.03),
+                            "Frequency must travel with wrapped pigment.");
+                    }
             }
             // Changing the option is live and must not reset the simulation.
             parameters.SetBoolean(boundary, !periodic);
@@ -843,7 +924,7 @@ public class ShaderSilenceTests
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
             shaderDirectory: ShaderDirectory, timeProvider: clock);
-        renderer.SelectScene("MandelFluid");
+        renderer.SelectScene("FluidFlight");
         var parameters = renderer.ActiveShader!.Parameters!;
         var fluid = parameters.Items.Single(p => p.Name == "Fluid");
         parameters.SetBoolean(fluid.Children.Single(p => p.Name == "PeriodicBoundary"), true);
@@ -859,100 +940,6 @@ public class ShaderSilenceTests
     }
 
     [Test, Category("GPU")]
-    public void MandelFluidV3BackgroundDrivesLocalEmissionAndRotation()
-    {
-        using var window = new HiddenWindow();
-        var off = Measure(0);
-        var on = Measure(.7f);
-        Assert.That(off.Dye, Is.Zero, "Disabling B sensitivity must suppress background-only injection.");
-        Assert.That(off.Motion, Is.Zero);
-        Assert.That(on.Dye, Is.GreaterThan(.01), "B must emit material without sustained or transient input.");
-        Assert.That(on.Motion, Is.GreaterThan(1e-5), "The same local B must stir the velocity field.");
-        Assert.That(on.Right, Is.GreaterThan(3 * on.Left), "A right-channel mid-band source must emit locally.");
-        TestContext.Progress.WriteLine($"B response: pigment {off.Dye:G5} -> {on.Dye:G5}, motion {on.Motion:G5}, right/left {on.Right / Math.Max(1e-20, on.Left):G5}");
-        (double Dye, double Motion, double Left, double Right) Measure(float background)
-        {
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: ShaderDirectory, timeProvider: clock);
-            renderer.SelectScene("MandelFluidv3");
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "Background"), background);
-            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Quality").Children.Single(p => p.Name == "MovementSpeed"), 0);
-            var data = new double[Bands * 8];
-            for (int band = Bands / 2 - 4; band <= Bands / 2 + 4; band++)
-            {
-                int i = 4 * (Bands + band);
-                data[i + 2] = .8;
-                data[i + 3] = .8;
-            }
-            for (int frame = 0; frame < 8; frame++)
-            {
-                renderer.PostAudio(new SampleEvent<double>(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                    { AnalysisRow = frame }, 2);
-                clock.Advance(); renderer.Render(false);
-            }
-            var dye = renderer.Fluid.ReadDye();
-            var velocity = renderer.Fluid.ReadVelocity();
-            Assert.That(dye.All(v => float.IsFinite(v) && v >= 0 && v <= 12), Is.True);
-            Assert.That(velocity.All(float.IsFinite), Is.True);
-            double left = 0, right = 0;
-            int w = renderer.Fluid.Width, h = renderer.Fluid.Height;
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    float density = dye[4 * (y * w + x) + 3];
-                    if (x < w / 2) left += density; else right += density;
-                }
-            return (left + right, Math.Sqrt(velocity.Average(v => (double)v * v)), left, right);
-        }
-    }
-
-    [Test, Category("GPU")]
-    public void MandelFluidV3CurlBuildsStrongerRotationWithBoundedPigment()
-    {
-        using var window = new HiddenWindow();
-        double gentle = Measure(0), swirling = Measure(1);
-        TestContext.Progress.WriteLine($"Curl control: RMS vorticity {gentle:G5} -> {swirling:G5}");
-        Assert.That(swirling, Is.GreaterThan(2 * gentle), "Curl must strengthen the actual velocity field.");
-        double Measure(float curl)
-        {
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: ShaderDirectory, timeProvider: clock);
-            renderer.SelectScene("MandelFluidv3");
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "Curl"), curl);
-            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Quality").Children.Single(p => p.Name == "MovementSpeed"), 0);
-            var data = new double[Bands * 8];
-            for (int i = 0; i < data.Length; i += 4) { data[i] = .4; data[i + 3] = .4; }
-            for (int frame = 0; frame < 120; frame++)
-            {
-                renderer.PostAudio(new SampleEvent<double>(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                    { AnalysisRow = frame }, 2);
-                clock.Advance(); renderer.Render(false);
-            }
-            var dye = renderer.Fluid.ReadDye();
-            Assert.That(dye.All(v => float.IsFinite(v) && v >= 0 && v <= 12), Is.True,
-                "Corrected advection must keep every pigment channel finite, positive and bounded.");
-            Assert.That(dye.Max(), Is.GreaterThan(.01), "Sustained notes must emit liquid.");
-            var v = renderer.Fluid.ReadVelocity();
-            Assert.That(v.All(float.IsFinite), Is.True);
-            int w = renderer.Fluid.Width, h = renderer.Fluid.Height;
-            double power = 0;
-            for (int y = 0; y < h - 1; y++)
-                for (int x = 0; x < w - 1; x++)
-                {
-                    int i = 2 * (y * w + x);
-                    double rotation = (v[i + 3] - v[i + 1]) / (2 * renderer.Fluid.Aspect / w)
-                        - (v[i + 2 * w] - v[i]) / (2.0 / h);
-                    power += rotation * rotation;
-                }
-            return Math.Sqrt(power / ((w - 1) * (h - 1)));
-        }
-    }
-
-    [Test, Category("GPU")]
     public void MandelFluidV3CentralStrobesRevealOldCloudsWithoutChangingFluid()
     {
         using var window = new HiddenWindow();
@@ -964,7 +951,7 @@ public class ShaderSilenceTests
         var parameters = renderer.ActiveShader!.Parameters!;
         Assert.That(parameters.Items.Any(p => p.Name == "Comet"), Is.False);
         var lighting = parameters.Items.Single(p => p.Name == "Lighting");
-        Assert.That(lighting.Children.Select(p => p.Name), Is.EquivalentTo(new[] { "Strobe", "Ambient" }));
+        Assert.That(lighting.Children.Select(p => p.Name), Is.EquivalentTo(new[] { "Strobe", "Ambient", "SpatialFalloff" }));
         var strobe = lighting.Children.Single(p => p.Name == "Strobe");
         var ambient = lighting.Children.Single(p => p.Name == "Ambient");
         Assert.That(parameters.GetFloat(strobe), Is.EqualTo(.7f));
@@ -982,28 +969,17 @@ public class ShaderSilenceTests
         parameters.SetFloat(ambient, 0);
         // Let local component envelopes settle as well as the light envelope;
         // otherwise successive zero-dt lighting edits can still change depth.
-        for (int frame = 0; frame < 150; frame++) Tick();
-        double initialAge = MeanAge();
-        for (int frame = 0; frame < 30; frame++) Tick();
-        Assert.That(MeanAge() - initialAge, Is.EqualTo(.5).Within(.025));
+        for (int frame = 0; frame < 180; frame++) Tick();
         Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(.01));
         AssertBlack("Retained dye is dark without transient illumination when ambient is zero.");
         var pigment = renderer.Fluid.ReadDye();
         var velocity = renderer.Fluid.ReadVelocity();
         Tick(attackBand: Bands / 4, advance: false);
         long flashLight = Light();
-        var flashImage = renderer.ReadPixels(false);
         Capture("old-cloud-strobe");
-        Tick(attackBand: 3 * Bands / 4, advance: false);
-        Assert.That(renderer.ReadPixels(false), Is.EqualTo(flashImage),
-            "A central strobe reveals the whole cloud, independent of the attack's spectral color.");
         Assert.That(flashLight, Is.GreaterThan(1000), "Current transients must reveal old material immediately.");
         Assert.That(renderer.Fluid.ReadDye(), Is.EqualTo(pigment), "Lighting must not change pigment transport.");
         Assert.That(renderer.Fluid.ReadVelocity(), Is.EqualTo(velocity), "Lighting must not change the fluid motion.");
-        renderer.Fluid.AddAgeForCheck(40);
-        Tick(attackBand: Bands / 4, advance: false);
-        Assert.That(renderer.ReadPixels(false), Is.EqualTo(flashImage),
-            "Residence age must not suppress a new strobe on returning material.");
         parameters.SetFloat(strobe, 0);
         Tick(attackBand: Bands / 4, advance: false);
         AssertBlack("The Strobe control must disable transient light.");
@@ -1026,15 +1002,6 @@ public class ShaderSilenceTests
         AssertBlack("Neither ambient nor a strobe may illuminate empty space.");
 
         long Light() => renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Sum(v => (long)v);
-        double MeanAge()
-        {
-            var ages = renderer.Fluid.ReadAge();
-            Assert.That(ages.All(v => float.IsFinite(v) && v >= 0), Is.True);
-            double moment = 0, mass = 0;
-            for (int i = 0; i < ages.Length; i += 2) { moment += ages[i]; mass += ages[i + 1]; }
-            Assert.That(mass, Is.GreaterThan(.01));
-            return moment / mass;
-        }
         void AssertBlack(string message) => Assert.That(
             renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0), Is.True, message);
         void Capture(string name)
