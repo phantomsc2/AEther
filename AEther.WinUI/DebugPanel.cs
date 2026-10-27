@@ -41,6 +41,7 @@ public sealed class DebugPanel : UserControl
             + $"Capture to draw: {Stat("render.capture_to_submission_ms")}\n"
             + $"Capture queue: {Stat("capture.queue_ms")}\n"
             + $"Source to draw: {Stat("render.source_to_submission_ms")}\n"
+            + $"Total audio age (estimated presentation): {Stat("render.total_audio_age_ms")}\n"
             + $"Audio age at frame start: {Stat("render.presented_audio_age_ms")}\n"
             + $"Timestamp quality: {analyzer.LastTimestampQuality}\n"
             + $"Analysis CPU: {Stat("analysis.total_ms")}\n"

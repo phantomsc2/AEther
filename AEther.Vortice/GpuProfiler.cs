@@ -15,6 +15,7 @@ internal sealed class GpuProfiler : IDisposable
         internal bool Pending;
         internal bool Overflow;
         internal long Submitted;
+        internal long Timestamp;
         internal PipelineProfile? Profile;
         public void Dispose() { foreach (var query in Queries) query.Dispose(); Disjoint.Dispose(); }
     }
@@ -41,7 +42,7 @@ internal sealed class GpuProfiler : IDisposable
     {
         public void Dispose() => profiler.EndFrame();
     }
-    internal FrameScope BeginFrame(PipelineProfile? profile)
+    internal FrameScope BeginFrame(PipelineProfile? profile, long timestamp)
     {
         Poll();
         annotated = annotation?.Status == true;
@@ -51,7 +52,7 @@ internal sealed class GpuProfiler : IDisposable
             var frame = frames[next];
             if (!frame.Pending)
             {
-                active = frame; frame.Profile = profile; frame.Events.Clear(); frame.Overflow = false;
+                active = frame; frame.Profile = profile; frame.Timestamp = timestamp; frame.Events.Clear(); frame.Overflow = false;
                 context.Begin(frame.Disjoint);
                 next = (next + 1) % frames.Length;
             }
@@ -115,7 +116,8 @@ internal sealed class GpuProfiler : IDisposable
             foreach (var (name, ms) in elapsed)
             {
                 if (!keys.TryGetValue(name, out var key)) keys[name] = key = "gpu." + name.ToLowerInvariant().Replace(' ', '_') + "_ms";
-                frame.Profile?.Record(key, ms);
+                // Query results can arrive several frames later. Keep the measured frame's host timestamp.
+                frame.Profile?.Record(key, ms, frame.Timestamp);
             }
             frame.Pending = false;
         }

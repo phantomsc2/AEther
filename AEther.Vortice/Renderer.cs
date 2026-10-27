@@ -383,9 +383,9 @@ public sealed partial class Renderer : IDisposable
     unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug)
     {
         if (output.SceneTarget == null || (!renderCanvas && !renderDebug)) return;
-        using var gpuFrame = gpu.BeginFrame(Audio.Profile);
         var frameStart = Stopwatch.GetTimestamp();
-        if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds);
+        using var gpuFrame = gpu.BeginFrame(Audio.Profile, frameStart);
+        if (previousFrame != 0) Audio.Profile?.Record("render.frame_interval_ms", Stopwatch.GetElapsedTime(previousFrame, frameStart).TotalMilliseconds, frameStart);
         previousFrame = frameStart;
         if (present && !presentationTimestamp.HasValue)
             presentationTimestamp = (displayClock ??= Own(new CompositionClock())).NextFrameTimestamp(Audio.Profile, !RawPresentationClock);

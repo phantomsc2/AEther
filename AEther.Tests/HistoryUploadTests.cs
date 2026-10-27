@@ -13,6 +13,31 @@ namespace AEther.Tests;
 [TestFixture]
 public class HistoryUploadTests
 {
+    [Test, Category("GPU"), NonParallelizable, Apartment(ApartmentState.STA)]
+    public void DelayedGpuResultsKeepTheOriginalFrameTimestamp()
+    {
+        using var fixture = new Fixture();
+        using var renderer = fixture.Renderer(1, 100, .04);
+        var profile = new PipelineProfile();
+        renderer.Audio.Profile = profile;
+        var intervals = profile.Track("render.frame_interval_ms");
+        var durations = profile.Track("gpu.frame_ms");
+        for (int i = 0; i < 12; i++)
+        {
+            renderer.Render(false);
+            renderer.ReadHistogram(0); // Complete the frame; query delivery is deliberately later.
+        }
+        renderer.PollGpuTimings();
+        var cpu = new List<TimingSample>();
+        var gpu = new List<TimingSample>();
+        long cpuCursor = 0, gpuCursor = 0;
+        intervals.ReadSince(ref cpuCursor, cpu);
+        durations.ReadSince(ref gpuCursor, gpu);
+        Assert.That(gpu, Has.Count.EqualTo(12));
+        Assert.That(cpu, Has.Count.EqualTo(11)); // The first frame has no preceding interval.
+        Assert.That(gpu.Select(s => s.Timestamp).Order().Skip(1), Is.EqualTo(cpu.Select(s => s.Timestamp)));
+    }
+
     [Test]
     public void DirtyRangesAccumulateAndIncludeClearedGaps()
     {

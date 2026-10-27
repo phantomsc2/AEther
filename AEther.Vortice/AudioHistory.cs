@@ -254,6 +254,8 @@ public sealed class AudioHistory
         if (!live && age > Retention) position = newestRow + age * rate;
         if (live && haveConsumed)
         {
+            if (presentationTimestamp is { } presentation && LatestSourceTimestamp is { } source)
+                Profile?.Record("render.total_audio_age_ms", Math.Max(0, AudioClock.Seconds(presentation - source)) * 1000, hostTicks);
             Profile?.Record("render.presented_audio_age_ms", Math.Max(0, host - end) * 1000);
             Profile?.Record("render.source_age_ms", (host - newestEnd) * 1000);
         }

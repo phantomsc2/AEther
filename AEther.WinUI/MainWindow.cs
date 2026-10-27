@@ -15,6 +15,7 @@ public sealed class MainWindow : Window
     readonly UserControl root;
     readonly SettingsPanel settings;
     readonly AnalysisView analysis;
+    readonly FrameTimeView frameTime;
     readonly CanvasWindow canvasWindow;
     readonly AudioPanel audio = new();
     readonly DebugPanel debug = new();
@@ -45,7 +46,8 @@ public sealed class MainWindow : Window
         root = new UserControl { Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false };
         canvasWindow = new(root);
         analysis = new(this);
-        settings = new(audio, shaders, debug, analysis);
+        frameTime = new(this);
+        settings = new(audio, shaders, debug, analysis, frameTime);
         Content = settings;
         settings.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
         UpdateTitleBarColors();
@@ -233,6 +235,7 @@ public sealed class MainWindow : Window
                 {
                     replacement = CreateSource();
                     await current.RestartAnalysisAsync(replacement, audio.Options);
+                    frameTime.Attach(current.Analyzer.Profile);
                     replacement = null; // Session now owns the new source.
                     if (closing) return;
                     ResizeRenderer();
@@ -266,6 +269,7 @@ public sealed class MainWindow : Window
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
+                frameTime.Attach(next.Analyzer.Profile);
                 analysis.Attach(next.Renderer);
                 shaders.Attach(next.Renderer);
                 watcher = new(next.Renderer.ShaderDirectory, "*.hlsl")
@@ -286,6 +290,7 @@ public sealed class MainWindow : Window
             {
                 renderWorker?.Dispose(); renderWorker = null;
                 session = null;
+                frameTime.Attach(null);
                 analysis.Attach(null);
                 shaders.Attach(null);
                 if (next != null) await next.DisposeAsync();
@@ -345,6 +350,7 @@ public sealed class MainWindow : Window
         reloadTimer.Stop();
         watcher?.Dispose(); watcher = null;
         var previous = session; session = null;
+        frameTime.Attach(null);
         renderWorker?.Dispose(); renderWorker = null;
         analysis.Attach(null);
         shaders.Attach(null);

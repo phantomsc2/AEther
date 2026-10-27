@@ -18,6 +18,11 @@ public sealed class PipelineProfile
     int count;
     readonly ConcurrentDictionary<string, string> Metadata = new();
     readonly ConcurrentDictionary<string, Queue<double>> live = new();
+    readonly ConcurrentDictionary<string, TimingHistory> histories = new();
+
+    /// <summary>Opt into a bounded, timestamped history for a particular metric.</summary>
+    public TimingHistory Track(string stage, int capacity = 32768) =>
+        histories.GetOrAdd(stage, _ => new TimingHistory(capacity));
 
     public (double Mean, double P95)? Recent(string stage)
     {
@@ -41,8 +46,10 @@ public sealed class PipelineProfile
         enabled = true;
     }
 
-    public void Record(string stage, double milliseconds)
+    public void Record(string stage, double milliseconds, long? timestamp = null)
     {
+        if (histories.TryGetValue(stage, out var history))
+            history.Record(timestamp ?? Stopwatch.GetTimestamp(), milliseconds);
         var values = live.GetOrAdd(stage, _ => new Queue<double>(256));
         lock (values)
         {

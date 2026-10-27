@@ -22,6 +22,37 @@ public class DisplayTimingTests
     }
 
     [Test]
+    public void TotalAudioAgeUsesSourceEndAndPredictedPresentationRatherThanArrivalOrWakeTime()
+    {
+        var clock = new Clock { Milliseconds = 1010 };
+        var profile = new PipelineProfile();
+        var trace = profile.Track("render.total_audio_age_ms");
+        var history = new AudioHistory(1, 100, timeProvider: clock) { Profile = profile };
+        history.Post(new(new double[4], 4, DateTime.UnixEpoch)
+        {
+            CaptureTimestamp = Ms(1008),
+            SampleStartTimestamp = Ms(990), SampleEndTimestamp = Ms(1000),
+        }, 1);
+        history.Advance(0, Ms(1030));
+        clock.Milliseconds = 1018;
+        history.Advance(0, Ms(1030));
+        history.Advance(0); // No prediction: do not substitute a different endpoint under the same label.
+
+        long cursor = 0;
+        var samples = new System.Collections.Generic.List<TimingSample>();
+        trace.ReadSince(ref cursor, samples);
+        Assert.That(samples, Has.Count.EqualTo(2));
+        Assert.That(samples.Select(s => s.Milliseconds), Is.All.EqualTo(30).Within(.0001));
+        Assert.That(samples.Select(s => s.Timestamp), Is.EqualTo(new[] { Ms(1010), Ms(1018) }));
+
+        var offline = new AudioHistory(1, 100, timeProvider: clock) { Profile = profile };
+        offline.Post(new(new double[4], 4, DateTime.UnixEpoch), 1);
+        offline.Advance(0, Ms(1030));
+        trace.ReadSince(ref cursor, samples);
+        Assert.That(samples, Is.Empty, "Untimed replay has no source-to-presentation latency.");
+    }
+
+    [Test]
     public void DriverClockMapsPresentationTimeIndependentlyOfHostWakeAndRowArrival()
     {
         var clock = new Clock { Milliseconds = 1000 };
