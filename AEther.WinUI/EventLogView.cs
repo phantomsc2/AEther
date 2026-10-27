@@ -19,7 +19,12 @@ public sealed class EventLogView : UserControl
         Padding = new Thickness(10, 4, 10, 4), MinHeight = 28 };
     readonly FontIcon icon = new() { FontSize = 14 };
     readonly TextBlock label = new();
-    readonly ListView list = new() { SelectionMode = ListViewSelectionMode.Single, IsItemClickEnabled = false };
+    readonly ListView list = (ListView)XamlReader.Load("""
+        <ListView xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                  Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                  Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                  SelectionMode="Single" IsItemClickEnabled="False" />
+        """);
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     ScrollViewer? scroller;
     long version = -1;
@@ -31,7 +36,10 @@ public sealed class EventLogView : UserControl
     public EventLogView(EventLogStore? store = null)
     {
         this.store = store ?? ApplicationLog.Events;
-        var layout = new Grid { RowSpacing = 4 };
+        var layout = (Grid)XamlReader.Load("""
+            <Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                  Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" RowSpacing="4" />
+            """);
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         panel.Children.Add(list);
