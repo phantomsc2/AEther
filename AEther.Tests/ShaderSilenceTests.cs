@@ -14,8 +14,8 @@ namespace AEther.Tests;
 [TestFixture, NonParallelizable, Apartment(ApartmentState.STA)]
 public class ShaderSilenceTests
 {
-    [TestCase(true), TestCase(false), Category("GPU")]
-    public void EmbeddedDebugSharesAudioWithoutChangingTheCanvas(bool drawCanvas)
+    [TestCase(true, false), TestCase(false, false), TestCase(true, true), TestCase(false, true), Category("GPU")]
+    public void EmbeddedDebugSharesAudioWithoutChangingTheCanvas(bool drawCanvas, bool lowCost)
     {
         using var shaders = new SceneShaders("Spectrum");
         File.Copy(Path.Combine(ShaderDirectory, "Scenes", "Debug.hlsl"), Path.Combine(shaders.Path, "Scenes", "Debug.hlsl"));
@@ -31,7 +31,7 @@ public class ShaderSilenceTests
         using var canvasReference = new Renderer(canvasReferenceWindow.Handle, 160, 90, 8, 60, 1,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Spectrum");
         var canvasParameters = renderer.ActiveShader!.Parameters;
-        renderer.AttachDebugOutput(debugWindow.Handle, 300, 80);
+        renderer.AttachDebugOutput(debugWindow.Handle, 300, 80, lowCost: lowCost);
         renderer.Render(false);
         var initialCanvas = renderer.ReadPixels(false);
         for (int frame = 0; frame < 90; frame++)
@@ -54,7 +54,7 @@ public class ShaderSilenceTests
             reference.Render(false);
             canvasReference.Render(false);
             Assert.That(renderer.DebugOutputError, Is.Null);
-            Assert.That(renderer.ReadDebugPixels(), Is.EqualTo(reference.ReadPixels(false)), $"shared audio frame {frame}");
+            Assert.That(renderer.ReadDebugPixels(), Is.EqualTo(reference.ReadPixels(false)).Within(lowCost ? 1 : 0), $"shared audio frame {frame}");
             Assert.That(renderer.SceneName, Is.EqualTo("Spectrum"));
             Assert.That(renderer.ActiveShader!.Parameters, Is.SameAs(canvasParameters));
             if (!drawCanvas) Assert.That(renderer.ReadPixels(false), Is.EqualTo(initialCanvas));

@@ -94,6 +94,26 @@ public sealed class SettingsPanel : UserControl
             Content = audio,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
+        Diagnostics.Expanding += (_, _) => CrashLog.Write("Debug panel expanding");
+        Diagnostics.Collapsed += (_, _) => CrashLog.Write("Debug panel collapsed");
+        AudioSettings.AddHandler(UIElement.PointerWheelChangedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e) =>
+            {
+                if (!DiagnosticsExpanded) return;
+                var point = e.GetCurrentPoint(AudioSettings);
+                CrashLog.Write($"Debug scroll wheel: delta={point.Properties.MouseWheelDelta}; "
+                    + $"offset={AudioSettings.VerticalOffset:F1}; extent={AudioSettings.ExtentHeight:F1}; viewport={AudioSettings.ViewportHeight:F1}");
+            }), handledEventsToo: true);
+        AudioSettings.ViewChanging += (_, e) =>
+        {
+            if (DiagnosticsExpanded)
+                CrashLog.Write($"Debug scroll changing: current={AudioSettings.VerticalOffset:F1}; next={e.NextView.VerticalOffset:F1}; final={e.FinalView.VerticalOffset:F1}");
+        };
+        AudioSettings.ViewChanged += (_, e) =>
+        {
+            if (DiagnosticsExpanded && !e.IsIntermediate)
+                CrashLog.Write($"Debug scroll finished: offset={AudioSettings.VerticalOffset:F1}");
+        };
         Grid.SetRow(input, 0); Grid.SetRow(AudioSettings, 1);
         AudioColumn.Children.Add(input);
         AudioColumn.Children.Add(AudioSettings);

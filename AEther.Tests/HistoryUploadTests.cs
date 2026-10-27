@@ -14,6 +14,28 @@ namespace AEther.Tests;
 public class HistoryUploadTests
 {
     [Test, Category("GPU"), NonParallelizable, Apartment(ApartmentState.STA)]
+    public void CollapsedDiagnosticsOnlyQueriesFrameTotalsWhileCsvKeepsStageDetail()
+    {
+        using var fixture = new Fixture();
+        using var renderer = fixture.Renderer(1, 100, .04);
+        var profile = new PipelineProfile { DetailedGpuTimings = false };
+        renderer.Audio.Profile = profile;
+        renderer.Render(false);
+        renderer.ReadHistogram(0);
+        renderer.PollGpuTimings();
+        Assert.That(renderer.LastGpuTimingQueryCount, Is.EqualTo(2));
+        Assert.That(profile.Recent("gpu.frame_ms"), Is.Not.Null);
+        Assert.That(profile.Recent("gpu.scene_ms"), Is.Null);
+
+        profile.Start();
+        renderer.Render(false);
+        renderer.ReadHistogram(0);
+        renderer.PollGpuTimings();
+        Assert.That(renderer.LastGpuTimingQueryCount, Is.GreaterThan(2));
+        Assert.That(profile.Recent("gpu.scene_ms"), Is.Not.Null);
+    }
+
+    [Test, Category("GPU"), NonParallelizable, Apartment(ApartmentState.STA)]
     public void DelayedGpuResultsKeepTheOriginalFrameTimestamp()
     {
         using var fixture = new Fixture();

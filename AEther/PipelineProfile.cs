@@ -14,6 +14,7 @@ public sealed class PipelineProfile
 {
     readonly ConcurrentQueue<(double Time, string Stage, double Milliseconds)> Rows = new();
     volatile bool enabled;
+    volatile bool detailedGpuTimings = true;
     long origin;
     int count;
     readonly ConcurrentDictionary<string, string> Metadata = new();
@@ -34,6 +35,8 @@ public sealed class PipelineProfile
         return (snapshot.Average(), snapshot[(int)Math.Ceiling(.95 * (snapshot.Length - 1))]);
     }
     public bool Enabled => enabled;
+    /// <summary>Collect per-stage GPU queries. CSV profiling always enables these; the normal hub needs only frame totals.</summary>
+    public bool DetailedGpuTimings { get => detailedGpuTimings; set => detailedGpuTimings = value; }
 
     public void Describe(string key, string value) => Metadata[key] = value;
 

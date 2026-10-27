@@ -16,6 +16,7 @@ internal sealed partial class ColorOutput : IDisposable
     readonly ID3D11Buffer constants;
     readonly IntPtr window;
     readonly Action<IDXGISwapChain1?>? attachSwapChain;
+    readonly bool directSdr;
     ID3D11RenderTargetView? backTarget;
     ID3D11Texture2D? scene;
     ID3D11RenderTargetView? sceneTarget;
@@ -25,14 +26,16 @@ internal sealed partial class ColorOutput : IDisposable
     int width, height;
     public bool HighPrecision { get; }
     public WaitHandle FrameReady { get; } = null!;
-    public ID3D11RenderTargetView? SceneTarget => sceneTarget;
-    public string Description => HighPrecision ? "FP16 scRGB" : "8-bit SDR (dithered)";
+    public ID3D11RenderTargetView? SceneTarget => directSdr ? backTarget : sceneTarget;
+    public string Description => directSdr ? "8-bit SDR" : HighPrecision ? "FP16 scRGB" : "8-bit SDR (dithered)";
 
     public ColorOutput(ID3D11Device device, ID3D11DeviceContext context, IDXGIFactory2 factory,
-        IntPtr window, int width, int height, bool highPrecision, Action<IDXGISwapChain1?>? attachSwapChain = null)
+        IntPtr window, int width, int height, bool highPrecision, Action<IDXGISwapChain1?>? attachSwapChain = null,
+        bool directSdr = false)
     {
         this.device = device; this.context = context;
         this.window = window; this.attachSwapChain = attachSwapChain;
+        this.directSdr = directSdr;
         IDXGISwapChain1 Create(Format format)
         {
             var description = new SwapChainDescription1
@@ -51,7 +54,7 @@ internal sealed partial class ColorOutput : IDisposable
         IDXGISwapChain1? candidate = null;
         try
         {
-            if (highPrecision)
+            if (highPrecision && !directSdr)
             {
                 try
                 {
@@ -111,6 +114,10 @@ internal sealed partial class ColorOutput : IDisposable
         swapChain.ResizeBuffers(2, (uint)newWidth, (uint)newHeight, Format.Unknown, SwapChainFlags.FrameLatencyWaitableObject).CheckError();
         using var back = swapChain.GetBuffer<ID3D11Texture2D>(0);
         backTarget = device.CreateRenderTargetView(back);
+        width = newWidth; height = newHeight;
+        nextDisplayCheck = 0;
+        // Diagnostic previews can draw display-encoded colors straight into the SDR back buffer.
+        if (directSdr) return;
         // Never quantize the scene to 8 bits before decoding for scRGB.
         scene = device.CreateTexture2D(new Texture2DDescription
         {
@@ -120,12 +127,11 @@ internal sealed partial class ColorOutput : IDisposable
         });
         sceneTarget = device.CreateRenderTargetView(scene);
         sceneView = device.CreateShaderResourceView(scene);
-        width = newWidth; height = newHeight;
-        nextDisplayCheck = 0;
     }
 
     public void Draw(ID3D11PixelShader shader, double now)
     {
+        if (directSdr) return;
         if (HighPrecision && now >= nextDisplayCheck)
         {
             nextDisplayCheck = now + 1;
@@ -185,6 +191,11 @@ internal sealed partial class ColorOutput : IDisposable
     /// <summary>Display-encoded RGBA8 for PNGs/tests, before monitor-specific white scaling.</summary>
     public byte[] ReadPixels(bool dither)
     {
+        if (directSdr)
+        {
+            using var back = swapChain.GetBuffer<ID3D11Texture2D>(0);
+            return ReadSurface(back, 4);
+        }
         var values = MemoryMarshal.Cast<byte, Half>(ReadSurface(scene!, 8));
         var result = new byte[width * height * 4];
         for (int pixel = 0; pixel < width * height; pixel++)

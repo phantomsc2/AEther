@@ -14,6 +14,7 @@ internal sealed class GpuProfiler : IDisposable
         internal readonly List<(string Name, bool Start)> Events = new(64);
         internal bool Pending;
         internal bool Overflow;
+        internal bool Detailed;
         internal long Submitted;
         internal long Timestamp;
         internal PipelineProfile? Profile;
@@ -31,6 +32,7 @@ internal sealed class GpuProfiler : IDisposable
     int next;
     internal long SkippedFrames { get; private set; }
     internal long InvalidFrames { get; private set; }
+    internal int LastQueryCount { get; private set; }
 
     internal GpuProfiler(ID3D11Device device, ID3D11DeviceContext context)
     {
@@ -53,6 +55,7 @@ internal sealed class GpuProfiler : IDisposable
             if (!frame.Pending)
             {
                 active = frame; frame.Profile = profile; frame.Timestamp = timestamp; frame.Events.Clear(); frame.Overflow = false;
+                frame.Detailed = profile.DetailedGpuTimings || profile.Enabled;
                 context.Begin(frame.Disjoint);
                 next = (next + 1) % frames.Length;
             }
@@ -69,6 +72,7 @@ internal sealed class GpuProfiler : IDisposable
         Marker("Frame", false);
         if (active != null)
         {
+            LastQueryCount = active.Events.Count;
             context.End(active.Disjoint);
             active.Submitted = System.Diagnostics.Stopwatch.GetTimestamp();
             active.Pending = true; active = null;
@@ -83,6 +87,7 @@ internal sealed class GpuProfiler : IDisposable
     {
         Annotate(name, begin);
         if (active == null) return;
+        if (!active.Detailed && name != "Frame") return;
         int index = active.Events.Count;
         if (index == active.Queries.Length) { active.Overflow = true; return; }
         context.End(active.Queries[index]);

@@ -13,15 +13,17 @@ public sealed partial class Renderer
     public WaitHandle? DebugFrameReady { get { lock (graphicsGate) return debugOutput?.FrameReady; } }
     internal long DebugDrawCount { get; private set; }
 
-    /// <summary>Attach a second presentation surface sharing this renderer's audio and device.</summary>
-    public void AttachDebugOutput(IntPtr window, int width, int height, Action<IDXGISwapChain1?>? attachSwapChain = null)
+    /// <summary>Attach a second presentation surface sharing this renderer's audio and device.
+    /// Low-cost previews render directly to SDR instead of a separate high-precision scene/color-conversion pass.</summary>
+    public void AttachDebugOutput(IntPtr window, int width, int height, Action<IDXGISwapChain1?>? attachSwapChain = null,
+        bool lowCost = false)
     {
         lock (graphicsGate)
         {
             DetachDebugOutput();
             using var factory = global::Vortice.DXGI.DXGI.CreateDXGIFactory1<IDXGIFactory2>();
             var candidate = new ColorOutput(device, context, factory, window, width, height,
-                output.HighPrecision, attachSwapChain);
+                output.HighPrecision, attachSwapChain, directSdr: lowCost);
             try { candidate.Resize(width, height); }
             catch { candidate.Dispose(); throw; }
             debugOutput = candidate;

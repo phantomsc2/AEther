@@ -26,6 +26,11 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (Environment.GetCommandLineArgs().Contains("--hub"))
+        {
+            new HubProfile(this).Start();
+            return;
+        }
         Directory.CreateDirectory(output);
         var arguments = Environment.GetCommandLineArgs();
         var windowSeconds = FrameTimeView.HistorySeconds;
@@ -107,6 +112,7 @@ public partial class App : Application
                 profile.Describe("Points", view.PointCount.ToString());
                 profile.Describe("GPU points", view.GpuPointCount.ToString());
                 profile.Describe("Age points", view.AgePointCount.ToString());
+                profile.Describe("Plotted points", view.PlottedPointCount.ToString());
                 profile.Describe("Completed chart updates/s", ((view.CompletedUpdates - initialUpdates) / seconds).ToString("F2"));
                 profile.Describe("CPU core equivalents", cpu.ToString("F3"));
                 profile.Describe("Private MiB", (process.PrivateMemorySize64 / 1048576.0).ToString("F1"));

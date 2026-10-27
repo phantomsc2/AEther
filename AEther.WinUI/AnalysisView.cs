@@ -11,6 +11,7 @@ public sealed class AnalysisView : UserControl
     readonly Window owner;
     Renderer? renderer;
     string? outputError;
+    internal (int Width, int Height) PreviewPixelSize { get; private set; }
     public event EventHandler? OutputChanged;
     public string? Error => outputError ?? renderer?.DebugOutputError;
     public bool CanRender => IsLoaded && owner.AppWindow.IsVisible
@@ -54,12 +55,16 @@ public sealed class AnalysisView : UserControl
         {
             try
             {
-                var width = Math.Max(1, (int)Math.Round(graph.ActualWidth * graph.CompositionScaleX));
-                var height = Math.Max(1, (int)Math.Round(graph.ActualHeight * graph.CompositionScaleY));
+                // This preview has one vertical value per analysis band. Avoid shading the
+                // same bin over many physical pixels, especially on high-DPI/large windows.
+                var width = Math.Clamp((int)Math.Round(graph.ActualWidth * graph.CompositionScaleX), 1, 640);
+                var height = Math.Clamp((int)Math.Round(graph.ActualHeight * graph.CompositionScaleY), 1,
+                    Math.Clamp(renderer.Audio.Bands, 1, 256));
                 if (!renderer.HasDebugOutput)
                     renderer.AttachDebugOutput(WinRT.Interop.WindowNative.GetWindowHandle(owner), width, height,
-                        chain => SwapChainHost.Attach(graph, chain));
-                renderer.ResizeDebugOutput(width, height, graph.CompositionScaleX, graph.CompositionScaleY);
+                        chain => SwapChainHost.Attach(graph, chain), lowCost: true);
+                renderer.ResizeDebugOutput(width, height, (float)(width / graph.ActualWidth), (float)(height / graph.ActualHeight));
+                PreviewPixelSize = (width, height);
             }
             catch (Exception error) { outputError = error.Message; }
         }

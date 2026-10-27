@@ -19,6 +19,9 @@ public sealed class FrameTimeView : UserControl
     const string FrameMetric = "render.frame_interval_ms";
     const int Capacity = 32768;
     internal const int HistorySeconds = 10;
+    static readonly double[] LogTicks = Enumerable.Range(-6, 16)
+        .SelectMany(exponent => new[] { (double)exponent, exponent + Math.Log10(2), exponent + Math.Log10(5) })
+        .ToArray();
     readonly CartesianChart chart = new()
     {
         AnimationsSpeed = TimeSpan.Zero,
@@ -38,9 +41,7 @@ public sealed class FrameTimeView : UserControl
     {
         TextSize = 11,
         // The chart plots log10(milliseconds), so tick positions use the same scale.
-        CustomSeparators = Enumerable.Range(-6, 16)
-            .SelectMany(exponent => new[] { (double)exponent, exponent + Math.Log10(2), exponent + Math.Log10(5) })
-            .ToArray(),
+        CustomSeparators = Array.Empty<double>(),
         Labeler = value => Math.Pow(10, value).ToString("G3"),
     };
     readonly DispatcherTimer refresh = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -53,6 +54,7 @@ public sealed class FrameTimeView : UserControl
     internal int PointCount => traces[0].Points.Count;
     internal int GpuPointCount => traces[1].Points.Count;
     internal int AgePointCount => traces[2].Points.Count;
+    internal int PlottedPointCount => traces.Sum(trace => trace.Points.Count);
     internal long UpdateCount { get; private set; }
     internal long LostSamples => lost;
     internal TimeSpan RefreshInterval { get => refresh.Interval; set => refresh.Interval = value; }
@@ -138,6 +140,17 @@ public sealed class FrameTimeView : UserControl
                 expired = Math.Max(expired, trace.Points.Count - Capacity);
                 if (expired > 0) trace.Points.RemoveRange(0, expired);
             }
+            double min = double.PositiveInfinity, max = double.NegativeInfinity;
+            foreach (var trace in traces)
+                foreach (var point in trace.Points)
+                {
+                    min = Math.Min(min, point.LogMilliseconds);
+                    max = Math.Max(max, point.LogMilliseconds);
+                }
+            // LiveCharts creates/measures custom tick visuals even outside the visible range.
+            // Keep only the useful 1-2-5 ticks, rather than all sixteen decades.
+            var ticks = LogTicks.Where(tick => tick >= min && tick <= max).ToArray();
+            if (!ticks.SequenceEqual(durationAxis.CustomSeparators ?? [])) durationAxis.CustomSeparators = ticks;
             timeAxis.MinLimit = latestTime - HistorySeconds;
             timeAxis.MaxLimit = latestTime;
         }
@@ -175,10 +188,18 @@ public sealed class FrameTimeView : UserControl
     }
 
     // Native chart entities cache their coordinates/metadata instead of using the library's per-update mapper lookup.
-    sealed class FramePoint(double time, double milliseconds) : IChartEntity
+    sealed class FramePoint : IChartEntity
     {
-        public double Time { get; } = time;
-        public Coordinate Coordinate { get; } = new(time, Math.Log10(milliseconds));
+        public double Time { get; }
+        public double LogMilliseconds { get; }
+        public Coordinate Coordinate { get; }
         public ChartEntityMetaData? MetaData { get; set; }
+
+        public FramePoint(double time, double milliseconds)
+        {
+            Time = time;
+            LogMilliseconds = Math.Log10(milliseconds);
+            Coordinate = new(time, LogMilliseconds);
+        }
     }
 }

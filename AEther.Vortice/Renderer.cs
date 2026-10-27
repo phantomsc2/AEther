@@ -101,6 +101,7 @@ public sealed partial class Renderer : IDisposable
         : $"{fluid.Width}x{fluid.Height}, {fluid.LastSteps} velocity / {fluid.LastMaterialSteps} material steps, {fluid.LastDraws} draws";
     public long SkippedGpuTimingFrames => gpu.SkippedFrames;
     public long InvalidGpuTimingFrames => gpu.InvalidFrames;
+    internal int LastGpuTimingQueryCount => gpu.LastQueryCount;
     internal void PollGpuTimings() => gpu.Poll();
     internal void GpuMarker(string name, bool begin)
     {

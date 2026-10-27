@@ -94,7 +94,15 @@ public sealed class MainWindow : Window
             }
         };
         settings.InputChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
-        settings.DiagnosticsRequested += (_, _) => debug.SetTiming(session);
+        settings.DiagnosticsRequested += (_, _) =>
+        {
+            if (session != null) session.Analyzer.Profile.DetailedGpuTimings = true;
+            debug.SetTiming(session);
+        };
+        settings.Diagnostics.Collapsed += (_, _) =>
+        {
+            if (session != null) session.Analyzer.Profile.DetailedGpuTimings = false;
+        };
         audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
         foreach (var key in new[] { VirtualKey.F5, VirtualKey.F6, VirtualKey.F11 })
             ToolWindow.AddShortcut(settings, key, () => HandleToolShortcut(key));
@@ -235,6 +243,7 @@ public sealed class MainWindow : Window
                 {
                     replacement = CreateSource();
                     await current.RestartAnalysisAsync(replacement, audio.Options);
+                    current.Analyzer.Profile.DetailedGpuTimings = settings.DiagnosticsExpanded;
                     frameTime.Attach(current.Analyzer.Profile);
                     replacement = null; // Session now owns the new source.
                     if (closing) return;
@@ -269,6 +278,7 @@ public sealed class MainWindow : Window
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
                 session = next;
+                next.Analyzer.Profile.DetailedGpuTimings = settings.DiagnosticsExpanded;
                 frameTime.Attach(next.Analyzer.Profile);
                 analysis.Attach(next.Renderer);
                 shaders.Attach(next.Renderer);
