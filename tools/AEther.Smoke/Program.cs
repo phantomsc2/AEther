@@ -12,6 +12,32 @@ using Splitter = AEther.Splitter;
 
 internal static partial class Program
 {
+    static (ShaderParameters Values, ShaderParameter Parameter) FindParameter(Renderer renderer, string path)
+    {
+        var values = renderer.ActiveShader?.Parameters
+            ?? throw new InvalidOperationException($"{renderer.SceneName} has no parameters.");
+        var parameter = ShaderParameters.Leaves(values.Items).Single(p => p.Path == path);
+        return (values, parameter);
+    }
+
+    static void SetParameter(Renderer renderer, string path, float value)
+    {
+        var (values, parameter) = FindParameter(renderer, path);
+        values.SetFloat(parameter, Math.Clamp(value, 0, 1));
+    }
+
+    static void SetParameter(Renderer renderer, string path, bool value)
+    {
+        var (values, parameter) = FindParameter(renderer, path);
+        values.SetBoolean(parameter, value);
+    }
+
+    static float GetParameter(Renderer renderer, string path)
+    {
+        var (values, parameter) = FindParameter(renderer, path);
+        return values.GetFloat(parameter);
+    }
+
     static long nextSeedRow;
     [STAThread]
     static int Main(string[] args)
@@ -52,9 +78,9 @@ internal static partial class Program
                     shaderDirectory);
                 Seed(renderer);
                 var hashes = new System.Collections.Generic.HashSet<string>();
-                foreach (var scene in Enum.GetValues<Scene>())
+                foreach (var scene in new[] { "Spectrum", "Histogram", "Mandelbox", "MandelFluid" })
                 {
-                    renderer.Scene = scene;
+                    renderer.SelectScene(scene);
                     Seed(renderer);
                     renderer.Render(false);
                     var pixels = renderer.ReadPixels();
@@ -65,7 +91,7 @@ internal static partial class Program
                     renderer.Render();
                     Console.WriteLine($"Rendered {scene}, session {restart + 1}");
                 }
-                if (hashes.Count != Enum.GetValues<Scene>().Length) throw new InvalidOperationException("Scenes produced identical images.");
+                if (hashes.Count != 4) throw new InvalidOperationException("Scenes produced identical images.");
                 renderer.Resize(320, 240);
                 renderer.Render(false);
                 if (renderer.ReadPixels().Length != 320 * 240 * 4) throw new Exception("Resize failed.");
@@ -80,7 +106,7 @@ internal static partial class Program
                 File.WriteAllText(shaderPath, workingShader);
                 if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
                 Seed(renderer);
-                renderer.Scene = Scene.Histogram;
+                renderer.SelectScene("Histogram");
                 renderer.Render(false);
                 System.Threading.Thread.Sleep(1150);
                 renderer.Render(false);
@@ -89,7 +115,7 @@ internal static partial class Program
                     throw new Exception("History failed to expire during silent capture.");
                 var musicalTime = renderer.Audio.MusicalTime;
                 var velocity = renderer.Audio.MusicalVelocity;
-                renderer.Scene = Scene.Mandelbox;
+                renderer.SelectScene("Mandelbox");
                 renderer.Render(false);
                 if (renderer.Audio.MusicalTime < musicalTime || renderer.Audio.MusicalVelocity > velocity)
                     throw new Exception("Silent Mandelbox momentum failed to coast down.");
@@ -148,8 +174,8 @@ internal static partial class Program
         const int width = 2048, height = 64;
         foreach (bool highPrecision in new[] { true, false })
         {
-            using var renderer = new Renderer(window, width, height, 16, 64, 1, fixture, highPrecision)
-            { Scene = Scene.Spectrum };
+            using var renderer = new Renderer(window, width, height, 16, 64, 1, fixture, highPrecision);
+            renderer.SelectScene("Spectrum");
             renderer.Render(false);
             if (highPrecision && !renderer.HighPrecisionOutput)
                 throw new Exception("The GPU did not expose FP16 scRGB for the precision check.");
@@ -207,8 +233,9 @@ internal static partial class Program
         foreach (var file in Directory.GetFiles(shaders, "*.hlsl"))
             File.Copy(file, Path.Combine(fixture, Path.GetFileName(file)), true);
         File.AppendAllText(Path.Combine(fixture, "Common.hlsl"), "\n#define MovementTime 0.0\n#define S 0.0\n#define FractalDepth 8.5\n");
-        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { Scene = Scene.MandelFluid, MandelboxAntialiasing = false };
+        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture);
+        renderer.SelectScene("MandelFluid");
+        SetParameter(renderer, "Quality.Antialiasing", false);
         renderer.Render(false);
         renderer.Fluid.AdvanceForCheck(renderer.FluidPrograms, 10);
         if (renderer.Fluid.ReadDye().Any(v => v != 0)) throw new Exception("Fluid generated pigment in silence.");
@@ -365,9 +392,9 @@ internal static partial class Program
         Console.WriteLine("Fluid stability: repeated million-amplitude tone/noise/attack bursts stayed finite and within pigment capacity.");
         foreach (var history in renderer.Audio.History) Array.Clear(history);
         renderer.Audio.InvalidateHistory();
-        renderer.Scene = Scene.Mandelbox;
+        renderer.SelectScene("Mandelbox");
         renderer.Render(false);
-        renderer.Scene = Scene.MandelFluid;
+        renderer.SelectScene("MandelFluid");
         renderer.Render(false);
         if (Mass(renderer.Fluid.ReadDye()) != 0)
             throw new Exception("Scene re-entry retained stale pigment.");
@@ -532,10 +559,10 @@ internal static partial class Program
         var hashes = new System.Collections.Generic.HashSet<string>();
         foreach (var quality in new[] { false, true })
         {
-            renderer.MandelboxAntialiasing = quality;
+            SetParameter(renderer, "Quality.Antialiasing", quality);
             foreach (var slice in new[] { 0f, .15f, .7f })
             {
-                renderer.SliceDepth = slice;
+                SetParameter(renderer, "Geometry.SliceDepth", (slice + 2) / 4);
                 renderer.Render(false);
                 var first = renderer.ReadPixels();
                 renderer.Render(false);
@@ -544,7 +571,7 @@ internal static partial class Program
                 if (!first.Where((_, i) => i % 4 != 3).Any(v => v > 10)
                     || first.Where((_, i) => i % 4 == 3).Any(v => v != 255))
                     throw new Exception($"{quality} produced an empty or invalid Mandelbox.");
-                renderer.SliceDepth += .0001f;
+                SetParameter(renderer, "Geometry.SliceDepth", GetParameter(renderer, "Geometry.SliceDepth") + .0001f / 4);
                 renderer.Render(false);
                 var shifted = renderer.ReadPixels();
                 movement[quality ? 1 : 0] += first.Select((v, i) => i % 4 == 3 ? 0 : Math.Abs(v - shifted[i])).Average();
@@ -612,9 +639,11 @@ internal static partial class Program
                 .Replace("#define FractalDepth 20.0", "#define FractalDepth 8.5")
                 .Replace("#define S .37", "#define S 0.0"));
             File.WriteAllText(Path.Combine(directory, "Mandelbox.hlsl"), shader);
-            using var renderer = new Renderer(window, 320, 180, 64, 256, 1, directory)
-            { MandelboxAntialiasing = false,
-                MandelboxJuliaBlend = 0, MandelboxFoldRotation = 0, MandelboxAnisotropy = 0 };
+            using var renderer = new Renderer(window, 320, 180, 64, 256, 1, directory);
+            SetParameter(renderer, "Quality.Antialiasing", false);
+            SetParameter(renderer, "Geometry.JuliaBlend", 0);
+            SetParameter(renderer, "Geometry.FoldRotation", 0);
+            SetParameter(renderer, "Geometry.Anisotropy", 0);
             FillContrastHistory(renderer);
             renderer.Render(false);
             var pixels = renderer.ReadPixels();
@@ -648,8 +677,8 @@ internal static partial class Program
             #define VisualFlash 0.0
 
             """);
-        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { MandelboxAntialiasing = true };
+        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture);
+        SetParameter(renderer, "Quality.Antialiasing", true);
         foreach (var channel in new[] { 0, 1 })
         foreach (var target in new[] { .12, .5, .88 })
         {
@@ -710,16 +739,16 @@ internal static partial class Program
             #define VisualFlash 0.0
 
             """;
-        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture)
-        { MandelboxAntialiasing = true };
+        using var renderer = new Renderer(window, 640, 360, 64, 256, 1, fixture);
+        SetParameter(renderer, "Quality.Antialiasing", true);
         FillContrastHistory(renderer);
         byte[] Capture(string name, float julia, float rotation, float anisotropy, int time)
         {
             File.WriteAllText(commonPath, common + $"\n#define MovementTime {time}.0\n");
             if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-            renderer.MandelboxJuliaBlend = julia;
-            renderer.MandelboxFoldRotation = rotation;
-            renderer.MandelboxAnisotropy = anisotropy;
+            SetParameter(renderer, "Geometry.JuliaBlend", julia);
+            SetParameter(renderer, "Geometry.FoldRotation", rotation);
+            SetParameter(renderer, "Geometry.Anisotropy", anisotropy * 2);
             renderer.Render(false);
             var image = renderer.ReadPixels();
             renderer.Render(false);
@@ -764,7 +793,7 @@ internal static partial class Program
         {
             foreach (var quality in new[] { false, true })
             {
-                renderer.MandelboxAntialiasing = quality;
+                SetParameter(renderer, "Quality.Antialiasing", quality);
                 var lower = AtDepth("8.0");
                 var middle = AtDepth("8.5");
                 foreach (var near in new[] { AtDepth("7.999"), AtDepth("8.001") })
@@ -776,7 +805,7 @@ internal static partial class Program
                 Save(middle, 96, 54, Path.Combine(output, $"mandelbox-depth-travel-{quality}.png"));
             }
             // Supersampling must equal a larger render of the same field.
-            renderer.MandelboxAntialiasing = true;
+            SetParameter(renderer, "Quality.Antialiasing", true);
             foreach (var depth in new[] { "1.0", "128.0", "4096.0", "2147483647.0" })
             {
                 var pixels = AtDepth(depth);
@@ -791,7 +820,7 @@ internal static partial class Program
             var scaleHashes = new System.Collections.Generic.HashSet<string>();
             foreach (var scale in new[] { -3f, -2f, -1.5f, -.5f, 0f, .5f, 1.5f, 2f })
             {
-                renderer.MandelboxScale = scale;
+                SetParameter(renderer, "Geometry.Scale", (scale + 4) / 8);
                 var pixels = AtDepth("12.0");
                 renderer.Render(false);
                 if (!pixels.SequenceEqual(renderer.ReadPixels()))
@@ -800,7 +829,7 @@ internal static partial class Program
                 Save(pixels, 96, 54, Path.Combine(output, $"mandelbox-scale-{scale.ToString(System.Globalization.CultureInfo.InvariantCulture)}.png"));
             }
             if (scaleHashes.Count < 6) throw new Exception("Scale changes did not reshape the fractal.");
-            renderer.MandelboxScale = -1.5f;
+            SetParameter(renderer, "Geometry.Scale", (-1.5f + 4) / 8);
             Console.WriteLine("Mandelbox scale: negative, zero and positive values produced stable, distinct renders.");
             // Exercise fractional depth so this also checks operation ordering.
             // HEAD contains quad-derivative shading heuristics. Disable those
@@ -812,11 +841,11 @@ internal static partial class Program
             using var referenceWindow = new Form { ShowInTaskbar = false };
             foreach (var samples in new[] { 2 })
             {
-                renderer.MandelboxAntialiasing = true;
+                SetParameter(renderer, "Quality.Antialiasing", true);
                 renderer.Render(false);
                 var actual = renderer.ReadPixels();
-                using var reference = new Renderer(referenceWindow.Handle, 96 * samples, 54 * samples, 64, 256, 1, shaders)
-                { MandelboxAntialiasing = false };
+                using var reference = new Renderer(referenceWindow.Handle, 96 * samples, 54 * samples, 64, 256, 1, shaders);
+                SetParameter(reference, "Quality.Antialiasing", false);
                 FillContrastHistory(reference);
                 reference.Render(false);
                 var large = reference.ReadPixels();

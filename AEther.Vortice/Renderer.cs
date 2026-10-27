@@ -90,6 +90,13 @@ public sealed partial class Renderer : IDisposable
             SceneName = name;
         }
     }
+    bool ReadBoolean(string path)
+    {
+        var values = ActiveShader?.Parameters;
+        var parameter = values == null ? null : ShaderParameters.Leaves(values.Items).FirstOrDefault(p => p.Path == path);
+        return parameter != null && values!.GetBoolean(parameter);
+    }
+
     public string? ShaderError { get; private set; }
     public string ShaderDirectory => shaderDirectory;
     public bool HighPrecisionOutput => output.HighPrecision;

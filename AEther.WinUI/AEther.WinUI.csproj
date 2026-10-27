@@ -22,4 +22,13 @@
     <ProjectReference Include="../AEther.NAudio/AEther.NAudio.csproj" />
     <ProjectReference Include="../AEther.Vortice/AEther.Vortice.csproj" />
   </ItemGroup>
+  <!-- Keep SDK language resources in the output without showing linked folders in the IDE. -->
+  <Target Name="HideWindowsAppSDKLanguageResources"
+          AfterTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents">
+    <ItemGroup>
+      <None Update="@(MicrosoftWindowsAppSDKFiles)" Condition="'%(Extension)' == '.mui'">
+        <Visible>false</Visible>
+      </None>
+    </ItemGroup>
+  </Target>
 </Project>
