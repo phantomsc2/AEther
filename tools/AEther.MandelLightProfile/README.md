@@ -1,4 +1,4 @@
-# MandelLight GPU profile
+# MandelLightv4 GPU profile
 
 All modes use the renderer's global Intel Arc default. There are no adapter selection
 flags. Machines without Arc use normal hardware; a present but unusable Arc is an error.
@@ -93,23 +93,6 @@ The `--filter` comparison explicitly disables both speed modes to isolate the
 full-resolution 3x3 filter. Ordinary `--quick` captures use the current preset,
 including its enabled speed modes.
 
-For the Fourier/deep-cubemap prototype, add `--v3`:
-
-```powershell
-dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v3/current --v3
-```
-
-This captures the default four-light scene, source counts through 512, moving
-sources, cached maps with a moving camera, filtering, sampling and cube-resolution
-variants, inside views, density and transport diagnostics, emission and air-only
-views. Each case writes a PNG. GPU timestamps report individual light cubemaps,
-camera and total, as medians of 11 frames after eight warmups. CPU aggregation is
-the last measured call, retained across cache hits, rather than a per-frame median.
-`--quick` captures only default. `--small` uses 320 by 180. `--reference` renders
-only default at 320 by 180 with direct analytical light attenuation, bypassing the
-maps but retaining the same sampled camera scattering integral. See the
-[v3 model and controls](../../doc/mandellight-v3.md).
-
 For the analytical ellipsoid prototype, add `--v2`:
 
 ```powershell
@@ -119,8 +102,7 @@ dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders a
 This selects and copies MandelLightv2, timestamps its complete single-pass render,
 and captures default, count, quality, lighting and inside-camera variants. `--quick`
 runs only its default. `--reference` renders a copied v2 shader at 256 shared
-samples and runs only the default. V2 does not use the old per-pass markers or
-the MandelLight-specific `--noise` comparison. See the
+samples and runs only the default. See the
 [v2 model and controls](../../doc/mandellight-v2.md).
 
 Windows and a D3D11 GPU are required. Run from the repository root:
@@ -133,34 +115,12 @@ The checked report in `doc/mandellight-v4.md` also compares the 32-sample captur
 against a copied shader with a 1001-sample output; that reference is untimed for
 the reported production comparison.
 
-```powershell
-dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-profile/current
-dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-profile/noise --noise
+`````powershell
+dotnet run --project tools/AEther.MandelLightProfile -- AEther.Vortice/Shaders artifacts/mandellight-v4/current
 ```
 
-The first argument is a shader root containing `Common` and `Scenes/MandelLight.hlsl`.
-The second is an output directory. The tool copies only MandelLight and its common
-includes into that output, so other scenes do not affect compilation. Use distinct
-output directories for comparisons. Source shaders are not modified.
-
-The timing run measures a default moving camera/light, frozen caches, high samples,
-high transport steps, high iterations, four lights, trigonometric moments, an inside
-camera, and 1280 by 720. When the shader exposes `Transport.OrbitRejection`, it also
-measures 16 iterations with rejection disabled. `--quick` runs only the first two
-cases. GPU timestamps surround draws and the whole render, excluding shader
-compilation and pixel readback. Queries are allocated before each timed interval.
-Each result is the median of 21 frames after 20 warmups; output is `timings.json`
-and image captures. Individual medians need not sum to the median total. Avoid
-other GPU workloads while collecting comparisons; clock and scheduling variation
-can still affect the measurements.
-
-`--noise` freezes the default view and light at 320 by 180. It captures light,
-emission and combined output with 12 samples per proposal, then compiles a copied
-shader with 256 samples per proposal as a reference. It writes PNG pairs and
-`noise.json` with display-RGB RMSE and means. The reference retains the same moment
-and transport-step approximations, so it measures integration sampling error,
-not total error against an exact volume solution.
-
-The regular renderer has only a nullable internal pass callback; all timestamp
-queries and readback belong to this tool. See the
-[measurement report](../../doc/mandellight-performance.md) for the first trimming pass.
+The default scene is MandelLightv4; `--v2` selects MandelLightv2. The first
+argument is a shader root containing `Common` and `Scenes`. The second is an
+output directory. The tool copies the selected scene and common includes into
+that output. Use distinct output directories for comparisons. Source shaders
+are not modified.

@@ -299,13 +299,9 @@ float4 AdvectDye(PSin input) : SV_Target
     float2 p = World(input.UV);
     float4 source = Source(p);
     float noise = 1 - exp(-2 * source.b);
-#ifdef GEOMETRY_AFTERGLOW
-    float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4 / (CellSize.x * CellSize.y));
-#else
     float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4
         * smoothstep(.02, .35, max(noise, PoseZ))
         / (CellSize.x * CellSize.y));
-#endif
     // Conserve pigment as the carrier expands. Without dilution a fading
     // ambient plume gains total light merely by occupying more screen area.
     float r = length(p);
@@ -338,11 +334,7 @@ float4 AdvectDye(PSin input) : SV_Target
     float4 dose = StepSeconds * 6 * CometPigment(p, source);
 #elif defined(PROJECTIVE_FLIGHT)
     // Capture the continuously mapped IFS foreground for a fluid afterglow.
-#ifdef GEOMETRY_AFTERGLOW
-    float4 dose = StepSeconds * 6 * FlightPigment(p, source);
-#else
     float4 dose = StepSeconds * 6 * FlightPigment(p, source, SourceAge);
-#endif
 #else
     float frequency = atan2(abs(p.x), p.y) / 3.14159265;
     float3 palette = .5 + .5 * cos(6.2831853 * (frequency * .9 + .11 * (MusicalMovementTime * Quality.MovementSpeed * 10) + float3(.04, .38, .62)));

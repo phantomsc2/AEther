@@ -31,11 +31,7 @@ public sealed partial class Renderer : IDisposable
     ID3D11PixelShader outputPixel = null!;
 
     MandelFluidSimulation? fluid;
-    MandelbenchDistanceField? distanceField;
-    MomentLightTransport? lightTransport;
-    FourierLightTransport? fourierTransport;
     RasterLightTransport? rasterTransport;
-    ImageFeedback? feedback;
     string? previousScene;
     internal MandelFluidSimulation Fluid => fluid!;
     internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
@@ -118,7 +114,6 @@ public sealed partial class Renderer : IDisposable
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
     // Optional GPU timestamp markers used by the transport profiling tool.
     internal Action<string, bool>? TransportPassMarker { get; set; }
-    internal double FourierAggregationMilliseconds => fourierTransport?.LastAggregationMilliseconds ?? 0;
     internal bool UnshadowedAirlightReady => rasterTransport?.LookupReady == true;
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
@@ -246,8 +241,6 @@ public sealed partial class Renderer : IDisposable
                 if (StringComparer.Ordinal.Equals(SceneName, name))
                 {
                     fluid?.Dispose(); fluid = null;
-                    distanceField?.Dispose(); distanceField = null;
-                    feedback?.Dispose(); feedback = null;
                 }
                 ShaderError = null;
                 ShadersChanged?.Invoke(this, EventArgs.Empty);
@@ -307,8 +300,6 @@ public sealed partial class Renderer : IDisposable
         if (StringComparer.Ordinal.Equals(SceneName, name))
         {
             fluid?.Dispose(); fluid = null;
-            distanceField?.Dispose(); distanceField = null;
-            feedback?.Dispose(); feedback = null;
         }
         ShaderError = null;
         ShadersChanged?.Invoke(this, EventArgs.Empty);
@@ -374,11 +365,8 @@ public sealed partial class Renderer : IDisposable
         if (newWidth < 1 || newHeight < 1 || newWidth == width && newHeight == height) return;
         output.Resize(newWidth, newHeight);
         width = newWidth; height = newHeight;
-        ReleaseGeometryTargets();
         // Resizing changes the physical domain. Recreate lazily on next fluid frame.
         fluid?.Dispose(); fluid = null;
-        distanceField?.Dispose(); distanceField = null;
-        feedback?.Dispose(); feedback = null;
     }
 
     public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null,
@@ -487,47 +475,10 @@ public sealed partial class Renderer : IDisposable
             context.RSSetViewport(0, 0, width, height);
             rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers);
         }
-        if (active.FourierShadow != null)
-        {
-            fourierTransport ??= new(device, context);
-            fourierTransport.PassMarker = GpuMarker;
-            fourierTransport.Prepare(active.FourierShadow, active.Parameters!, (float)now,
-                namedBuffers, namedBuffers, namedTextures);
-            context.RSSetViewport(0, 0, width, height);
-        }
-        if (active.Atmosphere != null)
-        {
-            lightTransport ??= new(device, context);
-            lightTransport.PassMarker = GpuMarker;
-            lightTransport.PrecalculateAtmosphere(active.Atmosphere, active.Parameters!, namedBuffers);
-            bool atmosphereOnly = ReadBoolean("View.ShowAtmosphereLookup");
-            if (active.CameraTransport != null)
-            {
-                lightTransport.PrecalculateCamera(active.CameraTransport, active.Parameters!, namedBuffers, width, height, !atmosphereOnly, (float)now);
-                lightTransport.BindCamera(namedTextures);
-            }
-            if (active.Lighting != null)
-            {
-                lightTransport.IntegrateLights(active.LightTransport!, active.Lighting, active.Parameters!, namedBuffers,
-                    width, height, (float)now, atmosphereOnly);
-                namedTextures["LightRadiance"] = lightTransport.Radiance;
-            }
-            lightTransport.BindPreview(namedTextures);
-            namedTextures["AtmosphereOpticalDepth"] = lightTransport.Atmosphere;
-            namedSamplers["AtmosphereSampler"] = lightTransport.Sampler;
-            context.RSSetViewport(0, 0, width, height);
-        }
-
         namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
         // Compatibility names now refer to the core evidence; there is no scene filter pass.
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
-        if (active.GeometryVertex != null)
-        {
-            GpuMarker("Geometry", true);
-            DrawGeometry(active);
-            GpuMarker("Geometry", false);
-        }
         if (active.Fluid != null)
         {
             int gridLimit = SceneName switch
@@ -552,33 +503,13 @@ public sealed partial class Renderer : IDisposable
             namedSamplers["FluidSampler"] = fluid.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }
-        if (active.Program.Uses("PreviousImage"))
-        {
-            feedback ??= new(device, context, width, height);
-            if (previousScene != SceneName || dt > .5) feedback.Clear();
-            GpuMarker("Feedback", true);
-            feedback.Advance(dt, active, namedBuffers, namedTextures, namedSamplers);
-            GpuMarker("Feedback", false);
-        }
         previousScene = SceneName;
-        if (active.Distance != null)
-        {
-            distanceField ??= new(device, context, width, height);
-            GpuMarker("Distance field", true);
-            distanceField.Update(active.Distance, active.Parameters!, namedBuffers);
-            GpuMarker("Distance field", false);
-            namedTextures["DistanceField"] = distanceField.Field;
-            namedSamplers["DistanceSampler"] = distanceField.Sampler;
-            context.RSSetViewport(0, 0, width, height);
-        }
         context.OMSetRenderTargets(output.SceneTarget!);
         GpuMarker("Scene", true);
-        (active.Composite ?? active.Program).Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
-        if (active.FourierShadow != null) GpuMarker("Fourier camera", true);
+        active.Program.Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         if (active.Raster != null) GpuMarker("Raster composite", true);
         context.Draw(3, 0);
         if (active.Raster != null) GpuMarker("Raster composite", false);
-        if (active.FourierShadow != null) GpuMarker("Fourier camera", false);
         GpuMarker("Scene", false);
         GpuMarker("Output", true);
         output.Draw(outputPixel, now);
@@ -609,13 +540,7 @@ public sealed partial class Renderer : IDisposable
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();
-        distanceField?.Dispose();
-        lightTransport?.Dispose();
-        fourierTransport?.Dispose();
         rasterTransport?.Dispose();
-        feedback?.Dispose();
-        ReleaseGeometryTargets(); geometryDepthState?.Dispose();
-        geometryNoDepthState?.Dispose(); geometryAdditiveState?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }

@@ -2,11 +2,9 @@
 
 Select **MandelLightv2** in the scene selector. Scene discovery and hot reload use
 the existing shader authoring path; no new renderer resources or passes are needed.
-MandelLight remains the separate fractal/moment-transport reference.
 
 This is an audio-independent proof of concept and intentionally remains visible
-without music. It has no image history or simulation. Like MandelVolume and
-MandelLight, it is explicitly excluded from production silence/audio-response
+without music. It has no image history or simulation. Like MandelVolume, it is explicitly excluded from production silence/audio-response
 regressions. Production audio reactivity must gate its lights and emission before
 removing that exemption.
 
@@ -28,8 +26,7 @@ Overlaps are denser, with no density clamp, threshold surface or surface shading
 All allowed blob shapes fit inside the radius-16 air support.
 
 Air is one broad spherical instance of the same cubic kernel. It adds to material
-extinction and scattering; material does not displace it. This differs from
-MandelLight's exponential radial atmosphere and air displacement. There is no
+extinction and scattering; material does not displace it. There is no
 atmosphere lookup table in v2.
 
 Material and air use RGB single scattering with the normalized Rayleigh phase
@@ -104,9 +101,7 @@ The default eight-blob cluster is intended as a practical starting point.
 
 Intel(R) Arc(TM) Graphics, D3D11; median of 21 frames after 20 warmups. Compilation
 and readback are excluded. Unless specified: 640 by 360, 8 blobs, 2 lights, 32
-shared samples, moving camera/cloud/lights, emission off. These are different
-geometry and sampling settings from MandelLight, so this is not an equal-image
-benchmark. GPU clocks and other GPU workloads can affect the timings.
+shared samples, moving camera/cloud/lights, emission off. GPU clocks and other GPU workloads can affect the timings.
 
 | Case | GPU ms |
 | --- | ---: |

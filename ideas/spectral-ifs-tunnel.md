@@ -1,21 +1,6 @@
 # Spectral IFS flight - concept and research outline
 
-Related prototype: [MandelGalaxy](mandel-galaxy.md), a damped 3D many-body system with bass attractors, mid-band planets, harmonic-like moons and independently toggleable material layers.
-
 ## 1. Intended experience
-
-### Current geometry prototype: FractalEdge
-
-- Follow a close corner of a repeating fractal material, with open space beyond the edge.
-- Keep a small central fractal cutout as a steady place to look toward.
-- `FractalEdge` generates eight quads (sixteen triangles) in `GeometryVS`: three floor/wall segments, one detached shelf and one circularly clipped focal billboard.
-- A world-space camera tracks the edge. A directional light, moving headlight, surface normals and restrained procedural bump lighting give the surfaces depth cues. A D32 buffer provides actual geometric occlusion.
-- The coarse polygon surfaces approximate a corner; they are not extracted Mandelbox isosurfaces. The central patch uses a spherical shading normal on a flat cutout, not a ray-marched planet.
-- The same finite fractal neighborhood is sampled across the surfaces with a continuous repeating world chart. The camera travels through that chart instead of increasing a global zoom indefinitely.
-- Rhythmic lightning multiplies material illumination along its round contours.
-- The rendered geometry image alone feeds the 2D fluid. Afterglow is composited afterward. Setting `Effects.Amount` to zero removes the fluid overlay without changing geometry or material normals.
-- Main controls: `Camera.Clearance`, `Camera.Height`, `Camera.Speed`, `Camera.Aim`, `Material.FocalSize`, `Material.Detail`, `Lighting.Headlight`, and `Effects.Amount`.
-- The first use needs a managed application rebuild/restart because the renderer now supports a custom geometry vertex shader and depth buffer. Later source edits hot reload.
 
 - Incoming sound creates visible, already intricate structure ahead of the camera.
 - We travel through it at high speed: older structure approaches, expands in perspective and passes the camera.
