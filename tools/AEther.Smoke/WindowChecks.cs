@@ -85,11 +85,16 @@ internal static partial class Program
                                         throw new Exception("Explicit scene launch did not open the requested canvas.");
                                     NativeClose(canvasWindow);
                                 }
-                                if (host.Content != settings || !host.AppWindow.IsShownInSwitchers
+                                if (host.SystemBackdrop is not MicaBackdrop || canvasWindow.SystemBackdrop != null
+                                    || (host.Content != settings && (host.Content is not Grid hub || !hub.Children.Contains(settings)))
+                                    || !host.AppWindow.IsShownInSwitchers
                                     || canvasWindow.AppWindow.IsShownInSwitchers || canvasWindow.Title != ""
                                     || canvasWindow.AppWindow.Presenter is not Microsoft.UI.Windowing.OverlappedPresenter
                                         { IsResizable: true, HasTitleBar: true, HasBorder: true })
                                     throw new Exception("Hub must be primary; canvas must be untitled, windowed and resizable.");
+                                if (Microsoft.UI.Windowing.AppWindowTitleBar.IsCustomizationSupported()
+                                    && (Field<TitleBar?>("hubTitleBar") is not { } bar || bar.Title != host.Title || !host.ExtendsContentIntoTitleBar))
+                                    throw new Exception("The hub must have an integrated title bar matching the window title.");
                                 if (((UserControl)canvasWindow.Content).Content is not SwapChainPanel)
                                     throw new Exception("Canvas window must contain only the rendering canvas.");
                                 var shortcuts = ((UserControl)canvasWindow.Content).KeyboardAccelerators;

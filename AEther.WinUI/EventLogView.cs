@@ -82,7 +82,7 @@ public sealed class EventLogView : UserControl
         this.store = store ?? ApplicationLog.Events;
         var layout = (Grid)XamlReader.Load("""
             <Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                  Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" RowSpacing="4" />
+                  RowSpacing="4" />
             """);
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new() { Height = GridLength.Auto });

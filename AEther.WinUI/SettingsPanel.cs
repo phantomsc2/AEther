@@ -34,7 +34,6 @@ public sealed class SettingsPanel : UserControl
         layout.Children.Add(EventLog);
         Content = layout;
         SizeChanged += (_, _) => EventLog.SetAvailableHeight(ActualHeight);
-        Columns.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

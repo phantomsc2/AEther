@@ -16,6 +16,7 @@ public sealed class MainWindow : Window
     readonly SwapChainPanel canvas = new();
     readonly UserControl root;
     readonly SettingsPanel settings;
+    readonly TitleBar? hubTitleBar;
     readonly AnalysisView analysis;
     readonly FrameTimeView frameTime;
     readonly CanvasWindow canvasWindow;
@@ -56,12 +57,35 @@ public sealed class MainWindow : Window
         analysis = new(this);
         frameTime = new(this);
         settings = new(audio, graphics, shaders, analysis, frameTime);
-        Content = settings;
-        settings.ActualThemeChanged += (_, _) => UpdateTitleBarColors();
-        UpdateTitleBarColors();
+        SystemBackdrop = new MicaBackdrop();
+        if (AppWindowTitleBar.IsCustomizationSupported())
+        {
+            // These built-in navigation controls and the settings button are visual placeholders.
+            hubTitleBar = new TitleBar
+            {
+                Title = Title,
+                Subtitle = "Hub",
+                IconSource = new FontIconSource { Glyph = "\uE189" },
+                IsBackButtonVisible = true,
+                IsBackButtonEnabled = false,
+                IsPaneToggleButtonVisible = true,
+                RightHeader = new Button { Content = new FontIcon { Glyph = "\uE713" }, IsEnabled = false },
+            };
+            var layout = new Grid();
+            layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            layout.Children.Add(hubTitleBar);
+            Grid.SetRow(settings, 1);
+            layout.Children.Add(settings);
+            Content = layout;
+            ExtendsContentIntoTitleBar = true;
+            AppWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+            AppWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+            SetTitleBar(hubTitleBar);
+        }
+        else Content = settings;
         settings.Loaded += async (_, _) =>
         {
-            UpdateTitleBarColors();
             if (loaded) return;
             loaded = true;
             InitializeHubSize();
@@ -443,6 +467,7 @@ public sealed class MainWindow : Window
     void RefreshScenePicker()
     {
         Title = canvasDismissed ? "AEther" : $"AEther - {shaders.SelectedScene}";
+        if (hubTitleBar != null) hubTitleBar.Title = Title;
         settings.SetScenes(session?.Renderer.Scenes.Select(scene => scene.Name) ?? [],
             canvasDismissed ? null : shaders.SelectedScene);
     }
@@ -481,27 +506,6 @@ public sealed class MainWindow : Window
         try { if (ReferenceEquals(session, failed) && session?.PipelineId == pipelineId) await StopSessionAsync(); }
         catch (Exception error) { Log.Error(error, "Could not stop failed pipeline"); }
         finally { sessionGate.Release(); }
-    }
-
-    void UpdateTitleBarColors()
-    {
-        var background = (SolidColorBrush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
-        settings.Columns.Background = background;
-        settings.Background = background;
-        var foreground = settings.ActualTheme == ElementTheme.Dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
-        var titleBar = AppWindow.TitleBar;
-        titleBar.BackgroundColor = titleBar.InactiveBackgroundColor = background.Color;
-        titleBar.ButtonBackgroundColor = titleBar.ButtonInactiveBackgroundColor = background.Color;
-        titleBar.ForegroundColor = titleBar.ButtonForegroundColor = foreground;
-        titleBar.InactiveForegroundColor = titleBar.ButtonInactiveForegroundColor = Blend(.6);
-        titleBar.ButtonHoverBackgroundColor = Blend(.08);
-        titleBar.ButtonPressedBackgroundColor = Blend(.05);
-        titleBar.ButtonHoverForegroundColor = titleBar.ButtonPressedForegroundColor = foreground;
-
-        Windows.UI.Color Blend(double amount) => Windows.UI.Color.FromArgb(255,
-            (byte)Math.Round(background.Color.R + (foreground.R - background.Color.R) * amount),
-            (byte)Math.Round(background.Color.G + (foreground.G - background.Color.G) * amount),
-            (byte)Math.Round(background.Color.B + (foreground.B - background.Color.B) * amount));
     }
 
     void OnClosing(AppWindow sender, AppWindowClosingEventArgs e)
