@@ -36,18 +36,18 @@ public sealed class AudioPanel : UserControl
                 FrameworkElement editor;
                 if (property.PropertyType == typeof(bool))
                 {
-                    var toggle = new ToggleSwitch { Header = displayName, IsOn = (bool)property.GetValue(Options)! };
+                    var toggle = new ToggleSwitch { IsOn = (bool)property.GetValue(Options)! };
                     if (property.Name == nameof(AnalyzerOptions.UseSwift))
                     {
                         toggle.OnContent = "SWIFT";
                         toggle.OffContent = "DFT";
                     }
                     toggle.Toggled += (_, _) => { property.SetValue(Options, toggle.IsOn); RefreshBackendEditors(); Changed(); };
-                    editor = toggle;
+                    editor = LabeledControl.Create(displayName, toggle);
                 }
                 else if (property.PropertyType.IsEnum)
                 {
-                    var combo = new ComboBox { Header = displayName, HorizontalAlignment = HorizontalAlignment.Stretch };
+                    var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
                     var values = Enum.GetValues(property.PropertyType).Cast<object>();
                     foreach (var value in values)
                     {
@@ -63,7 +63,7 @@ public sealed class AudioPanel : UserControl
                         if (combo.SelectedItem is not ComboBoxItem item) return;
                         property.SetValue(Options, item.Tag); Changed();
                     };
-                    editor = combo;
+                    editor = LabeledControl.Create(displayName, combo);
                 }
                 else
                 {

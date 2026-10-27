@@ -156,11 +156,11 @@ internal static partial class Program
                                     throw new Exception("Text debug diagnostics must be removed.");
                                 var selector = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
                                 if (selector.SelectedItem != null || shadersVisible()
-                                    || !settings.Columns.Children.Contains(analysis) || settings.SceneColumn.Children[0] != selector)
+                                    || !settings.Columns.Children.Contains(analysis) || settings.SceneColumn.Children[0] is not Grid sceneRow || !sceneRow.Children.Contains(selector))
                                     throw new Exception("Scene must start empty with analysis above the audio controls.");
                                 if (!Descendants(audio.Content).OfType<NumberBox>().Any())
                                     throw new Exception("Analyzer property editor is missing.");
-                                if (!Descendants(settings.Content).OfType<ComboBox>().Any(c => c.Header?.ToString() == "Input")
+                                if (!Descendants(settings.Content).OfType<ComboBox>().Any(c => AutomationProperties.GetName(c) == "Input")
                                     || !Descendants(audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Gain"))
                                     throw new Exception("Input and Gain must live in the hub.");
                                 selector.SelectedItem = "Spectrum";
@@ -172,7 +172,7 @@ internal static partial class Program
                                     throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
                                 if (current.Analyzer.Progress.Latest.Gpu == null) return;
                                 if (!settings.Columns.Children.Contains(backlog) || Grid.GetColumn(backlog) != 2 || Grid.GetRow(backlog) != 0
-                                    || !backlog.CurveNames.SequenceEqual(new[] { "Frame time", "CPU", "GPU", "Input" }))
+                                    || !backlog.CurveNames.SequenceEqual(new[] { "Total", "CPU", "GPU", "Input" }))
                                     throw new Exception("The frame-time graph must occupy the right live-view pane.");
                                 if (!Descendants(shaderPanel.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
                                     || !Descendants(shaderPanel.Content).OfType<Slider>().Any())
@@ -189,7 +189,7 @@ internal static partial class Program
                                 shaderScroll.ChangeView(null, shaderScroll.ScrollableHeight, null, true);
                                 var number = Descendants(shaderPanel.Content).OfType<NumberBox>().First();
                                 number.Value = .75;
-                                var row = (FrameworkElement)VisualTreeHelper.GetParent(number);
+                                var row = (FrameworkElement)VisualTreeHelper.GetParent(VisualTreeHelper.GetParent(number));
                                 editedPath = (string)row.Tag;
                                 var values = current.Renderer.ActiveShader!.Parameters!;
                                 var debugValues = current.Renderer.GetSceneParameters("Debug")!;

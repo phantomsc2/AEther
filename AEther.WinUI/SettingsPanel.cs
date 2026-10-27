@@ -10,8 +10,8 @@ namespace AEther.WinUI;
 public sealed class SettingsPanel : UserControl
 {
     public const string Loopback = "System audio (loopback)";
-    readonly ComboBox input = new() { Header = "Input", HorizontalAlignment = HorizontalAlignment.Stretch };
-    readonly ComboBox scenePicker = new() { Name = "Scene", Header = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
+    readonly ComboBox input = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    readonly ComboBox scenePicker = new() { Name = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ShaderPanel shaders;
     bool refreshingScenes;
     internal Grid Columns { get; } = new() { Padding = new Thickness(12), ColumnSpacing = 4, RowSpacing = 8 };
@@ -99,8 +99,9 @@ public sealed class SettingsPanel : UserControl
             Content = audio,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
-        Grid.SetRow(input, 0); Grid.SetRow(AudioSettings, 1);
-        AudioColumn.Children.Add(input);
+        var inputRow = LabeledControl.Create("Input", input);
+        Grid.SetRow(inputRow, 0); Grid.SetRow(AudioSettings, 1);
+        AudioColumn.Children.Add(inputRow);
         AudioColumn.Children.Add(AudioSettings);
         Grid.SetRow(AudioColumn, 2);
         Columns.Children.Add(AudioColumn);
@@ -111,9 +112,10 @@ public sealed class SettingsPanel : UserControl
         SceneColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 2: shaders
         AutomationProperties.SetName(scenePicker, "Scene");
         Grid.SetRow(graphics, 1);
-        Grid.SetRow(scenePicker, 0);
+        var sceneRow = LabeledControl.Create("Scene", scenePicker);
+        Grid.SetRow(sceneRow, 0);
         Grid.SetRow(shaders, 2);
-        SceneColumn.Children.Add(scenePicker);
+        SceneColumn.Children.Add(sceneRow);
         SceneColumn.Children.Add(graphics);
         SceneColumn.Children.Add(shaders);
         Grid.SetRow(SceneColumn, 2);

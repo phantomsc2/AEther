@@ -7,6 +7,7 @@ using AEther.Smoke;
 using AEther.WinUI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 internal static partial class Program
@@ -61,10 +62,11 @@ internal static partial class Program
                     var settings = new AudioPanel();
                     var elements = LogicalChildren((DependencyObject)settings.Content).ToArray();
                     var numbers = elements.OfType<NumberBox>().ToArray();
-                    var width = numbers.Single(n => n.Header?.ToString() == "SWIFT width");
-                    var imbalance = numbers.Single(n => n.Header?.ToString() == "SWIFT imbalance");
-                    StackPanel Row(NumberBox n) => elements.OfType<StackPanel>().Single(p => p.Children.Contains(n));
-                    Slider SliderFor(NumberBox n) => Row(n).Children.OfType<Slider>().Single();
+                    var width = numbers.Single(n => AutomationProperties.GetName(n) == "SWIFT width");
+                    var imbalance = numbers.Single(n => AutomationProperties.GetName(n) == "SWIFT imbalance");
+                    Grid Controls(NumberBox n) => elements.OfType<Grid>().Single(p => p.Children.Contains(n));
+                    Grid Row(NumberBox n) => elements.OfType<Grid>().Single(p => p.Children.Contains(Controls(n)));
+                    Slider SliderFor(NumberBox n) => Controls(n).Children.OfType<Slider>().Single();
                     ContentControl Container(NumberBox n) => elements.OfType<ContentControl>().Single(c => ReferenceEquals(c.Content, Row(n)));
                     var widthSlider = SliderFor(width);
                     var dSlider = SliderFor(imbalance);
@@ -92,9 +94,10 @@ internal static partial class Program
                         dSlider.Value = value;
                         Equal(imbalance.Value, value); Equal(settings.Options.SwiftImbalance, value);
                     }
-                    var toggle = elements.OfType<ToggleSwitch>().Single(t => t.Header?.ToString() == "Spectrum analysis");
-                    var window = elements.OfType<ComboBox>().Single(c => c.Header?.ToString() == "Window function");
-                    var windowContainer = elements.OfType<ContentControl>().Single(c => ReferenceEquals(c.Content, window));
+                    var toggle = elements.OfType<ToggleSwitch>().Single(t => AutomationProperties.GetName(t) == "Spectrum analysis");
+                    var window = elements.OfType<ComboBox>().Single(c => AutomationProperties.GetName(c) == "Window function");
+                    var windowRow = elements.OfType<Grid>().Single(g => g.Children.Contains(window));
+                    var windowContainer = elements.OfType<ContentControl>().Single(c => ReferenceEquals(c.Content, windowRow));
                     toggle.IsOn = false;
                     if (Container(width).IsEnabled || Container(imbalance).IsEnabled || !windowContainer.IsEnabled)
                         throw new Exception("SWIFT controls must be disabled and DFT window enabled in DFT mode.");
