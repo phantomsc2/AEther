@@ -35,6 +35,7 @@ public sealed class FrameTimeView : UserControl
         new(FrameMetric, "Frame time", new SKColor(70, 160, 230)),
         new("render.draw_cpu_ms", "CPU", new SKColor(170, 115, 225)),
         new("gpu.frame_ms", "GPU", new SKColor(235, 170, 60)),
+        new("capture.input_age_ms", "Input", new SKColor(70, 185, 140)),
     ];
     readonly Axis timeAxis = new() { TextSize = 11, MinStep = 1 };
     readonly Axis durationAxis = new()
@@ -54,6 +55,7 @@ public sealed class FrameTimeView : UserControl
     internal int PointCount => traces[0].Points.Count;
     internal int CpuPointCount => traces[1].Points.Count;
     internal int GpuPointCount => traces[2].Points.Count;
+    internal int InputLagPointCount => traces[3].Points.Count;
     internal string[] CurveNames => traces.Select(trace => trace.Series.Name!).ToArray();
     internal int PlottedPointCount => traces.Sum(trace => trace.Points.Count);
     internal long UpdateCount { get; private set; }
@@ -80,7 +82,7 @@ public sealed class FrameTimeView : UserControl
             if (start != 0) profile?.Elapsed("chart.frame_time_update_ms", start);
             Interlocked.Increment(ref completedUpdates);
         };
-        ToolTipService.SetToolTip(chart, "Frame time: interval between render starts. CPU: elapsed frame preparation and draw submission before Present. GPU: execution duration measured by GPU timestamps. Raw per-frame samples in milliseconds on a logarithmic axis; CPU and GPU durations overlap and do not add up to frame time.");
+        ToolTipService.SetToolTip(chart, "Frame time: interval between render starts. CPU: elapsed frame preparation and draw submission before Present. GPU: execution duration measured by GPU timestamps. Input: age of the packet's newest audio at capture callback arrival, estimated from the WASAPI timestamp plus packet duration; excludes subsequent analysis and rendering. One raw point per capture packet with a valid device timestamp. Nonpositive ages cannot appear on the logarithmic axis. All durations are milliseconds; CPU and GPU durations overlap and do not add up to frame time.");
 
         Content = chart;
         refresh.Tick += (_, _) => Refresh();

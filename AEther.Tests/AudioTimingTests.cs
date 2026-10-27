@@ -32,6 +32,28 @@ public class AudioTimingTests
     }
 
     [Test]
+    public async Task InputAgeUsesPacketEndAtArrivalBeforeAnalysis()
+    {
+        var clock = new Clock();
+        var analyzer = new Analyzer(Format, Options(), clock);
+        var history = analyzer.Profile.Track("capture.input_age_ms");
+        analyzer.PostSampleSpan(Audio(80), new(Ms(985), 0, AudioTimestampQuality.Device));
+        analyzer.PostSampleSpan(Audio(160), new(Ms(975), 80, AudioTimestampQuality.Device));
+        analyzer.PostSampleSpan(Audio(80), new(Ms(985), 240, AudioTimestampQuality.Device, AudioPacketFlags.TimestampError));
+        analyzer.PostSampleSpan(Audio(80), new(Ms(985), 320, AudioTimestampQuality.Estimated));
+        analyzer.PostSampleSpan(Audio(80));
+        clock.Milliseconds += 100;
+        analyzer.Stop();
+        await analyzer.Completion;
+        long cursor = 0;
+        var samples = new List<TimingSample>();
+        history.ReadSince(ref cursor, samples);
+        Assert.That(samples.Count, Is.EqualTo(2));
+        Assert.That(samples.Select(sample => sample.Milliseconds), Is.All.EqualTo(5).Within(.001));
+        Assert.That(samples.Select(sample => sample.Timestamp), Is.All.EqualTo(Ms(1000)));
+    }
+
+    [Test]
     public void TimestampScalingUsesTheClockFrequencyWithoutOverflow()
     {
         long native = long.MaxValue / 100;

@@ -119,6 +119,14 @@ namespace AEther
             if (timing.HasValue && data.Length % Format.Size != 0)
                 throw new ArgumentException("Timed capture packets must contain complete interleaved frames.", nameof(data));
             var arrival = AudioClock.Now(Clock);
+            if (timing is { Timestamp: { } sourceStart, Quality: AudioTimestampQuality.Device } stamp
+                && !stamp.Flags.HasFlag(AudioPacketFlags.TimestampError))
+            {
+                // WASAPI stamps the packet's first frame. Measure delivery age at its
+                // end so packet length itself is not counted as input lag.
+                var sourceEnd = sourceStart + AudioClock.Frames(data.Length / Format.Size, Format.SampleRate);
+                Profile.Record("capture.input_age_ms", AudioClock.Seconds(arrival - sourceEnd) * 1000, arrival);
+            }
             var progress = Progress.Capture(timing, data.Length / Format.Size);
             var previous = Interlocked.Exchange(ref previousArrival, arrival);
             if (previous != 0)

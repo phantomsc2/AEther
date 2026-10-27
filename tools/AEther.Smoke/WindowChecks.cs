@@ -172,7 +172,7 @@ internal static partial class Program
                                     throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
                                 if (current.Analyzer.Progress.Latest.Gpu == null) return;
                                 if (!settings.Columns.Children.Contains(backlog) || Grid.GetColumn(backlog) != 2 || Grid.GetRow(backlog) != 0
-                                    || !backlog.CurveNames.SequenceEqual(new[] { "Frame time", "CPU", "GPU" }))
+                                    || !backlog.CurveNames.SequenceEqual(new[] { "Frame time", "CPU", "GPU", "Input" }))
                                     throw new Exception("The frame-time graph must occupy the right live-view pane.");
                                 if (!Descendants(shaderPanel.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
                                     || !Descendants(shaderPanel.Content).OfType<Slider>().Any())

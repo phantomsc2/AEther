@@ -63,6 +63,7 @@ public partial class App : Application
                 profile.Record("render.frame_interval_ms", duration, time);
                 profile.Record("render.draw_cpu_ms", .6 + .15 * Math.Sin(generated * .17), time);
                 profile.Record("gpu.frame_ms", 2.5 + .5 * Math.Sin(generated * .13), time);
+                profile.Record("capture.input_age_ms", 12 + 3 * Math.Sin(generated * .11), time);
                 generated++;
             }
         }
@@ -92,8 +93,9 @@ public partial class App : Application
                 var seconds = watch.Elapsed.TotalSeconds - 3;
                 if (view.PointCount < windowSeconds * 60 - 5 || view.LostSamples != 0 || view.CompletedUpdates - initialUpdates < Math.Max(1, 5 * refreshRate))
                     throw new Exception($"Chart stalled or lost samples: {view.PointCount} points, {view.CompletedUpdates} draws, {view.LostSamples} lost.");
-                if (view.CpuPointCount != view.PointCount || view.GpuPointCount != view.PointCount)
-                    throw new Exception("CPU and GPU series must retain every synthetic frame sample.");
+                if (view.CpuPointCount != view.PointCount || view.GpuPointCount != view.PointCount
+                    || view.InputLagPointCount != view.PointCount)
+                    throw new Exception("CPU, GPU and input-lag series must retain every synthetic frame sample.");
                 if (layout && (analysis!.ActualWidth > settings!.ActualWidth * .6 || view.ActualWidth < 100
                     || settings.AudioColumn.TransformToVisual(settings).TransformPoint(default).Y < analysis.ActualHeight))
                     throw new Exception("Expected audio/video views above their respective control columns.");
