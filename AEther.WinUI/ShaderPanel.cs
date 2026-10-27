@@ -1,6 +1,5 @@
 using AEther.Vortice;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Globalization.NumberFormatting;
 
@@ -8,9 +7,9 @@ namespace AEther.WinUI;
 
 public sealed class ShaderPanel : UserControl
 {
-    readonly Grid layout = new() { RowSpacing = 12 };
-    readonly StackPanel parameters = new() { Spacing = 12 };
-    readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+    readonly Grid layout = new() { RowSpacing = 8 };
+    readonly StackPanel parameters = new() { Spacing = 4 };
+    readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Visibility = Visibility.Collapsed };
     readonly Dictionary<string, ShaderParameters> saved = new(StringComparer.Ordinal);
     Renderer? renderer;
     // Allows restarting a preview after renderer changes without losing its scene.
@@ -24,9 +23,9 @@ public sealed class ShaderPanel : UserControl
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Content = layout;
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var reload = new Button { Content = "Reload" };
-        var reset = new Button { Content = "Reset defaults" };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var reload = new Button { Content = "Reload", MinHeight = 24, Padding = new Thickness(8, 2, 8, 2) };
+        var reset = new Button { Content = "Reset defaults", MinHeight = 24, Padding = new Thickness(8, 2, 8, 2) };
         buttons.Children.Add(reload); buttons.Children.Add(reset);
         reload.Click += (_, _) => Reload();
         reset.Click += (_, _) => { renderer?.ActiveShader?.Parameters?.Reset(); RefreshParameters(); };
@@ -73,7 +72,11 @@ public sealed class ShaderPanel : UserControl
         SetStatus(success ? "Shaders reloaded." : renderer.ShaderError!);
     }
 
-    public void SetStatus(string message) => status.Text = message;
+    public void SetStatus(string message)
+    {
+        status.Text = message;
+        status.Visibility = string.IsNullOrWhiteSpace(message) ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     void RefreshScene()
     {
@@ -82,9 +85,9 @@ public sealed class ShaderPanel : UserControl
             SelectedScene = renderer.SceneName;
             // Retain visited scenes even when a reload leaves them uncompiled.
             if (renderer.ActiveShader?.Parameters is { } values) saved[SelectedScene] = values;
-            status.Text = renderer.ShaderDirectory;
+            SetStatus(renderer.ShaderError ?? "");
         }
-        else status.Text = "No active rendering session.";
+        else SetStatus("No active rendering session.");
         RefreshParameters();
         SceneChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -104,7 +107,7 @@ public sealed class ShaderPanel : UserControl
     {
         if (parameter.Children.Count != 0)
         {
-            var children = new StackPanel { Spacing = 12 };
+            var children = new StackPanel { Spacing = 8 };
             foreach (var child in parameter.Children) children.Children.Add(Editor(values, child));
             return new Expander
             {
@@ -119,22 +122,14 @@ public sealed class ShaderPanel : UserControl
             checkbox.Unchecked += (_, _) => values.SetBoolean(parameter, false);
             return checkbox;
         }
-        var row = new Grid { RowSpacing = 4, ColumnSpacing = 12, Tag = parameter.Path };
-        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var label = new TextBlock { Text = parameter.Name, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         var number = new NumberBox
         {
             Minimum = 0, Maximum = 1, SmallChange = .01, LargeChange = .1,
-            Value = values.GetFloat(parameter), Width = 140,
+            Value = values.GetFloat(parameter),
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             NumberFormatter = new DecimalFormatter { FractionDigits = 4 },
         };
         var slider = new Slider { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = values.GetFloat(parameter) };
-        AutomationProperties.SetName(number, parameter.Name);
-        AutomationProperties.SetName(slider, parameter.Name);
         bool updating = false;
         SliderCommit.Bind(slider, value =>
         {
@@ -150,9 +145,8 @@ public sealed class ShaderPanel : UserControl
             try { slider.Value = e.NewValue; values.SetFloat(parameter, (float)e.NewValue); }
             finally { updating = false; }
         };
-        Grid.SetColumn(number, 1);
-        Grid.SetRow(slider, 1); Grid.SetColumnSpan(slider, 2);
-        row.Children.Add(label); row.Children.Add(number); row.Children.Add(slider);
+        var row = NumericEditor.Create(parameter.Name, number, slider);
+        row.Tag = parameter.Path;
         return row;
     }
 }

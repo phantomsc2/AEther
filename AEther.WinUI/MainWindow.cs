@@ -165,8 +165,8 @@ public sealed class MainWindow : Window
         var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
         var chrome = Math.Max(0, AppWindow.Size.Height - AppWindow.ClientSize.Height);
         var available = work.Y + work.Height - Math.Max(work.Y, AppWindow.Position.Y) - chrome;
-        AppWindow.ResizeClient(new SizeInt32(Math.Min((int)Math.Ceiling(768 * scale), work.Width),
-            Math.Min((int)Math.Ceiling(800 * scale), Math.Max(1, available))));
+        AppWindow.ResizeClient(new SizeInt32(Math.Min((int)Math.Ceiling(720 * scale), work.Width),
+            Math.Min((int)Math.Ceiling(680 * scale), Math.Max(1, available))));
     }
 
     void FocusScene()

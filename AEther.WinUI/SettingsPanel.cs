@@ -2,6 +2,7 @@ using AEther.NAudio;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using CommunityToolkit.WinUI.Controls;
 
 namespace AEther.WinUI;
 
@@ -12,9 +13,9 @@ public sealed class SettingsPanel : UserControl
     readonly ComboBox scenePicker = new() { Name = "Scene", Header = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ShaderPanel shaders;
     bool refreshingScenes;
-    internal Grid Columns { get; } = new() { Padding = new Thickness(16), ColumnSpacing = 16, RowSpacing = 12 };
-    internal Grid AudioColumn { get; } = new() { RowSpacing = 12 };
-    internal Grid SceneColumn { get; } = new() { RowSpacing = 12 };
+    internal Grid Columns { get; } = new() { Padding = new Thickness(12), ColumnSpacing = 12, RowSpacing = 8 };
+    internal Grid AudioColumn { get; } = new() { RowSpacing = 8 };
+    internal Grid SceneColumn { get; } = new() { RowSpacing = 8 };
     internal ScrollViewer AudioSettings { get; }
     internal Expander Diagnostics { get; }
     public bool DiagnosticsExpanded => Diagnostics.IsExpanded;
@@ -31,16 +32,38 @@ public sealed class SettingsPanel : UserControl
         Columns.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ApplicationPageBackgroundThemeBrush"];
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: analysis (full width)
-        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: controls
+        const double defaultAnalysisHeight = 240;
+        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(defaultAnalysisHeight), MinHeight = 32 }); // 0: analysis (full width)
+        Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 1: divider
+        var controlsRow = new RowDefinition { Height = new GridLength(1, GridUnitType.Star) };
+        Columns.RowDefinitions.Add(controlsRow); // 2: controls
+
+        var divider = new GridSplitter
+        {
+            Height = 8,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ResizeDirection = GridSplitter.GridResizeDirection.Rows,
+            ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext,
+        };
+        AutomationProperties.SetName(divider, "Resize live view and controls");
+        ToolTipService.SetToolTip(divider, "Drag to resize. Arrow keys adjust; double-click restores the default height.");
+        divider.DoubleTapped += (_, e) =>
+        {
+            Columns.RowDefinitions[0].Height = new GridLength(defaultAnalysisHeight);
+            controlsRow.Height = new GridLength(1, GridUnitType.Star);
+            e.Handled = true;
+        };
+        Grid.SetRow(divider, 1);
+        Grid.SetColumnSpan(divider, 2);
+        Columns.Children.Add(divider);
 
         // Row 0: AnalysisView spanning both columns
-        analysis.MinHeight = 240;
+        analysis.MinHeight = 32;
         Grid.SetRow(analysis, 0);
         Grid.SetColumnSpan(analysis, 2);
         Columns.Children.Add(analysis);
 
-        // Row 1: Audio controls (left column)
+        // Row 2: Audio controls (left column)
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: input
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: AudioSettings
         Diagnostics = new Expander
@@ -60,10 +83,10 @@ public sealed class SettingsPanel : UserControl
         Grid.SetRow(input, 0); Grid.SetRow(AudioSettings, 1);
         AudioColumn.Children.Add(input);
         AudioColumn.Children.Add(AudioSettings);
-        Grid.SetRow(AudioColumn, 1);
+        Grid.SetRow(AudioColumn, 2);
         Columns.Children.Add(AudioColumn);
 
-        // Row 1: Video controls (right column)
+        // Row 2: Video controls (right column)
         SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: scenePicker
         SceneColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: shaders
         AutomationProperties.SetName(scenePicker, "Scene");
@@ -71,7 +94,7 @@ public sealed class SettingsPanel : UserControl
         Grid.SetRow(shaders, 1);
         SceneColumn.Children.Add(scenePicker);
         SceneColumn.Children.Add(shaders);
-        Grid.SetRow(SceneColumn, 1);
+        Grid.SetRow(SceneColumn, 2);
         Grid.SetColumn(SceneColumn, 1);
         Columns.Children.Add(SceneColumn);
         scenePicker.SelectionChanged += (_, _) =>

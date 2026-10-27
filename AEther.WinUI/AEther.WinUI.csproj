@@ -17,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.Sizers" Version="8.2.251219" />
     <ProjectReference Include="../AEther.NAudio/AEther.NAudio.csproj" />
     <ProjectReference Include="../AEther.Vortice/AEther.Vortice.csproj" />
   </ItemGroup>

@@ -17,7 +17,7 @@ public sealed class AudioPanel : UserControl
 
     UIElement BuildOptions()
     {
-        var groups = new StackPanel { Spacing = 8 };
+        var groups = new StackPanel { Spacing = 4 };
         var refreshNumbers = new List<Action>();
         var backendEditors = new List<(string Name, Control Editor)>();
         void RefreshBackendEditors()
@@ -29,7 +29,7 @@ public sealed class AudioPanel : UserControl
         var properties = TypeDescriptor.GetProperties(Options).Cast<PropertyDescriptor>().Where(p => p.IsBrowsable && !p.IsReadOnly);
         foreach (var category in properties.GroupBy(p => p.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            var rows = new StackPanel { Spacing = 12 };
+            var rows = new StackPanel { Spacing = 8 };
             foreach (var property in category)
             {
                 var displayName = property.Name == nameof(AnalyzerOptions.InputGainDb) ? "Gain" : property.DisplayName;
@@ -79,7 +79,6 @@ public sealed class AudioPanel : UserControl
                     double FromSlider(double value) => zeroLogarithmic ? 1e-8 * (Math.Pow(2, value) - 1) : logarithmic ? Math.Pow(2, value) : value;
                     var number = new NumberBox
                     {
-                        Header = displayName,
                         Value = Convert.ToDouble(property.GetValue(Options)),
                         SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
                         SmallChange = step,
@@ -98,8 +97,6 @@ public sealed class AudioPanel : UserControl
                         Value = ToSlider(number.Value),
                     };
                     if (logarithmic || zeroLogarithmic) slider.ThumbToolTipValueConverter = new WidthToolTipConverter(zeroLogarithmic ? 1e-8 : 0);
-                    AutomationProperties.SetName(number, displayName);
-                    AutomationProperties.SetName(slider, displayName);
                     bool updating = false;
                     refreshNumbers.Add(() =>
                     {
@@ -138,10 +135,7 @@ public sealed class AudioPanel : UserControl
                         finally { updating = false; }
                     }, value => Apply(FromSlider(value)));
                     number.ValueChanged += (_, e) => Apply(e.NewValue);
-                    var row = new StackPanel { Spacing = 4 };
-                    row.Children.Add(number);
-                    row.Children.Add(slider);
-                    editor = row;
+                    editor = NumericEditor.Create(displayName, number, slider);
                 }
                 if (property.Name is nameof(AnalyzerOptions.WindowFunction) or nameof(AnalyzerOptions.SwiftWidthScale)
                     or nameof(AnalyzerOptions.SwiftImbalance))
