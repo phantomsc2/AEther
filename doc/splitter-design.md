@@ -2,7 +2,7 @@
 
 The live Analyzer uses this original splitter after
 [Kalman magnitude preprocessing](kalman-smoothing.md). Its time/frequency support
-settings and `Analyzer.JointEvidenceAvailable` callback are active. The splitter
+settings are active. Analysis publishes a single `SamplesAnalyzed` event. The splitter
 receives the selected smoother's linear amplitude; velocity is not forwarded.
 
 Spectrum analysis (SWIFT by default, optionally DFT) feeds the Gaussian local fit.
@@ -45,7 +45,7 @@ neighborhoods define the fit, without invented observations.
 Splitter.OutputStride is four. Published/rendered rows are
 [max(S,0), max(T,0), B, A]. Alpha is not R.
 All components use the same input-gained amplitude units. Signed estimates and neighborhood residual RMS are available through
-Splitter.Estimates and Analyzer.JointEvidenceAvailable. Residual RMS is not the
+Splitter.Estimates. Analyzer publishes residual RMS and signed momentary residual with each SamplesAnalyzed row. Residual RMS is not the
 signed current-cell residual. There are no component display gains; automatic
 bounded display normalization is not implemented in this settlement.
 
@@ -101,7 +101,6 @@ Single-row or single-frequency rectangles have no residual degrees of freedom.
 Zero effect / zero scale returns zero; nonzero effect / zero scale returns signed
 infinity. HasResidualScale makes that case explicit to classifier consumers.
 
-Statistics remain available from Splitter.Estimates and the existing
-Analyzer.JointEvidenceAvailable callback (memory valid only during the callback).
+Statistics remain available from Splitter.Estimates until the next Process or Reset call.
 RGB shows [max(S,0), max(T,0), B] without component gains; alpha remains A. No logistic
 activation or inter-component share normalization is added.

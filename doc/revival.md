@@ -64,19 +64,15 @@ Escape closes. Select SceneState for atmospheric lighting. Loopback is the defau
 
 ## Audio and histogram review
 
-Regression tests exposed and now cover four mathematical/data defects:
+Regression tests exposed and now cover the DFT normalization and indexing defects:
 
 - Windowed scalar and SIMD DFT kernels were centered at M+1 rather than M. Corrected both.
 - Window coherent gain was not normalized; an on-bin Hann-windowed sine read a quarter of
   its actual amplitude with the combined centering/gain defects. Corrected coherent gain.
-- `MovingMedianHeap.Clear` seeded the upper heap without marking its membership. Negative
-  log levels and repeated clears could delete from the wrong heap. Positive-only tests missed it.
-- Bidirectional `FilterSpan` read the final element of an oversized pooled array rather than the
-  final valid element. Replaced this with valid forward/backward boundary values and ensured return.
 
 SIMD now uses the same Hann window as scalar processing, with scalar fallback on narrow vectors.
 Tests compare recursive output to a direct windowed DFT through startup and ring wrap, check sine
-gain/phase stability, negative and repeated median inputs, and splitter silence/attack behavior.
+gain/phase stability and splitter silence/attack behavior.
 
 Histogram history defaults to one second (`HistorySeconds`).
 A continuous fractional playhead follows the analysis sample rate, independent of capture packet
@@ -97,63 +93,6 @@ an approximately 400 ms DFT window. Hann weighting emphasizes its midpoint; the 
 adds roughly half its 100 ms window. Visual attacks now come from the retained transient branch. Display latency,
 window duration and audio input drops must be distinguished when tuning responsiveness.
 The title reports rejected input callbacks to expose overload rather than silently calling it jitter.
-
-## Storm — Central Plains
-
-The Storm scene is a central volumetric storm surrounded by a fixed patterned sphere. The sphere's
-repeated motifs provide orientation while the camera orbits and rolls around the cloud, always looking
-toward its center. Wallpaper geometry depends only on world coordinates and camera pose; transient
-flashes modify brightness. Slow continuous precession evolves the tumble direction without random jolts.
-The cloud uses a fixed seeded 3D noise field with continuous advected coordinates, warm descending gas,
-rising flow and a sweeping light plane. Thunder intensely illuminates its interior and the surrounding sphere.
-
-Raw RMS and onset measurements remain available from the analyzer, but visuals use retained spectral
-power proxies so discarded residual cannot drive movement, light or musical time. The separated
-time/frequency spectrum supplies low sustained contrast (smooth weighting below roughly 250 Hz) and
-high temporal novelty (smooth weighting above roughly 1600 Hz). Short high-band peaks are retained across
-analysis callbacks until the next rendered frame. Thunder emphasizes high novelty, with a small immediate
-broadband attack contribution. Low sustained contrast and overall energy build the orbital response.
-These controls do not identify instruments or BPM. A paused loopback stream becomes silence after
-150 ms so all responses can relax rather than retaining stale energy.
-
-`ResponseProfile` defines attack, release, inertia and gain. `ResponseChannel` exposes the fast envelope,
-inertial response and velocity. Its exponential envelope and critically damped spring are integrated
-analytically together, including coincident decay rates. The scene routes different profiles to thunder,
-afterglow, cloud evolution and orbital build-up; their outputs are separately available in shader constants.
-Common controls in the PropertyGrid's **Storm responses** category are:
-
-- `FlashDecaySeconds`: .09 s by default, with immediate attack.
-- `AfterglowSeconds`: 1.2 s.
-- `OrbitInertiaSeconds`: 2.8 s; orbit acceleration and tilt have substantial inertia.
-- `BuildReleaseSeconds`: 5 s, so the song's build-up relaxes slowly.
-
-The diagnostic spectrum still supports its original bars around a fixed center line. `I` switches to
-fixed geometry with intensity-only color. A steady-tone integration test confirms stable dominant-band
-magnitude and no repeated attack classification. `SeparationFloorDb` defaults to -80 dBFS, with a 20 dB
-soft transition, preventing tiny log-amplitude contrasts from appearing as bright tones/attacks. It gates
-all three displayed components. Alpha holds combined retained level; the scene's audibility controls
-use alpha. See [splitter-design.md](splitter-design.md) for the two filter orders, shared windows,
-quantile normalization and residual exclusion. Equal-loudness weighting has been removed.
-
-The renderer integrates a 64-step bounded volume with Beer-Lambert attenuation, approximate single scattering
-and sampled light occlusion, then outputs a stable filmic image. Density advection is procedural;
-this is not a full gas-dynamics solver. Rendering defaults to a 540-pixel-high HDR intermediate,
-bilinearly reconstructed at display size. No frame-random noise or temporal blur is used.
-
-While Storm is selected:
-
-- `M`: full camera movement, gentle movement, then stationary camera (smoothly approached).
-- `+` / `-`: increase/decrease audio response gain.
-- `Q`: cycle cloud rendering height between 540, 720 and 360 pixels.
-- `B`: show only the spherical reference backdrop.
-- Space/F11 retain their panel/fullscreen controls. Spectrum and Histogram remain available for
-  detailed diagnostic inspection, including sub-second history windows.
-
-The renderer smoke tool captures calm, thunder, afterglow and moving frames, checks unchanged-input
-pixel stability, checks that cloud time cannot change a stationary backdrop, verifies that attacks flash
-it, exercises the spectrum intensity toggle, and measures a short render/present/readback run.
-CPU tests cover measured bands, frequency-aware separation, inaudible-contrast suppression, steady-tone
-stability, exact response integration at different frame rates, camera continuity and eventual relaxation.
 
 ## Remaining work
 

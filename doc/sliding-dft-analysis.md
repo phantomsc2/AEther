@@ -34,7 +34,7 @@ This is a periodic Hann (denominator N), not the symmetric N-1 variant. Both are
 
 ## Scalar / SIMD equivalence
 
-Both implementations have the same ring length, bins, rotations, sample difference, window weights, active-lane summation order and gain. `ComplexVector` performs the ordinary complex product independently in each lane. SIMD packs the neighboring window components, not time samples. Padding has zero weight and cannot affect output.
+Both implementations have the same ring length, bins, rotations, sample difference, window weights, active-lane summation order and gain. The SIMD kernel computes complex products directly from real and imaginary vectors, independently in each lane. SIMD packs the neighboring window components, not time samples. Padding has zero weight and cannot affect output.
 
 The processor defaults to Hann, independently of vector width. If the selected window's components do not fit, it falls back to scalar. Blackman, Nuttall and FlatTop require five, seven and nine components respectively, so they use scalar on this host's four-double vectors.
 

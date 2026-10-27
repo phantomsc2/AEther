@@ -14,10 +14,6 @@ namespace AEther
     {
         public PipelineProfile Profile { get; } = new();
         public event EventHandler<SampleEvent<double>>? SamplesAnalyzed;
-        /// <summary>Original signed splitter effects and residual scale. Callback-lifetime memory.</summary>
-        public event EventHandler<SampleEvent<JointEvidence>>? JointEvidenceAvailable;
-        public event EventHandler<double>? TransientDetected;
-        public event EventHandler<AudioFeatures>? FeaturesAvailable;
         public readonly SampleFormat Format;
         public readonly Domain Domain;
         public readonly Task Completion;
@@ -31,8 +27,6 @@ namespace AEther
         readonly Splitter[] Splitters;
         readonly SmoothingMode smoothingMode;
         readonly bool smoothingEnabled;
-        readonly TransientDetector[] Transients;
-        readonly AudioFeatureExtractor Features;
         readonly record struct InputPacket(SampleEvent<byte> Event, long Arrival, AudioPacketTiming? Timing);
         readonly Channel<InputPacket> Input;
         readonly TimeProvider Clock;
@@ -96,9 +90,6 @@ namespace AEther
                 Profile.Describe("SWIFT slow decay ms", $"{bands.Min(b => b.SlowSeconds) * 1000:F6}–{bands.Max(b => b.SlowSeconds) * 1000:F6}");
                 Profile.Describe("SWIFT fast decay ms", $"{bands.Min(b => b.FastSeconds) * 1000:F6}–{bands.Max(b => b.FastSeconds) * 1000:F6}");
             }
-            Transients = Enumerable.Range(0, Format.ChannelCount)
-                .Select(_ => new TransientDetector(Format.SampleRate)).ToArray();
-            Features = new AudioFeatureExtractor(format);
             Input = Channel.CreateBounded<InputPacket>(new BoundedChannelOptions(options.BufferCapacity)
             {
                 SingleReader = true,
@@ -159,8 +150,6 @@ namespace AEther
             foreach (var processor in Spectrum) processor.Reset();
             foreach (var smoother in Smoothers) smoother.Reset();
             foreach (var splitter in Splitters) splitter.Reset();
-            foreach (var transient in Transients) transient.Reset();
-            Features.Reset();
             Interlocked.Increment(ref generation);
             Profile.Describe("Discontinuities", Interlocked.Read(ref generation).ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
@@ -350,8 +339,6 @@ namespace AEther
             var observed = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var logSmoothed = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
             var complexSmoothed = RentEvent<double>(Domain.Length, Format.ChannelCount, time);
-            var jointEvidence = JointEvidenceAvailable is not null
-                ? RentEvent<JointEvidence>(Domain.Length, Format.ChannelCount, time) : null;
             try
             {
                 using (Profile.Measure("analysis.decode_ms"))
@@ -364,16 +351,6 @@ namespace AEther
                         var sample = Format.Type.ReadFrom(Batch.AsSpan(offset));
                         channel[i] = double.IsFinite(sample) ? sample * InputGain : 0;
                     }
-                }
-                using (Profile.Measure("analysis.waveform_features_ms"))
-                {
-                var attack = 0.0;
-                for (var c = 0; c < Format.ChannelCount; ++c)
-                    attack = Math.Max(attack, Transients[c].Process(samples.GetChannel(c).Span));
-                // Deliver attacks before frequency analysis; low-frequency DFT windows must not delay an impulse.
-                if (attack > .02)
-                    TransientDetected?.Invoke(this, attack);
-                FeaturesAvailable?.Invoke(this, Features.Process(samples));
                 }
                 for (var c = 0; c < Format.ChannelCount; ++c)
                 {
@@ -407,7 +384,6 @@ namespace AEther
                             residual.GetChannel(c).Span[k] = e.ResidualRms;
                             momentary.GetChannel(c).Span[k] = e.Amplitude - e.Background - e.Sine - e.Transient;
                         }
-                        if (jointEvidence is not null) Splitters[c].Estimates.CopyTo(jointEvidence.GetChannel(c));
                     }
                 }
                 // Publish immediately; render pacing belongs to the renderer.
@@ -421,15 +397,6 @@ namespace AEther
                     CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
                     SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                     DiscontinuityGeneration = Interlocked.Read(ref generation) };
-                if (jointEvidence is not null)
-                {
-                    jointEvidence = jointEvidence with { SampleIndex = output.SampleIndex, AnalysisRow = output.AnalysisRow,
-                        StreamClock = streamClock,
-                        CaptureTimestamp = output.CaptureTimestamp, AnalysisTimestamp = output.AnalysisTimestamp,
-                        SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
-                        DiscontinuityGeneration = output.DiscontinuityGeneration };
-                    JointEvidenceAvailable?.Invoke(this, jointEvidence);
-                }
                 Profile.Record("analysis.capture_to_completion_ms", AudioClock.Seconds(AudioClock.Now(Clock) - captureTimestamp) * 1000);
                 if (end.HasValue) Profile.Record("analysis.source_age_ms", AudioClock.Seconds(AudioClock.Now(Clock) - end.Value) * 1000);
                 if (lastQuality != quality) Profile.Describe("Timestamp quality", quality.ToString());
@@ -447,7 +414,6 @@ namespace AEther
                 ReturnEvent(logSmoothed);
                 ReturnEvent(complexSmoothed);
                 ReturnEvent(output);
-                if (jointEvidence is not null) ReturnEvent(jointEvidence);
             }
         }
 

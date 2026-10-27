@@ -40,6 +40,7 @@ namespace AEther.Tests
         public async Task RunningAnalyzerKeepsItsSettingsUntilRestart()
         {
             var options = Options();
+            options.SmoothingEnabled = true;
             var analyzer = new Analyzer(Format, options);
             try
             {
@@ -65,11 +66,6 @@ namespace AEther.Tests
             var analyzer = new Analyzer(Format, Options(2));
             var rows = new List<long>();
             var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var support = new List<int>();
-            analyzer.JointEvidenceAvailable += (_, evt) =>
-            {
-                support.Add(evt.GetChannel(0).Span[0].TimeSamples);
-            };
             analyzer.SamplesAnalyzed += (_, evt) =>
             {
                 rows.Add(evt.AnalysisRow);
@@ -89,7 +85,6 @@ namespace AEther.Tests
                 await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
             }
             Assert.That(rows, Is.EqualTo(new long[] { 4, 5, 6 }), "Overflow keeps the newest queued audio.");
-            Assert.That(support, Is.EqualTo(new[] { 1, 2, 3 }), "Splitters start fresh after the dropped prefix.");
         }
 
         [Test]
@@ -179,23 +174,6 @@ namespace AEther.Tests
             Assert.That(analyzer.DroppedInputCount, Is.EqualTo(1));
         }
 
-        [Test]
-        public async Task AttackArrivesBeforeTonalAnalysis()
-        {
-            var analyzer = new Analyzer(Format, Options());
-            var events = new List<string>();
-            analyzer.TransientDetected += (_, strength) =>
-            {
-                Assert.That(strength, Is.GreaterThan(0));
-                events.Add("attack");
-            };
-            analyzer.SamplesAnalyzed += (_, _) => events.Add("spectrum");
-            analyzer.PostSamples(Audio(80));
-            analyzer.Stop();
-            await analyzer.Completion.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.That(events, Is.EqualTo(new[] { "attack", "spectrum" }));
-        }
-
         [TestCase(SmoothingMode.LogAmplitude, true), TestCase(SmoothingMode.Complex, true)]
         [TestCase(SmoothingMode.LogAmplitude, false), TestCase(SmoothingMode.Complex, false)]
         public async Task SmootherFeedsOriginalSplitterAndPublishesTrueResiduals(SmoothingMode mode, bool enabled)
@@ -203,9 +181,8 @@ namespace AEther.Tests
             var options = Options(); options.SmoothingMode = mode; options.SmoothingEnabled = enabled;
             var analyzer = new Analyzer(Format, options);
             int count = 0;
-            JointEvidence[] evidence = null!;
-            analyzer.JointEvidenceAvailable += (_, e) => evidence = Enumerable.Range(0, Format.ChannelCount)
-                .SelectMany(c => e.GetChannel(c).ToArray()).ToArray();
+            var references = Enumerable.Range(0, Format.ChannelCount)
+                .Select(_ => new Splitter(analyzer.Domain, options, 100)).ToArray();
             analyzer.SamplesAnalyzed += (_, e) =>
             {
                 Assert.That(e.ResidualRms.Length, Is.EqualTo(analyzer.Domain.Length * Format.ChannelCount));
@@ -220,6 +197,13 @@ namespace AEther.Tests
                     Assert.That(analyzer.Profile.Recent("analysis.smooth_channel_ms")!.Value.Mean, Is.Zero);
                 }
                 else Assert.That(analyzer.Profile.Recent("analysis.smooth_channel_ms"), Is.Not.Null);
+                var evidence = new JointEvidence[analyzer.Domain.Length * Format.ChannelCount];
+                var referenceOutput = new double[Splitter.OutputStride * analyzer.Domain.Length];
+                for (int c = 0; c < Format.ChannelCount; c++)
+                {
+                    references[c].ProcessLinear(selected.Slice(c * analyzer.Domain.Length, analyzer.Domain.Length), referenceOutput);
+                    references[c].Estimates.CopyTo(evidence.AsMemory(c * analyzer.Domain.Length, analyzer.Domain.Length));
+                }
                 for (int c = 0; c < Format.ChannelCount; c++)
                     for (int k = 0; k < analyzer.Domain.Length; k++)
                     {
@@ -245,7 +229,7 @@ namespace AEther.Tests
         [TestCase(false), TestCase(true)]
         public async Task DisabledSmootherMatchesTheOriginalSpectrumToSplitterPipeline(bool swift)
         {
-            Assert.That(new AnalyzerOptions().SmoothingEnabled, Is.True);
+            Assert.That(new AnalyzerOptions().SmoothingEnabled, Is.False);
             var options = Options(); options.SmoothingEnabled = false; options.UseSwift = swift;
             var analyzer = new Analyzer(Format, options);
             var actual = Collect(analyzer);

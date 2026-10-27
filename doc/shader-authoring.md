@@ -329,8 +329,7 @@ declared types and layouts.
 The preprocessing stage compares log-amplitude and complex-resonator Kalman
 models with explicit acceleration-noise intensities and fixed Cartesian noise
 RMS. Both return linear magnitudes; neither exports velocity or phase. The
-original splitter neighborhood settings and `Analyzer.JointEvidenceAvailable`
-callback are restored. Spectrum's `CompareSmoothers` view uses diagnostic row 1:
+original splitter neighborhood settings are active. Spectrum's `CompareSmoothers` view uses diagnostic row 1:
 [signed momentary residual, raw magnitude, mode A magnitude, mode B magnitude].
 It displays A left/red and B right/cyan using the same stereo average and linear
 scale. `FilteredHistogram0/1` remain aliases for `Histogram0/1`.

@@ -14,7 +14,7 @@ their original meaning. See [models and comparison](doc/kalman-smoothing.md).
 ## Project Layout
 
 - **AEther**: Core library to read and analyze sample data
-- **AEther.Benchmarks**: using [BenchmarkDotNet](https://benchmarkdotnet.org/)
+- **AEther.Benchmarks**: benchmarks for the active STBR splitter using [BenchmarkDotNet](https://benchmarkdotnet.org/)
 - **AEther.NAudio**: audio input with [NAudio](https://github.com/naudio/NAudio)
 - **AEther.Tests**: using [NUnit](https://nunit.org/)
 - **AEther.Vortice**: D3D11 fullscreen shaders, audio textures and runtime shader compilation

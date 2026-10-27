@@ -119,19 +119,6 @@ namespace AEther.Tests
                 new DFTProcessor(new Domain(1000, 8, 1), 48000, true, (DFTWindow)999));
         }
 
-        [Test]
-        public void FrequencyFilteringDoesNotReadArrayPoolPadding()
-        {
-            var filter = new MovingMedianHeap<double>(0, 4, System.Collections.Generic.Comparer<double>.Default);
-            var source = Enumerable.Repeat(-2.0, 19).ToArray();
-            var output = new double[19];
-            var dirty = System.Buffers.ArrayPool<double>.Shared.Rent(19);
-            Array.Fill(dirty, 999.0);
-            System.Buffers.ArrayPool<double>.Shared.Return(dirty);
-            filter.FilterSpan(source, output, (a, b) => .5 * (a + b));
-            Assert.That(output, Is.All.EqualTo(-2));
-        }
-
         [TestCase("scalar")]
         [TestCase("simd")]
         public void RecurrenceRemainsStableOverAMillionSamplesAndFlushesToSilence(string kind)

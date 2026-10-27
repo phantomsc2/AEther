@@ -4,7 +4,7 @@ The original Gaussian splitter is active again. Both independent Kalman smoother
 run on the same coherent complex spectrum, after input gain. A mode selector
 chooses which linear magnitude is passed to `Splitter.ProcessLinear`.
 The splitter's original S/T/B/amplitude output, signed momentary residual,
-residual RMS, settings, and `Analyzer.JointEvidenceAvailable` callback are restored.
+residual RMS and settings are active. Signed fit statistics remain available from `Splitter.Estimates`.
 Velocity is internal to the smoother and is not forwarded to the splitter.
 
 ## Parameters

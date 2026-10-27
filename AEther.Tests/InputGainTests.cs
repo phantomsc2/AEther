@@ -45,12 +45,6 @@ public class InputGainTests
         {
             for (int i = 0; i < actual.Rows[row].Length; i++)
                 Assert.That(double.IsFinite(actual.Rows[row][i]) && actual.Rows[row][i] >= 0, Is.True);
-            Assert.That(actual.Features[row].Level, Is.EqualTo(baseline.Features[row].Level * gain).Within(1e-10));
-            Assert.That(actual.Features[row].Bass, Is.EqualTo(baseline.Features[row].Bass * gain).Within(1e-10));
-            Assert.That(actual.Features[row].Body, Is.EqualTo(baseline.Features[row].Body * gain).Within(1e-10));
-            Assert.That(actual.Features[row].Air, Is.EqualTo(baseline.Features[row].Air * gain).Within(1e-10));
-            Assert.That(actual.Features[row].MusicalTime,
-                Is.EqualTo(baseline.Features[row].MusicalTime * gain * gain).Within(1e-8));
             for (int k = 0; k < actual.Observed[row].Length; k++)
             {
                 Assert.That(actual.Observed[row][k], Is.EqualTo(baseline.Observed[row][k] * gain).Within(1e-9));
@@ -65,26 +59,26 @@ public class InputGainTests
         input[0] = float.NaN; input[1] = float.PositiveInfinity; input[2] = float.NegativeInfinity;
         var actual = await Analyze(input, 0);
         Assert.That(actual.Rows.Single().All(double.IsFinite), Is.True);
-        Assert.That(actual.Features.Single().Level, Is.EqualTo(2 * Math.Sqrt(77 / 80.0)).Within(1e-12));
+        var normalized = input.Select(v => float.IsFinite(v) ? v / 2 : 0).ToArray();
+        var expected = await Analyze(normalized, 20 * Math.Log10(2));
+        Assert.That(actual.Rows, Is.EqualTo(expected.Rows));
+        Assert.That(actual.Observed, Is.EqualTo(expected.Observed));
     }
 
     [TestCase(SmoothingMode.LogAmplitude), TestCase(SmoothingMode.Complex)]
-    public async Task GainMatchesChangingTheSourceAmplitudeIncludingAttacks(SmoothingMode mode)
+    public async Task GainMatchesChangingTheSourceAmplitude(SmoothingMode mode)
     {
         var input = Enumerable.Range(0, 800).Select(i => (float)(.125 * Math.Sin(i * .2))).ToArray();
         var gained = await Analyze(input, 20 * Math.Log10(2), mode: mode);
         var source = await Analyze(input.Select(x => 2 * x).ToArray(), 0, mode: mode);
         Assert.That(gained.Rows, Is.EqualTo(source.Rows));
-        Assert.That(gained.Features, Is.EqualTo(source.Features));
-        Assert.That(gained.Attacks, Is.EqualTo(source.Attacks));
+        Assert.That(gained.Observed, Is.EqualTo(source.Observed));
     }
 
     sealed class Result
     {
         public readonly List<double[]> Rows = new();
-        public readonly List<AudioFeatures> Features = new();
         public readonly List<double[]> Observed = new();
-        public readonly List<double> Attacks = new();
     }
 
     static async Task<Result> Analyze(float[] input, double gainDb, bool mutateOptions = false, SmoothingMode mode = SmoothingMode.LogAmplitude)
@@ -99,8 +93,6 @@ public class InputGainTests
             result.Rows.Add(e.GetChannel(0).ToArray());
             result.Observed.Add(e.ObservedAmplitude.ToArray());
         };
-        analyzer.FeaturesAvailable += (_, e) => result.Features.Add(e);
-        analyzer.TransientDetected += (_, e) => result.Attacks.Add(e);
         var bytes = new byte[input.Length * sizeof(float)];
         Buffer.BlockCopy(input, 0, bytes, 0, bytes.Length);
         analyzer.PostSamples(bytes);
