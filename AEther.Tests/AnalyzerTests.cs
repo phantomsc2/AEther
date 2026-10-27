@@ -174,11 +174,13 @@ namespace AEther.Tests
             Assert.That(analyzer.DroppedInputCount, Is.EqualTo(1));
         }
 
-        [TestCase(SmoothingMode.LogAmplitude, true), TestCase(SmoothingMode.Complex, true)]
-        [TestCase(SmoothingMode.LogAmplitude, false), TestCase(SmoothingMode.Complex, false)]
-        public async Task SmootherFeedsOriginalSplitterAndPublishesTrueResiduals(SmoothingMode mode, bool enabled)
+        [Test]
+        public async Task SmootherFeedsOriginalSplitterAndPublishesTrueResiduals([Values] SmoothingMode mode, [Values] bool enabled,
+            [Values(0.0, 3.0, 6.0)] double tilt)
         {
             var options = Options(); options.SmoothingMode = mode; options.SmoothingEnabled = enabled;
+            options.FrequencyTiltDbPerOctave = tilt;
+            options.MaxFrequency = 3000;
             var analyzer = new Analyzer(Format, options);
             int count = 0;
             var references = Enumerable.Range(0, Format.ChannelCount)
@@ -209,14 +211,16 @@ namespace AEther.Tests
                     {
                         int i = c * analyzer.Domain.Length + k;
                         var fit = evidence[i]; var output = e.GetChannel(c).Span.Slice(4 * k, 4);
+                        var frequency = analyzer.Domain.MinValue * Math.Pow(2, k / (double)analyzer.Domain.Resolution);
+                        var gain = Math.Pow(10, tilt * Math.Log2(frequency / 1000) / 20);
                         Assert.That(fit.Amplitude, Is.EqualTo(selected.Span[i]));
-                        Assert.That(output[0], Is.EqualTo(Math.Max(0, fit.Sine)));
-                        Assert.That(output[1], Is.EqualTo(Math.Max(0, fit.Transient)));
-                        Assert.That(output[2], Is.EqualTo(fit.Background));
-                        Assert.That(output[3], Is.EqualTo(fit.Amplitude));
-                        Assert.That(e.ResidualRms.Span[i], Is.EqualTo(fit.ResidualRms));
+                        Assert.That(output[0], Is.EqualTo(Math.Max(0, fit.Sine) * gain).Within(1e-12));
+                        Assert.That(output[1], Is.EqualTo(Math.Max(0, fit.Transient) * gain).Within(1e-12));
+                        Assert.That(output[2], Is.EqualTo(fit.Background * gain).Within(1e-12));
+                        Assert.That(output[3], Is.EqualTo(fit.Amplitude * gain).Within(1e-12));
+                        Assert.That(e.ResidualRms.Span[i], Is.EqualTo(fit.ResidualRms * gain).Within(1e-12));
                         Assert.That(e.MomentaryResidual.Span[c * analyzer.Domain.Length + k],
-                            Is.EqualTo(fit.Amplitude - fit.Background - fit.Sine - fit.Transient));
+                            Is.EqualTo((fit.Amplitude - fit.Background - fit.Sine - fit.Transient) * gain).Within(1e-12));
                     }
                 count++;
             };
@@ -231,6 +235,7 @@ namespace AEther.Tests
         {
             Assert.That(new AnalyzerOptions().SmoothingEnabled, Is.False);
             var options = Options(); options.SmoothingEnabled = false; options.UseSwift = swift;
+            options.FrequencyTiltDbPerOctave = 0;
             var analyzer = new Analyzer(Format, options);
             var actual = Collect(analyzer);
             var bytes = Audio(240);
@@ -299,6 +304,15 @@ namespace AEther.Tests
         {
             var options = Options();
             options.WindowFunction = (DFTWindow)999;
+            Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, options));
+        }
+
+        [TestCase(-.1), TestCase(6.1), TestCase(double.NaN), TestCase(double.PositiveInfinity)]
+        public void RejectsInvalidFrequencyTilt(double tilt)
+        {
+            Assert.That(new AnalyzerOptions().FrequencyTiltDbPerOctave, Is.EqualTo(3));
+            var options = Options();
+            options.FrequencyTiltDbPerOctave = tilt;
             Assert.Throws<ArgumentOutOfRangeException>(() => new Analyzer(Format, options));
         }
 

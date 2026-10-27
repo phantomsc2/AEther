@@ -475,8 +475,11 @@ public class ShaderSilenceTests
         var input = new double[block]; var observations = new Complex[Bands];
         var output = new double[Bands * 4];
         var a = new double[Bands]; var b = new double[Bands]; var raw = new double[Bands];
+        // Stress silence decay with the maximum supported post-decomposition tilt.
+        var tilt = domain.Select(f => Math.Pow(f / 1000, 6 / (20 * Math.Log10(2)))).ToArray();
         long row = 0;
-        var gain = Math.Pow(10, gainDb / 20);
+        // Keep the low-frequency fixture visibly excited despite bass attenuation.
+        var gain = Math.Pow(10, gainDb / 20) / tilt[0];
         Tick(false);
         AssertBlack();
         bool lit = false;
@@ -517,6 +520,9 @@ public class ShaderSilenceTests
             spectrum.OutputComplex(observations);
             smoother.Process(observations, a, b);
             splitter.ProcessLinear(mode == SmoothingMode.LogAmplitude ? a : b, output);
+            for (int k = 0; k < Bands; k++)
+                for (int i = 0; i < Splitter.OutputStride; i++)
+                    output[k * Splitter.OutputStride + i] *= tilt[k];
             for (int k = 0; k < Bands; k++) raw[k] = observations[k].Magnitude;
             renderer.PostAudio(new SampleEvent<double>(output, Bands * 4, DateTime.UnixEpoch)
                 { AnalysisRow = row++, ObservedAmplitude = raw, LogSmoothedAmplitude = a, ComplexSmoothedAmplitude = b }, 1);

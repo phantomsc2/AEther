@@ -36,18 +36,18 @@ public sealed class AudioPanel : UserControl
                 FrameworkElement editor;
                 if (property.PropertyType == typeof(bool))
                 {
-                    var toggle = new ToggleSwitch { Header = displayName, IsOn = (bool)property.GetValue(Options)! };
+                    var toggle = new ToggleSwitch { IsOn = (bool)property.GetValue(Options)! };
                     if (property.Name == nameof(AnalyzerOptions.UseSwift))
                     {
                         toggle.OnContent = "SWIFT";
                         toggle.OffContent = "DFT";
                     }
                     toggle.Toggled += (_, _) => { property.SetValue(Options, toggle.IsOn); RefreshBackendEditors(); Changed(); };
-                    editor = toggle;
+                    editor = LabeledControl.Create(displayName, toggle);
                 }
                 else if (property.PropertyType.IsEnum)
                 {
-                    var combo = new ComboBox { Header = displayName, HorizontalAlignment = HorizontalAlignment.Stretch };
+                    var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
                     var values = Enum.GetValues(property.PropertyType).Cast<object>();
                     foreach (var value in values)
                     {
@@ -63,7 +63,7 @@ public sealed class AudioPanel : UserControl
                         if (combo.SelectedItem is not ComboBoxItem item) return;
                         property.SetValue(Options, item.Tag); Changed();
                     };
-                    editor = combo;
+                    editor = LabeledControl.Create(displayName, combo);
                 }
                 else
                 {
@@ -73,7 +73,8 @@ public sealed class AudioPanel : UserControl
                         or nameof(AnalyzerOptions.ComplexAccelerationIntensity);
                     var logarithmic = property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
                         or nameof(AnalyzerOptions.SmoothingNoiseFloor);
-                    var step = integral ? 1 : zeroLogarithmic ? .00001 : noiseFloor ? .0001 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
+                    var step = integral ? 1 : property.Name == nameof(AnalyzerOptions.FrequencyTiltDbPerOctave) ? .1
+                        : zeroLogarithmic ? .00001 : noiseFloor ? .0001 : property.Name is nameof(AnalyzerOptions.SwiftWidthScale)
                         or nameof(AnalyzerOptions.SwiftImbalance) ? .01 : .001;
                     double ToSlider(double value) => zeroLogarithmic ? Math.Log2(1 + value / 1e-8) : logarithmic ? Math.Log2(value) : value;
                     double FromSlider(double value) => zeroLogarithmic ? 1e-8 * (Math.Pow(2, value) - 1) : logarithmic ? Math.Pow(2, value) : value;
@@ -171,6 +172,7 @@ public sealed class AudioPanel : UserControl
         nameof(AnalyzerOptions.SwiftWidthScale) => (.25, 8),
         nameof(AnalyzerOptions.SwiftImbalance) => (0, 1),
         nameof(AnalyzerOptions.InputGainDb) => (-60, 60),
+        nameof(AnalyzerOptions.FrequencyTiltDbPerOctave) => (0, 6),
         nameof(AnalyzerOptions.LogAccelerationIntensity) => (0, 1e3),
         nameof(AnalyzerOptions.ComplexAccelerationIntensity) => (0, 1e3),
         nameof(AnalyzerOptions.SmoothingNoiseFloor) => (1e-12, 1),

@@ -32,7 +32,7 @@ public sealed class FrameTimeView : UserControl
     };
     readonly Trace[] traces =
     [
-        new(FrameMetric, "Frame time", new SKColor(70, 160, 230)),
+        new(FrameMetric, "Total", new SKColor(70, 160, 230)),
         new("render.draw_cpu_ms", "CPU", new SKColor(170, 115, 225)),
         new("gpu.frame_ms", "GPU", new SKColor(235, 170, 60)),
         new("capture.input_age_ms", "Input", new SKColor(70, 185, 140)),

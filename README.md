@@ -11,6 +11,12 @@ Spectrum's `CompareSmoothers` view shows both on the same input, A left/red and
 B right/cyan, with raw amplitude marked in white. Normal S/T/B/R controls retain
 their original meaning. See [models and comparison](doc/kalman-smoothing.md).
 
+The Splitter's **Frequency tilt** slider applies a power-law gain after decomposition,
+preserving linear amplitude response: 0 = None, +3 dB/octave (default),
++6 dB/octave (max). Gain is unity at 1 kHz, attenuating lower frequencies
+and boosting higher frequencies. All S/T/B/A outputs and residuals share this
+weighting; raw and smoother comparison diagnostics stay unweighted.
+
 ## Project Layout
 
 - **AEther**: Core library to read and analyze sample data

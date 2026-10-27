@@ -19,16 +19,12 @@ public sealed class ShaderPanel : UserControl
 
     public ShaderPanel()
     {
-        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Content = layout;
-        var reset = new Button { Content = "Reset defaults", MinHeight = 24, Padding = new Thickness(8, 2, 8, 2),
-            HorizontalAlignment = HorizontalAlignment.Left };
-        reset.Click += (_, _) => { renderer?.ActiveShader?.Parameters?.Reset(); RefreshParameters(); };
         var scroll = new ScrollViewer { Content = parameters, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(scroll, 1); Grid.SetRow(status, 2);
-        layout.Children.Add(reset); layout.Children.Add(scroll); layout.Children.Add(status);
+        Grid.SetRow(status, 1);
+        layout.Children.Add(scroll); layout.Children.Add(status);
     }
 
     public void Attach(Renderer? value)
@@ -111,7 +107,7 @@ public sealed class ShaderPanel : UserControl
             foreach (var child in parameter.Children) children.Children.Add(Editor(values, child));
             return new Expander
             {
-                Header = parameter.Name, Content = children, IsExpanded = true,
+                Header = parameter.Name, Content = children, IsExpanded = false,
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
         }

@@ -22,6 +22,7 @@ namespace AEther
 
         readonly int BatchSize;
         readonly double InputGain;
+        readonly double[] TiltGains;
         readonly byte[] Batch;
         readonly ISpectrumProcessor[] Spectrum;
         readonly SpectrumSmoother[] Smoothers;
@@ -52,6 +53,10 @@ namespace AEther
             options.Validate(format);
             InputGain = Math.Pow(10, options.InputGainDb / 20);
             Domain = options.Domain;
+            // A fixed power law preserves linear amplitude and exact silence.
+            // 20*log10(2)*p = tilt dB/octave, with unity gain at 1 kHz.
+            var tiltPower = options.FrequencyTiltDbPerOctave / (20 * Math.Log10(2));
+            TiltGains = Domain.Select(f => Math.Pow(f / 1000, tiltPower)).ToArray();
             Format = format;
             Options = options;
             Clock = timeProvider ?? TimeProvider.System;
@@ -59,6 +64,7 @@ namespace AEther
             BatchSize = Format.SampleRate / options.TimeResolution;
             Profile.Describe("Sample rate", Format.SampleRate.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Input gain dB", options.InputGainDb.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Profile.Describe("Frequency tilt dB/octave", options.FrequencyTiltDbPerOctave.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Channels", Format.ChannelCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Batch samples", BatchSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Profile.Describe("Batch budget ms", (BatchSize * 1000.0 / Format.SampleRate).ToString("F6", System.Globalization.CultureInfo.InvariantCulture));
@@ -400,8 +406,11 @@ namespace AEther
                         for (var k = 0; k < Domain.Length; k++)
                         {
                             var e = Splitters[c].Estimates.Span[k];
-                            residual.GetChannel(c).Span[k] = e.ResidualRms;
-                            momentary.GetChannel(c).Span[k] = e.Amplitude - e.Background - e.Sine - e.Transient;
+                            var gain = TiltGains[k];
+                            var band = output.GetChannel(c).Span.Slice(k * Splitter.OutputStride, Splitter.OutputStride);
+                            for (var i = 0; i < band.Length; i++) band[i] *= gain;
+                            residual.GetChannel(c).Span[k] = e.ResidualRms * gain;
+                            momentary.GetChannel(c).Span[k] = (e.Amplitude - e.Background - e.Sine - e.Transient) * gain;
                         }
                     }
                 }

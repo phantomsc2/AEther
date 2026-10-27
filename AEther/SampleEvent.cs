@@ -10,12 +10,14 @@ namespace AEther
     )
     {
         /// <summary>Optional channel-major residual RMS in linear amplitude units, one value per band.
+        /// Analyzer output and both residuals include frequency tilt after decomposition.
         /// Like Samples, pooled analyzer storage is valid only during the event callback.</summary>
         public ReadOnlyMemory<double> ResidualRms { get; init; }
         /// <summary>Signed original splitter residual A-B-S-T. Callback lifetime matches Samples.</summary>
         public ReadOnlyMemory<double> MomentaryResidual { get; init; }
         /// <summary>Optional coherent observed magnitude before tracking, one value per
-        /// band/channel. Used for same-frame raw versus inferred Spectrum diagnostics.</summary>
+        /// band/channel. Used for same-frame raw versus inferred Spectrum diagnostics; these
+        /// comparison amplitudes and both smoother outputs exclude frequency tilt.</summary>
         public ReadOnlyMemory<double> ObservedAmplitude { get; init; }
         /// <summary>Mode A output in linear amplitude units. Callback-lifetime comparison data.</summary>
         public ReadOnlyMemory<double> LogSmoothedAmplitude { get; init; }

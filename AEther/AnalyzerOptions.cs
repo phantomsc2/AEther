@@ -71,6 +71,12 @@ namespace AEther
         public double InputGainDb { get; set; } = 15.0;
 
         [Category("Splitter")]
+        [DisplayName("Frequency tilt (dB/octave)")]
+        [DefaultValue(3.0)]
+        [Description("Linear-amplitude frequency weighting after decomposition, anchored at 1 kHz. 0 = None, +3 dB/octave = default, +6 dB/octave = max. Raw/smoother diagnostics remain unweighted.")]
+        public double FrequencyTiltDbPerOctave { get; set; } = 3;
+
+        [Category("Splitter")]
         [Description("Temporal support of the original Gaussian S/T/B/residual decomposition, in seconds.")]
         public double TimeWindowSeconds { get; set; } = .2;
 
@@ -118,6 +124,8 @@ namespace AEther
                 throw new ArgumentOutOfRangeException(nameof(MaxInputAgeMilliseconds));
             if (!double.IsFinite(InputGainDb) || InputGainDb < -60 || InputGainDb > 60)
                 throw new ArgumentOutOfRangeException(nameof(InputGainDb), "Input gain must be between -60 and +60 dB.");
+            if (!double.IsFinite(FrequencyTiltDbPerOctave) || FrequencyTiltDbPerOctave < 0 || FrequencyTiltDbPerOctave > 6)
+                throw new ArgumentOutOfRangeException(nameof(FrequencyTiltDbPerOctave));
             if (TimeResolution <= 0 || TimeResolution > format.SampleRate)
                 throw new ArgumentOutOfRangeException(nameof(TimeResolution));
             if (!double.IsFinite(MinFrequency) || !double.IsFinite(MaxFrequency)
