@@ -49,8 +49,7 @@ Splitter.Estimates. Analyzer publishes residual RMS and signed momentary residua
 signed current-cell residual. There are no component display gains; automatic
 bounded display normalization is not implemented in this settlement.
 
-Every scene must eventually render black after audio stops. Finite fit history
-expires naturally; AEther.Tests/ShaderSilenceTests.cs retains the GPU regression.
+Finite fit history expires naturally.
 
 ### Rolling sufficient statistics and residual RMS
 

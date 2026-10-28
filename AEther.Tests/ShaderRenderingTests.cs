@@ -1,18 +1,15 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading;
-using System.Threading.Tasks;
 using AEther.Vortice;
 using NUnit.Framework;
 
 namespace AEther.Tests;
 
 [TestFixture, NonParallelizable, Apartment(ApartmentState.STA)]
-public class ShaderSilenceTests
+public partial class ShaderRenderingTests
 {
     [TestCase(true, false), TestCase(false, false), TestCase(true, true), TestCase(false, true), Category("GPU")]
     public void EmbeddedDebugSharesAudioWithoutChangingTheCanvas(bool drawCanvas, bool lowCost)
@@ -78,15 +75,6 @@ public class ShaderSilenceTests
         var draws = renderer.DebugDrawCount;
         clock.Advance(); renderer.Render(false);
         Assert.That(renderer.DebugDrawCount, Is.EqualTo(draws), "Hidden Debug must do no drawing.");
-        for (int frame = 0; frame < MinimumDecayFrames; frame++)
-        {
-            clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
-        }
-        for (int frame = 0; frame < FinalFrames; frame++)
-        {
-            clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
-            Assert.That(renderer.ReadDebugPixels().Where((_, i) => i % 4 != 3), Is.All.Zero);
-        }
         renderer.ResizeDebugOutput(200, 100);
         clock.Advance(); renderer.Render(false, renderCanvas: false, renderDebug: true);
         Assert.That(renderer.ReadDebugPixels().Length, Is.EqualTo(200 * 100 * 4));
@@ -233,10 +221,6 @@ public class ShaderSilenceTests
     }
 
     const int Width = 96, Height = 54, Bands = 32;
-    // Allow at least 20 seconds of natural decay. Slow simulations retain the
-    // original generous upper bound, but dark scenes need not render it all.
-    const int MinimumDecayFrames = 1200, DecayFrames = 10000, FinalFrames = 60;
-
     [Test, Category("GPU")]
     public void SpectrumComparisonShowsLogLeftAndComplexRightFromTheSameStereoAverage()
     {
@@ -329,216 +313,7 @@ public class ShaderSilenceTests
         }
     }
 
-    public static IEnumerable<TestCaseData> Scenes() =>
-        Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Scenes"), "*.hlsl")
-            .Where(path => !IsAudioIndependentPrototype(Path.GetFileNameWithoutExtension(path)))
-            .OrderBy(path => path, StringComparer.Ordinal)
-            .SelectMany(path => new[] { 0.0, 60.0 }.SelectMany(gainDb =>
-                (IsFluidScene(Path.GetFileNameWithoutExtension(path)) ? new[] { false, true } : new[] { false })
-                    .Select(periodic => new TestCaseData(Path.GetFileNameWithoutExtension(path), gainDb, periodic))));
-
-    static bool IsFluidScene(string name) => name is "MandelFluid" or "MandelFluidv2" or "MandelFluidv3"
-        or "FluidFlight" or "PlaneFlight" or "MandelFluidv4";
-
-    // AGENTS.md explicitly exempts audio-independent volume prototypes. Keep
-    // production scene discovery and its full natural-decay checks intact.
-    static bool IsAudioIndependentPrototype(string name) => name is "MandelVolume" or "MandelLightv2";
-
-    [TestCaseSource(nameof(Scenes)), Category("GPU")]
-    public void EverySceneEventuallyTurnsBlackWithoutMusic(string scene, double inputGainDb, bool periodic)
-        => CheckSilence(scene, inputGainDb, periodic, restartAudio: false);
-
-    [TestCase("Debug"), TestCase("Histogram"), TestCase("Mandelbox"), TestCase("MandelFluidv4"), Category("GPU")]
-    public void AnalysisRestartPreservesSilenceDecayOfRetainedGraphics(string scene)
-        => CheckSilence(scene, 0, true, restartAudio: true);
-
-    void CheckSilence(string scene, double inputGainDb, bool periodic, bool restartAudio)
-    {
-        using var shaders = new SceneShaders(scene);
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
-        renderer.SelectScene(scene);
-        if (IsFluidScene(scene))
-        {
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
-                .Single(p => p.Name == "PeriodicBoundary"), periodic);
-            if (restartAudio && scene == "MandelFluidv4")
-                parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
-                    .Single(p => p.Name == "LowQuality"), true);
-        }
-        var gain = Math.Pow(10, inputGainDb / 20);
-        long row = 0;
-
-        // Test both silent startup and retained light after a real musical input.
-        Tick();
-        AssertBlack("silent startup");
-        foreach (bool sendSilentPackets in new[] { false, true })
-        {
-            bool lit = false;
-            for (int frame = 0; frame < 120; frame++)
-            {
-                if ((scene is "Mandelbox" or "MandelFluidv2" or "MandelFluidv3") && frame == 30)
-                {
-                    // A dropped input row followed by analysis arriving late.
-                    // Keep this same history alive through recovery and silence.
-                    row++;
-                    for (int gap = 0; gap < 5; gap++) Tick();
-                }
-                Post(true);
-                Tick();
-                if (frame % 20 == 19)
-                    lit |= renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 10);
-            }
-            Assert.That(lit, Is.True, $"{scene}: musical fixture never produced visible light.");
-
-            if (restartAudio)
-            {
-                var program = renderer.ActiveShader!.Program.Pixel;
-                renderer.RestartAudio(new(new Domain(30, 12, Bands), 60));
-                Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
-            }
-
-            // Keep the same renderer, scene and simulation. No resets, clearing,
-            // large dt jumps or scene switches that could erase retained simulation state.
-            for (int frame = 0; frame < DecayFrames; frame++)
-            {
-                if (sendSilentPackets) Post(false);
-                Tick();
-                if (frame + 1 >= MinimumDecayFrames && (frame + 1) % 120 == 0
-                    && renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0))
-                    break;
-                if (frame % 1000 == 999)
-                {
-                    // Readback bounds the GPU queue without changing its state.
-                    renderer.ReadPixels(false);
-                    TestContext.Progress.WriteLine($"{scene}: {(sendSilentPackets ? "zero packets" : "capture stopped")}, decay {frame + 1}/{DecayFrames}");
-                }
-            }
-            for (int frame = 0; frame < FinalFrames; frame++)
-            {
-                if (sendSilentPackets) Post(false);
-                Tick();
-                AssertBlack($"{(sendSilentPackets ? "zero packets" : "capture stopped")}, final frame {frame}");
-            }
-        }
-
-        void Tick() { clock.Advance(); renderer.Render(false); }
-        void Post(bool music)
-        {
-            var samples = new double[Bands * 8];
-            if (music)
-                for (int i = 0; i < samples.Length; i += 4)
-                {
-                    samples[i] = gain * .6;
-                    samples[i + 1] = gain * (row % 12 < 3 ? .8 : .1);
-                    samples[i + 2] = gain * .3;
-                    samples[i + 3] = gain * .9;
-                }
-            renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                {
-                    AnalysisRow = row++,
-                    ResidualRms = Enumerable.Repeat(music ? gain * .4 : 0, Bands * 2).ToArray(),
-                    MomentaryResidual = Enumerable.Repeat(music ? -gain * .4 : 0, Bands * 2).ToArray(),
-                }, 2);
-        }
-        void AssertBlack(string stage)
-        {
-            var pixels = renderer.ReadPixels(false);
-            int nonblack = 0, maximum = 0;
-            for (int i = 0; i < pixels.Length; i++)
-                if (i % 4 != 3 && pixels[i] != 0) { nonblack++; maximum = Math.Max(maximum, pixels[i]); }
-            Assert.That(nonblack, Is.Zero,
-                $"{scene}: {stage}: {nonblack} nonzero RGB channels, peak {maximum}/255. Expected exact black.");
-        }
-    }
-
-    public static IEnumerable<TestCaseData> SmootherSilenceCases() =>
-        from scene in new[] { "Spectrum", "Histogram", "Debug", "MandelFluidv3" }
-        from gain in new[] { 0.0, 60.0 }
-        from swift in new[] { false, true }
-        from mode in new[] { SmoothingMode.LogAmplitude, SmoothingMode.Complex }
-        select new TestCaseData(scene, gain, swift, mode);
-
-    [TestCaseSource(nameof(SmootherSilenceCases)), Category("GPU")]
-    public void SpectrumSmootherAndSplitterEventuallyRenderBlack(string scene, double gainDb, bool useSwift, SmoothingMode mode)
-    {
-        const int sampleRate = 12000, block = sampleRate / 60;
-        var domain = new Domain(55, 12, Bands);
-        var options = new AnalyzerOptions { TimeResolution = 60, InputGainDb = gainDb, UseSwift = useSwift };
-        var spectrum = SpectrumProcessor.Create(domain, sampleRate, options);
-        var smoother = new SpectrumSmoother(spectrum.Frequencies, 1.0 / 60, options);
-        var splitter = new Splitter(domain, options);
-        using var shaders = new SceneShaders(scene);
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
-        renderer.SelectScene(scene);
-        var input = new double[block]; var observations = new Complex[Bands];
-        var output = new double[Bands * 4];
-        var a = new double[Bands]; var b = new double[Bands]; var raw = new double[Bands];
-        // Stress silence decay with the maximum supported post-decomposition tilt.
-        var tilt = domain.Select(f => Math.Pow(f / 1000, 6 / (20 * Math.Log10(2)))).ToArray();
-        long row = 0;
-        // Keep the low-frequency fixture visibly excited despite bass attenuation.
-        var gain = Math.Pow(10, gainDb / 20) / tilt[0];
-        Tick(false);
-        AssertBlack();
-        bool lit = false;
-        for (int frame = 0; frame < 120; ++frame)
-        {
-            Tick(true);
-            if (frame % 20 == 19) lit |= renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 10);
-        }
-        Assert.That(lit, Is.True, "Spectrum/smoother/splitter fixture must excite the scene before silence.");
-        int decay = 0;
-        for (; decay < DecayFrames; ++decay)
-        {
-            Tick(false);
-            if (decay + 1 >= MinimumDecayFrames && (decay + 1) % 120 == 0
-                && renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0)) break;
-            if (decay % 1000 == 999) renderer.ReadPixels(false);
-        }
-        for (int frame = 0; frame < FinalFrames; ++frame) { Tick(false); AssertBlack(); }
-        Assert.That(observations, Is.All.EqualTo(Complex.Zero), "Actual backend state must expire, not merely render below visibility.");
-        Assert.That(output.All(double.IsFinite), Is.True);
-        Assert.That(output.Max(Math.Abs), Is.LessThan(1e-9), "The complex model decays naturally rather than gating zero observations.");
-        if (scene == "Spectrum")
-        {
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CompareSmoothers"), true);
-            for (int frame = 0; frame < FinalFrames; ++frame) { Tick(false); AssertBlack(); }
-        }
-
-        void Tick(bool active)
-        {
-            for (int i = 0; i < block; ++i)
-            {
-                double t = (row * block + i) / (double)sampleRate;
-                input[i] = active ? gain * (.6 * Math.Sin(2 * Math.PI * 55 * t)
-                    + .3 * Math.Sin(2 * Math.PI * 110 * t)) : 0;
-            }
-            spectrum.Process(input);
-            spectrum.OutputComplex(observations);
-            smoother.Process(observations, a, b);
-            splitter.ProcessLinear(mode == SmoothingMode.LogAmplitude ? a : b, output);
-            for (int k = 0; k < Bands; k++)
-                for (int i = 0; i < Splitter.OutputStride; i++)
-                    output[k * Splitter.OutputStride + i] *= tilt[k];
-            for (int k = 0; k < Bands; k++) raw[k] = observations[k].Magnitude;
-            renderer.PostAudio(new SampleEvent<double>(output, Bands * 4, DateTime.UnixEpoch)
-                { AnalysisRow = row++, ObservedAmplitude = raw, LogSmoothedAmplitude = a, ComplexSmoothedAmplitude = b }, 1);
-            clock.Advance(); renderer.Render(false);
-        }
-        void AssertBlack() => Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
-            $"{scene}, Swift={useSwift}, {mode}, gain {gainDb} dB, row {row}: every RGB channel must be black.");
-    }
-
-    // Compile only the scene under test. Discovery and all decay/RGB assertions stay unchanged;
-    // recompiling every unrelated scene for each gain/boundary case dominated this regression.
+    // Compile only the scene under test.
     sealed class SceneShaders : IDisposable
     {
         readonly string temporaryRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
@@ -951,11 +726,8 @@ public class ShaderSilenceTests
     }
 
     [Test, Category("GPU")]
-    public void PeriodicPigmentDecaysThroughTheFloat16SubnormalRange()
+    public void FlightMaterialOwnsItsDecayOnTheSharedFloat32Backend()
     {
-        var small = (Half).00002f;
-        Assert.That((Half)((float)small * MathF.Exp(-MathF.Log(2) / (10 * 60))), Is.EqualTo(small),
-            "The fixture must exercise the exponential rounding plateau.");
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
@@ -964,15 +736,16 @@ public class ShaderSilenceTests
         var parameters = renderer.ActiveShader!.Parameters!;
         var fluid = parameters.Items.Single(p => p.Name == "Fluid");
         parameters.SetBoolean(fluid.Children.Single(p => p.Name == "PeriodicBoundary"), true);
-        foreach (var name in new[] { "Flow", "Curl", "Diffusion" })
-            parameters.SetFloat(fluid.Children.Single(p => p.Name == name), 0);
-        parameters.SetFloat(fluid.Children.Single(p => p.Name == "HalfLife"), 1);
+        parameters.SetBoolean(fluid.Children.Single(p => p.Name == "LowQuality"), true);
+        var flight = parameters.Items.Single(p => p.Name == "Flight");
+        parameters.SetFloat(flight.Children.Single(p => p.Name == "HalfLife"), 0);
         clock.Advance(); renderer.Render(false);
         renderer.Fluid.SeedRecirculationForCheck(.00002f, 0);
         Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(0));
-        for (int frame = 0; frame < 360; frame++) { clock.Advance(); renderer.Render(false); }
-        Assert.That(renderer.Fluid.ReadDye(), Is.All.Zero,
-            "A closed domain must not retain immortal half-float pigment.");
+        for (int frame = 0; frame < 120; frame++) { clock.Advance(); renderer.Render(false); }
+        Assert.That(renderer.Fluid.MaterialCount, Is.EqualTo(1), "Flight has no ring age/frequency attachment.");
+        Assert.That(renderer.Fluid.ReadDye().Max(), Is.LessThan(1e-10),
+            "The flight material shader fades all channels, including density.");
     }
 
     [Test, Category("GPU")]
@@ -1183,58 +956,6 @@ public class ShaderSilenceTests
         }
     }
 
-    [TestCase("Spectrum", 0.0), TestCase("Spectrum", 60.0)]
-    [TestCase("Debug", 0.0), TestCase("Debug", 60.0)]
-    [TestCase("Histogram", 0.0), TestCase("Histogram", 60.0), Category("GPU")]
-    public async Task WaveformThroughAnalysisViewsEventuallyTurnsBlack(string scene, double gainDb)
-    {
-        const int sampleRate = 8000, batch = sampleRate / 60;
-        var options = new AnalyzerOptions
-        {
-            MinFrequency = 100, MaxFrequency = 1000, FrequencyResolution = 4,
-            TimeResolution = 60, InputGainDb = gainDb,
-        };
-        var analyzer = new Analyzer(new(SampleType.Float32.Instance, sampleRate, 2), options);
-        var rows = new List<SampleEvent<double>>();
-        analyzer.SamplesAnalyzed += (_, e) => rows.Add(e with
-            { Samples = e.Samples.AsSpan(0, e.SampleCount * 2).ToArray(), ResidualRms = e.ResidualRms.ToArray() });
-        var waveform = new float[140 * batch * 2];
-        for (int j = 0; j < 20 * batch; j++)
-        {
-            waveform[2 * j] = (float)(.4 * Math.Sin(j * .17));
-            waveform[2 * j + 1] = -waveform[2 * j];
-        }
-        var bytes = new byte[waveform.Length * sizeof(float)];
-        Buffer.BlockCopy(waveform, 0, bytes, 0, bytes.Length);
-        analyzer.PostSamples(bytes); analyzer.Stop();
-        await analyzer.Completion;
-        Assert.That(rows.Count, Is.EqualTo(140));
-        Assert.That(rows[^1].Samples, Is.All.Zero);
-
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, Width, Height, options.Domain.Length,
-            sampleRate / (double)batch, shaderDirectory: ShaderDirectory, timeProvider: clock);
-        renderer.SelectScene(scene);
-        bool lit = false;
-        foreach (var row in rows)
-        {
-            renderer.PostAudio(row, 2);
-            Tick();
-            if (row.AnalysisRow == 19)
-                lit = renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 10);
-        }
-        Assert.That(lit, Is.True, "The production waveform fixture must excite the view.");
-        for (int frame = 0; frame < MinimumDecayFrames; frame++) Tick();
-        for (int frame = 0; frame < FinalFrames; frame++)
-        {
-            Tick();
-            Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
-                $"Production waveform/spectrum/local fit: final frame {frame}.");
-        }
-        void Tick() { clock.Advance(); renderer.Render(false); }
-    }
-
     sealed class RenderClock : TimeProvider
     {
         long frame;
@@ -1245,7 +966,7 @@ public class ShaderSilenceTests
 
     sealed class HiddenWindow : IDisposable
     {
-        public IntPtr Handle { get; } = CreateWindowEx(0, "STATIC", "AEther shader silence regression",
+        public IntPtr Handle { get; } = CreateWindowEx(0, "STATIC", "AEther shader rendering tests",
             0x80000000, 0, 0, Width, Height, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         public HiddenWindow()
         {

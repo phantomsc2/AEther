@@ -167,7 +167,4 @@ uploads, and repeated analysis restarts with changed gain, backend, SIMD/SWIFT,
 smoother, splitter, queue, domain, rate, retention and sample format. The restart
 regression invalidates shader source after initial compilation and asserts that
 both selected and previously compiled scene programs survive; unselected scenes
-stay lazy. `ShaderSilenceTests.AnalysisRestartPreservesSilenceDecayOfRetainedGraphics`
-checks retained histogram, Mandelbox and periodic fluid state after active audio,
-allowing the existing generous decay period before checking all RGB channels over
-multiple final frames. These tests use hidden test HWNDs; no UI automation is needed.
+stay lazy. These tests use hidden test HWNDs; no UI automation is needed.

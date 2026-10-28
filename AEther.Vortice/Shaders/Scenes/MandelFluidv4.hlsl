@@ -17,16 +17,14 @@ cbuffer Parameters
     LightingParameters Lighting = { .1960, .3330 };
 };
 #include "../Common/RingEmitter.hlsl"
-Texture2D<float4> FluidDye;
-Texture2D<float2> FluidAge;
-SamplerState FluidSampler;
+#include "../Common/RingFluidMaterial.hlsl"
 
 // Preserved for future lookup experiments: exact particle age, carried
 // frequency, and current screen-space stereo still address the raw histogram.
 float3 RingMaterialHistogram(float2 uv)
 {
-    float4 dye = max(0, FluidDye.Sample(FluidSampler, uv));
-    float2 material = FluidAge.Sample(FluidSampler, uv);
+    float4 dye = max(0, FluidMaterial0.Sample(FluidSampler, uv));
+    float2 material = FluidMaterial1.Sample(FluidSampler, uv);
     if (dye.a <= 0) return 0;
     float seconds = max(0, T - material.x / dye.a);
     float frequency = saturate(material.y / dye.a);
@@ -38,8 +36,8 @@ float3 RingMaterialHistogram(float2 uv)
 
 float4 PS(const PSin input) : SV_Target
 {
-    float4 dye = max(0, FluidDye.Sample(FluidSampler, input.UV));
-    float2 material = FluidAge.Sample(FluidSampler, input.UV);
+    float4 dye = max(0, FluidMaterial0.Sample(FluidSampler, input.UV));
+    float2 material = FluidMaterial1.Sample(FluidSampler, input.UV);
     if (dye.a <= 0) return float4(0, 0, 0, 1);
     // One S material, tinted once at emission and faded during transport.
     // Mixing blends actual source colors instead of recoloring an average label.

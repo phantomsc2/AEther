@@ -13,6 +13,7 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../FluidTestExtensions.cs" Link="FluidTestExtensions.cs" />
     <!-- Forms supplies disposable HWNDs for renderer probes; WinUI owns the app loop. -->
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
     <ApplicationDefinition Include="WindowCheckApplication.xaml" />

@@ -221,7 +221,7 @@ The study's generated unrolled functions are experimental. A production implemen
 - Demonstrate quiet-input and silence behavior. A constant nonzero step can chatter around a tiny DFT residual and create much larger artificial evidence. Decay/step limiting or an absolute silence policy needs explicit design and the existing GPU regression.
 - Confirm the frequency-only evidence cadence and behavior. The cost study measures temporal and joint trackers; it does not settle that third field's update rule.
 - Preserve independent evidence: no cross-channel allocation or S+T+N constraint is introduced by the layout.
-- Run the existing DFT audit and direct-reference checks on the production backend, add all-domain/window/block parity coverage, then run ShaderSilenceTests.cs after wiring it into analysis.
+- Run the existing DFT audit and direct-reference checks on the production backend, add all-domain/window/block parity coverage, after wiring it into analysis.
 - Measure the actual WinUI Debug and Release paths, including capture backlog, analysis p95, drops, and render handoff. Kernel averages are insufficient for a realtime acceptance decision.
 
 Further candidates, not established by this study: SIMD across time via unrolling the linear recurrence/prefix scans; hybrid lane packing; float state; AVX-512/ARM paths; alternative stable SDFT formulations; and neighborhood histogram/rank methods. Time unrolling can exploit DFT linearity, but does not independently parallelize the nonlinear sign recurrence. None should replace the measured FP64 paths without a new correctness and throughput comparison.

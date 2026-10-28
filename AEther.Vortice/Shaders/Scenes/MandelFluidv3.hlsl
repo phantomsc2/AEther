@@ -16,10 +16,9 @@ cbuffer Parameters
     LightingParameters Lighting = { .7, .008, 0.5 };
 };
 #include "../Common/RingEmitter.hlsl"
+#include "../Common/RingFluidMaterial.hlsl"
 #include "../Common/MandelboxField.hlsl"
 #include "../Common/RadiatingCore.hlsl"
-Texture2D<float4> FluidDye;
-SamplerState FluidSampler;
 
 float3 RadiatingShade(float2 uv, float sampleWidth, float pulse)
 {
@@ -31,14 +30,14 @@ float3 RadiatingShade(float2 uv, float sampleWidth, float pulse)
     // Project the shared ring fluid around this scene's dark core.
     float2 fluidPoint = .55 * q;
     float2 fluidUV = .5 + .5 * fluidPoint / float2(AspectRatio, 1);
-    float4 dye = FluidDye.Sample(FluidSampler, fluidUV);
-    uint w, h; FluidDye.GetDimensions(w, h);
+    float4 dye = FluidMaterial0.Sample(FluidSampler, fluidUV);
+    uint w, h; FluidMaterial0.GetDimensions(w, h);
     float2 tap = 1.0 / float2(w, h);
     float2 slope = float2(
-        FluidDye.Sample(FluidSampler, fluidUV + float2(tap.x, 0)).a
-            - FluidDye.Sample(FluidSampler, fluidUV - float2(tap.x, 0)).a,
-        FluidDye.Sample(FluidSampler, fluidUV + float2(0, tap.y)).a
-            - FluidDye.Sample(FluidSampler, fluidUV - float2(0, tap.y)).a);
+        FluidMaterial0.Sample(FluidSampler, fluidUV + float2(tap.x, 0)).a
+            - FluidMaterial0.Sample(FluidSampler, fluidUV - float2(tap.x, 0)).a,
+        FluidMaterial0.Sample(FluidSampler, fluidUV + float2(0, tap.y)).a
+            - FluidMaterial0.Sample(FluidSampler, fluidUV - float2(0, tap.y)).a);
     // Shape wispy edges in the shading, keeping undiffused pigment in the sim.
     float density = max(0, dye.a);
     float body = (1 - exp(-.9 * density)) * smoothstep(0, .035, density);

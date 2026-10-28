@@ -72,6 +72,6 @@ audio histories, timestamp handling, timed-session lifecycle and render-worker
 scheduling. The broader shader sweep was stopped after finding two pre-existing
 fixture failures: FilamentFlight and FoldFlight at +60 dB never produced the
 required initial visible light. An isolated reference build using the original
-ColorOutput.cs, Renderer.Debug.cs and ShaderSilenceTests.cs reproduced both failures
+ColorOutput.cs, Renderer.Debug.cs and the then-existing shader silence tests reproduced both failures
 (two failures and two passes across those scenes' gain cases). No shader was changed
 as part of this work.

@@ -7,7 +7,7 @@ below retain their original scene versions and light counts.
 Restart after building, then select **MandelLightv4**. This audio-reactive prototype
 uses live spectral transients for its strobe ring and tonal structure for a
 horizontal ring. Each has an independent shadow toggle, default off. Without live S/T it renders
-black, including after active input; it participates in the GPU silence regression.
+black, including after active input.
 It intentionally does not respond to a B-only/global-background fixture.
 
 The default preset favors dense, strongly scattering air: Air.Density is 0.65,

@@ -251,6 +251,7 @@ internal static partial class Program
                 throw new Exception("Live input failed to emit finite material.");
             string Hash(float[] values) => Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(values.AsSpan())));
             var state = Hash(dye) + Hash(renderer.Fluid.ReadAge()) + Hash(renderer.Fluid.ReadVelocity());
+            File.WriteAllText(Path.Combine(output, scene.ToLowerInvariant() + "-fluid-state.sha256"), state);
             if (reference != null && state != reference) throw new Exception($"{scene} differs from the v4 simulation.");
             reference = state;
             Save(renderer.ReadPixels(false), 1280, 720, Path.Combine(output, scene.ToLowerInvariant() + "-shared-fluid.png"));

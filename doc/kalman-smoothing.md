@@ -136,5 +136,4 @@ contains `[signed residual, observed, A, B]`. Production row 0 remains
 Tests compare mode B with an independent dense four-real-state Kalman filter,
 check analytic mode A/B updates, known carrier motion, phase reversal behavior,
 noise reduction, log-amplitude motion, invalid/extreme inputs, silence/reset,
-stereo/gain handling, restored splitter output/residuals, comparison pixels and
-the end-to-end GPU silence regression through both backends and both modes.
+stereo/gain handling, restored splitter output/residuals and comparison pixels.

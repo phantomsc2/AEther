@@ -20,11 +20,10 @@ cbuffer Parameters
 // The shared orbit supplies both the foreground silhouette and the original
 // direct slice, projected separately as the fine background structure.
 #include "../Common/RingEmitter.hlsl"
+#include "../Common/RingFluidMaterial.hlsl"
 #define MANDELBOX_CUSTOM_PS
 #include "../Common/Mandelbox.hlsl"
 #include "../Common/MandelComet.hlsl"
-Texture2D<float4> FluidDye;
-SamplerState FluidSampler;
 float3 CometShade(float2 uv, float sampleWidth)
 {
     float2 p = (2 * uv - 1) * float2(AspectRatio, 1);
@@ -50,12 +49,12 @@ float3 CometShade(float2 uv, float sampleWidth)
     // the object. Compose in light space to retain contrast during loud hits.
     // A single advected sheet supplies broad rolling motion. Three cheap dye
     // taps replace the old five-depth procedural volume and its noise field.
-    uint dyeWidth, dyeHeight; FluidDye.GetDimensions(dyeWidth, dyeHeight);
+    uint dyeWidth, dyeHeight; FluidMaterial0.GetDimensions(dyeWidth, dyeHeight);
     float2 dyeTap = 1.5 / float2(dyeWidth, dyeHeight);
-    float4 wake = FluidDye.Sample(FluidSampler, uv);
+    float4 wake = FluidMaterial0.Sample(FluidSampler, uv);
     float2 slope = float2(
-        FluidDye.Sample(FluidSampler, uv + float2(dyeTap.x, 0)).a - wake.a,
-        FluidDye.Sample(FluidSampler, uv + float2(0, dyeTap.y)).a - wake.a);
+        FluidMaterial0.Sample(FluidSampler, uv + float2(dyeTap.x, 0)).a - wake.a,
+        FluidMaterial0.Sample(FluidSampler, uv + float2(0, dyeTap.y)).a - wake.a);
     float wakeBody = 1 - exp(-.65 * max(0, wake.a));
     float2 wakeBend = .022 * slope / (1 + length(slope));
     wakeBend *= smoothstep(.2, .65, radius) * (1 - smoothstep(.65, 1, max(abs(2 * uv.x - 1), abs(2 * uv.y - 1))))

@@ -34,11 +34,11 @@ public sealed partial class Renderer : IDisposable
 
     ID3D11PixelShader outputPixel = null!;
 
-    MandelFluidSimulation? fluid;
+    FluidSimulation? fluid;
     RasterLightTransport? rasterTransport;
     string? previousScene;
-    internal MandelFluidSimulation Fluid => fluid!;
-    internal MandelFluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
+    internal FluidSimulation Fluid => fluid!;
+    internal FluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
     ID3D11Buffer frameBuffer = null!;
     readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
     readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
@@ -90,12 +90,6 @@ public sealed partial class Renderer : IDisposable
             if (!scene.ProgramReady) throw new InvalidOperationException($"Scene '{name}' did not compile.");
             SceneName = name;
         }
-    }
-    bool ReadBoolean(string path)
-    {
-        var values = ActiveShader?.Parameters;
-        var parameter = values == null ? null : ShaderParameters.Leaves(values.Items).FirstOrDefault(p => p.Path == path);
-        return parameter != null && values!.GetBoolean(parameter);
     }
 
     public string? ShaderError { get; private set; }
@@ -304,7 +298,7 @@ public sealed partial class Renderer : IDisposable
     {
         var common = ShaderSource.Read(shaderDirectory, "Common/Inputs.hlsl");
         var source = common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
-        var replacement = new ShaderScene(device, name, source, shaderDirectory, compileImmediately: false);
+        var replacement = new ShaderScene(device, name, source, compileImmediately: false);
         if (StringComparer.Ordinal.Equals(SceneName, name))
         {
             replacement.EnsureCompiled();
@@ -339,13 +333,13 @@ public sealed partial class Renderer : IDisposable
                 var source = common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
                 if (name == SceneName)
                 {
-                    var scene = new ShaderScene(device, name, source, shaderDirectory, compileImmediately: false);
+                    var scene = new ShaderScene(device, name, source, compileImmediately: false);
                     scene.EnsureCompiled();
                     if (scenes.GetValueOrDefault(name)?.Parameters is { } old && scene.Parameters is { } parameters)
                         parameters.Restore(old);
                     nextScenes.Add(name, scene);
                 }
-                else nextScenes.Add(name, new ShaderScene(device, name, source, shaderDirectory, compileImmediately: false));
+                else nextScenes.Add(name, new ShaderScene(device, name, source, compileImmediately: false));
             }
             if (nextScenes.Count == 0) throw new InvalidOperationException("Shaders/Scenes must contain at least one .hlsl scene.");
             var selected = nextScenes.GetValueOrDefault(SceneName) ?? nextScenes.Values.First();
@@ -512,11 +506,9 @@ public sealed partial class Renderer : IDisposable
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.Fluid != null)
         {
-            bool squareGrid = active.Fluid.RingFluid;
-            int gridLimit = squareGrid ? (ReadBoolean("Fluid.LowQuality") ? 128 : 512) : 256;
-            if (fluid != null && (fluid.GridLimit != gridLimit || fluid.SquareGrid != squareGrid))
+            if (fluid != null && !fluid.CompatibleWith(active.Fluid))
             { fluid.Dispose(); fluid = null; }
-            fluid ??= new(device, context, width, height, gridLimit, squareGrid);
+            fluid ??= new(device, context, width, height, active.Fluid);
             fluid.PassMarker = GpuMarker;
             fluid.DrawMarker = gpu.Annotate;
             if (previousScene != SceneName || dt > .5) fluid.Clear();
@@ -524,8 +516,7 @@ public sealed partial class Renderer : IDisposable
             fluid.Advance(dt, Audio, active.Fluid,
                 active.Parameters, namedBuffers, namedTextures, namedSamplers, !FixedFluidMaterialCadence);
             GpuMarker("Fluid", false);
-            namedTextures["FluidDye"] = fluid.Dye;
-            if (fluid.Age != null) namedTextures["FluidAge"] = fluid.Age;
+            fluid.Publish(namedTextures);
             namedSamplers["FluidSampler"] = fluid.Sampler;
             context.RSSetViewport(0, 0, width, height);
         }

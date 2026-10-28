@@ -91,10 +91,7 @@ and `UV : TEXCOORDS`. The host supplies the fullscreen triangle vertex shader.
 Scene output follows the existing display-encoded RGB convention; presentation
 decodes it for scRGB output. Alpha should be one.
 
-Production scenes must eventually turn black without music.
-Explicit audio-independent prototypes, such as MandelVolume and MandelLightv2, are exceptions.
-Retained history, trails and fluid may decay naturally; procedural backgrounds
-and ambient illumination must also lose their light. Sample local S/T/B and raw
+Sample local S/T/B and raw
 amplitude from `Spectrum0/1`, or `Histogram0/1` for historical sources at their
 own age. The texture layout is `[max(S,0), max(T,0), B, A]`; alpha is not residual.
 `AmplitudeResponse(x,h)` bounds a positive amplitude with sensitivity h and maps
@@ -216,9 +213,7 @@ need more transmission steps and scattering samples. Compatible edited values
 survive hot reload; use Reset defaults to load the complete new reference preset.
 
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
-sample counts show grain; raising quality costs GPU time. Audio-independent volume
-prototypes are excluded from the production silence and audio-response scene lists
-in `ShaderSilenceTests` under the prototype exception in `AGENTS.md`.
+sample counts show grain; raising quality costs GPU time.
 
 ## MandelLightv4 prototype
 
@@ -270,8 +265,7 @@ depth boundaries. Scattering defaults to (1,1,1) and density to 0.65.
 When half-resolution airlight is disabled, an optional depth-aware 3x3 filter
 denoises HDR airlight before surface composition. Surface shading and analytical
 transmission retain their original pixel values.
-This audio-reactive prototype participates in the GPU silence regression. It is
-excluded from B-only response checks because its lights intentionally use only S/T.
+Its lights intentionally use only S/T.
 Restart after building the host changes.
 See [MandelLightv4](mandellight-v4.md) for controls, sampling and measurements.
 
@@ -305,10 +299,13 @@ No comments or annotations are parsed for metadata. Reflection supplies names, t
 defaults, offsets and bindings. Byte offsets are used only to serialize values into
 the compiled layout. No author-assigned `register` or `packoffset` is required.
 
-Fluid scenes expose `Fluid.PeriodicBoundary`. Changing the checkbox preserves
-simulation state. All four MandelFluid variants use the [shared v4 ring fluid](ring-fluid.md),
-including its common emitter/fluid controls, FP32 material and square grid.
-The flight scenes retain their optical-flow fluid and half-life controls.
+Fluid scenes use the [plain HLSL fluid contract](fluid-contract.md): reserved
+`Fluid.PeriodicBoundary`, `Fluid.LowQuality` and `Fluid.Viscosity` controls,
+a scene-defined velocity boundary, and optional material structs reflected from
+matching `PredictMaterial`/`UpdateMaterial` output signatures. All six scenes
+share one flow solver. Material meanings, emission and decay belong to HLSL.
+The four MandelFluid variants retain the [v4 ring material](ring-fluid.md);
+flight scenes use one material attachment and their own half-life rule.
 
 ## Shared inputs and capabilities
 
@@ -334,11 +331,11 @@ original splitter neighborhood settings are active. Spectrum's `CompareSmoothers
 It displays A left/red and B right/cyan using the same stereo average and linear
 scale. `FilteredHistogram0/1` remain aliases for `Histogram0/1`.
 
-Referencing `FluidDye` requests fluid simulation; `FluidSampler` samples it.
-The `RING_FLUID` capability in `Common/RingFluidParameters.hlsl` selects the
-shared MandelFluid backend. Its `Emitter` and `Fluid` types and defaults are
-the common shader contract. `FluidAge` contains density-weighted birth timestamp
-and frequency. Scenes without that capability use the flight simulation.
+Using `FluidVelocity` or `FluidMaterial0..7` in the final program requests the
+shared fluid backend; `FluidSampler` samples the published textures. Material
+attachments come from the reflected HLSL output struct, with no engine-defined
+dye/age channels. Ring emission, capacity and weighted birth/frequency live in
+`Common/RingFluidMaterial.hlsl`. See [the fluid contract](fluid-contract.md).
 
 ## Existing scene mappings
 
@@ -415,19 +412,6 @@ Includes are expanded from quoted include directives, rather than implementing a
 full preprocessor-aware include resolver; avoid missing includes in inactive branches.
 
 ## Verification
-
-The GPU silence regression discovers every scene, verifies silent startup and
-visible musical excitation, then allows 1200 to 10,000 decay frames at 60 Hz
-(20 to 166.7 seconds of simulated silence). It tests both stopped
-capture and continuing zero-valued audio packets. Each of the following 60
-frames must have every RGB channel exactly zero in undithered RGBA8 output.
-No scene changes, simulation clears or large time steps shortcut the decay.
-The injected `TimeProvider` advances the production audio and rendering paths
-without wall-clock sleeps. This test requires Windows and a D3D11 GPU.
-
-```powershell
-dotnet test AEther.Tests/AEther.Tests.csproj --filter FullyQualifiedName~ShaderSilenceTests
-```
 
 ```powershell
 dotnet build AEther.sln --no-restore

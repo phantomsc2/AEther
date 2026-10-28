@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
@@ -11,40 +12,102 @@ using Vortice.Mathematics;
 
 namespace AEther.Vortice;
 
-/// <summary>Persistent pigment and projected turbulence, owned by the render thread.</summary>
-internal sealed class MandelFluidSimulation : IDisposable
+/// <summary>Shared projected flow and shader-defined material attachments.</summary>
+internal sealed class FluidSimulation : IDisposable
 {
-    internal enum Pass { PredictVelocity, AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, PredictDye, AdvectDye, DiffuseVelocityX, DiffuseVelocityY, ProjectUnforced }
+    internal static readonly string[] MaterialNames = Enumerable.Range(0, 8).Select(i => $"FluidMaterial{i}").ToArray();
+    internal static readonly string[] PredictionNames = Enumerable.Range(0, 8).Select(i => $"FluidPredicted{i}").ToArray();
+    internal enum Pass { PredictVelocity, AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, PredictMaterial, UpdateMaterial, DiffuseVelocityX, DiffuseVelocityY, ProjectUnforced }
+
+    internal sealed class Settings
+    {
+        internal readonly ShaderParameters Values;
+        readonly ShaderParameter periodic, lowQuality, viscosity;
+        internal int GridSize => Values.GetBoolean(lowQuality) ? 128 : 512;
+        internal bool Periodic => Values.GetBoolean(periodic);
+        internal bool Viscous => Values.GetFloat(viscosity) > 0;
+        internal Settings(ShaderParameters? values)
+        {
+            Values = values ?? throw new InvalidOperationException("Fluid scenes require Parameters.Fluid settings.");
+            var fields = values.Items.FirstOrDefault(p => p.Name == "Fluid")?.Children;
+            ShaderParameter Require(string name, bool boolean)
+            {
+                var field = fields?.FirstOrDefault(p => p.Name == name);
+                if (field == null || field.Children.Count != 0 || field.IsBoolean != boolean)
+                    throw new InvalidOperationException($"Parameters.Fluid.{name}: expected {(boolean ? "bool" : "float")}.");
+                return field;
+            }
+            periodic = Require("PeriodicBoundary", true);
+            lowQuality = Require("LowQuality", true);
+            viscosity = Require("Viscosity", false);
+        }
+    }
+
     internal sealed class Programs : IDisposable
     {
         internal readonly Dictionary<Pass, ShaderProgram> Shaders = [];
-        public ID3D11PixelShader this[Pass pass] => Shaders[pass].Pixel;
-        public bool RingFluid { get; }
-        public Programs(ID3D11Device device, string source)
+        internal readonly Format[] MaterialFormats;
+        internal readonly Settings Configuration;
+        internal Programs(ID3D11Device device, string source, string file, ShaderProgram display)
         {
-            RingFluid = source.Contains("#define RING_FLUID", StringComparison.Ordinal);
             try
             {
+                bool material = MaterialNames.Any(display.Uses);
                 foreach (var pass in Enum.GetValues<Pass>())
                 {
-                    if (!RingFluid && pass is Pass.PredictVelocity or Pass.PredictDye or Pass.DiffuseVelocityX or Pass.DiffuseVelocityY or Pass.ProjectUnforced) continue;
-                    Shaders.Add(pass, new ShaderProgram(device, source, pass.ToString(), "FluidSimulation.hlsl"));
+                    if (!material && pass is Pass.PredictMaterial or Pass.UpdateMaterial) continue;
+                    Shaders.Add(pass, new ShaderProgram(device, source, pass.ToString(), file));
                 }
+                Configuration = new(display.Parameters ?? Shaders.Values.Select(p => p.Parameters).FirstOrDefault(p => p != null));
+                MaterialFormats = material ? ReadLayout(Shaders[Pass.UpdateMaterial]) : [];
+                if (material && (!MaterialFormats.SequenceEqual(ReadLayout(Shaders[Pass.PredictMaterial]))
+                    || !Shaders[Pass.UpdateMaterial].Outputs.OrderBy(o => o.SemanticIndex).Select(o => o.UsageMask)
+                        .SequenceEqual(Shaders[Pass.PredictMaterial].Outputs.OrderBy(o => o.SemanticIndex).Select(o => o.UsageMask))))
+                    throw new InvalidOperationException($"{file}: PredictMaterial and UpdateMaterial must have matching floating-point SV_Target outputs.");
+                foreach (var shader in Shaders.Values.Append(display))
+                    for (int i = MaterialFormats.Length; i < 8; i++)
+                        if (shader.Uses(MaterialNames[i]) || shader.Uses(PredictionNames[i]))
+                            throw new InvalidOperationException($"{file}: material attachment {i} has no matching SV_Target output.");
+                if (material && PredictionNames.Any(Shaders[Pass.PredictMaterial].Uses))
+                    throw new InvalidOperationException($"{file}: PredictMaterial cannot read its own FluidPredicted outputs.");
             }
             catch { Dispose(); throw; }
+        }
+        static Format[] ReadLayout(ShaderProgram program)
+        {
+            var outputs = program.Outputs.OrderBy(o => o.SemanticIndex).ToArray();
+            if (outputs.Length is < 1 or > 8) throw new InvalidOperationException("Material passes require one to eight SV_Target outputs.");
+            var formats = new Format[outputs.Length];
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                var output = outputs[i];
+                if (!output.SemanticName.Equals("SV_Target", StringComparison.OrdinalIgnoreCase)
+                    || output.SemanticIndex != i || output.ComponentType != RegisterComponentType.Float32)
+                    throw new InvalidOperationException("Material outputs must be contiguous floating-point SV_Target0..7.");
+                formats[i] = (int)output.UsageMask switch
+                {
+                    1 => Format.R32_Float,
+                    3 => Format.R32G32_Float,
+                    7 or 15 => Format.R32G32B32A32_Float,
+                    _ => throw new InvalidOperationException("Material outputs must be float, float2, float3 or float4."),
+                };
+            }
+            return formats;
         }
         public void Dispose() { foreach (var shader in Shaders.Values) shader.Dispose(); }
     }
 
-    internal sealed class Surface : IDisposable
+    sealed class Surface : IDisposable
     {
-        public readonly int Width, Height;
-        public readonly ID3D11Texture2D Texture;
-        public readonly ID3D11ShaderResourceView View;
-        public readonly ID3D11RenderTargetView Target;
-        public Surface(ID3D11Device device, int width, int height, Format format)
+        internal readonly int Width, Height;
+        internal readonly Format Format;
+        internal int Channels => Format == Format.R32_Float ? 1 : Format == Format.R32G32_Float ? 2 : 4;
+        internal readonly ID3D11Texture2D Texture;
+        internal readonly ID3D11ShaderResourceView View;
+        internal readonly ID3D11RenderTargetView Target;
+        internal Surface(ID3D11Device device, int width, int height, Format format)
         {
-            Width = width; Height = height;
+            Width = width; Height = height; Format = format;
             Texture = device.CreateTexture2D(new Texture2DDescription
             {
                 Width = (uint)width, Height = (uint)height, MipLevels = 1, ArraySize = 1,
@@ -59,12 +122,10 @@ internal sealed class MandelFluidSimulation : IDisposable
         public void Dispose() { Target.Dispose(); View.Dispose(); Texture.Dispose(); }
     }
 
-    sealed class Level
+    sealed class Level(Surface pressure, Surface scratch, Surface rhs, Surface residual)
     {
-        public Surface Pressure, Scratch;
-        public readonly Surface Rhs, Residual;
-        public Level(Surface pressure, Surface scratch, Surface rhs, Surface residual)
-        { Pressure = pressure; Scratch = scratch; Rhs = rhs; Residual = residual; }
+        internal Surface Pressure = pressure, Scratch = scratch;
+        internal readonly Surface Rhs = rhs, Residual = residual;
     }
 
     readonly ID3D11Device device;
@@ -73,10 +134,13 @@ internal sealed class MandelFluidSimulation : IDisposable
     readonly List<Level> levels = [];
     readonly ID3D11Buffer constants;
     readonly ID3D11SamplerState borderSampler, pressureSampler, wrapSampler;
-    Surface velocity, nextVelocity, dye, nextDye;
-    Surface? predictedVelocity, predictedDye;
-    Surface? age, nextAge, predictedAge;
-    Programs programs = null!; // Borrowed from Renderer, swapped atomically on reload.
+    Surface velocity, nextVelocity;
+    readonly Surface predictedVelocity;
+    Surface[] material, nextMaterial;
+    readonly Surface[] predictedMaterial;
+    readonly ID3D11RenderTargetView[] materialTargets;
+    readonly Format[] materialFormats;
+    Programs programs;
     Parameters parameters;
     double accumulator;
     bool velocityWarmupPending;
@@ -85,10 +149,8 @@ internal sealed class MandelFluidSimulation : IDisposable
     public int Width => velocity.Width;
     public int Height => velocity.Height;
     public int GridLimit { get; }
-    public bool SquareGrid { get; }
     public float Aspect { get; }
-    public ID3D11ShaderResourceView Dye => dye.View;
-    public ID3D11ShaderResourceView? Age => age?.View;
+    public int MaterialCount => material.Length;
     public bool PeriodicBoundary { get; private set; }
     public ID3D11SamplerState Sampler => PeriodicBoundary ? wrapSampler : borderSampler;
     ShaderParameters? sceneParameters;
@@ -104,18 +166,16 @@ internal sealed class MandelFluidSimulation : IDisposable
 
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
     Surface Create(int w, int h, Format format) => Own(new Surface(device, w, h, format));
+    internal bool CompatibleWith(Programs next) => GridLimit == next.Configuration.GridSize
+        && materialFormats.SequenceEqual(next.MaterialFormats);
 
-    public MandelFluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, int gridLimit = 256, bool squareGrid = false)
+    internal FluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, Programs programs)
     {
-        this.device = device; this.context = context;
+        this.device = device; this.context = context; this.programs = programs;
         Aspect = width / (float)height;
-        GridLimit = gridLimit;
-        SquareGrid = squareGrid;
-        // Power-of-two levels guarantee exact 2:1 restriction, even for odd windows.
-        // Bound cost independently of display resolution; pressure stays in float32.
-        int Size(float n) => (int)BitOperations.RoundUpToPowerOf2((uint)Math.Clamp(n, 32, gridLimit));
-        int w = squareGrid ? gridLimit : Size(gridLimit * Math.Min(Aspect, 1));
-        int h = squareGrid ? gridLimit : Size(gridLimit / Math.Max(Aspect, 1));
+        GridLimit = programs.Configuration.GridSize;
+        materialFormats = programs.MaterialFormats;
+        int w = GridLimit, h = GridLimit;
         try
         {
             constants = Own(device.CreateBuffer(48, BindFlags.ConstantBuffer));
@@ -140,8 +200,10 @@ internal sealed class MandelFluidSimulation : IDisposable
             }));
             velocity = Create(w, h, Format.R32G32_Float);
             nextVelocity = Create(w, h, Format.R32G32_Float);
-            dye = Create(w, h, Format.R16G16B16A16_Float);
-            nextDye = Create(w, h, Format.R16G16B16A16_Float);
+            predictedVelocity = Create(w, h, Format.R32G32_Float);
+            Surface[] Material() => materialFormats.Select(f => Create(w, h, f)).ToArray();
+            material = Material(); nextMaterial = Material(); predictedMaterial = Material();
+            materialTargets = new ID3D11RenderTargetView[material.Length];
             while (true)
             {
                 levels.Add(new(Create(w, h, Format.R32_Float), Create(w, h, Format.R32_Float),
@@ -163,56 +225,38 @@ internal sealed class MandelFluidSimulation : IDisposable
         velocityWarmupPending = true;
     }
 
-    public void Advance(double dt, AudioHistory audio, Programs shaders, ShaderParameters? sceneParameters = null,
-        IReadOnlyDictionary<string, ID3D11Buffer>? buffers = null,
-        IReadOnlyDictionary<string, ID3D11ShaderResourceView>? textures = null,
-        IReadOnlyDictionary<string, ID3D11SamplerState>? samplers = null, bool displayMaterial = true)
+    public void Advance(double dt, AudioHistory audio, Programs shaders, ShaderParameters? sceneParameters,
+        IReadOnlyDictionary<string, ID3D11Buffer> buffers,
+        IReadOnlyDictionary<string, ID3D11ShaderResourceView> textures,
+        IReadOnlyDictionary<string, ID3D11SamplerState> samplers, bool displayMaterial = true)
     {
         programs = shaders;
         LastSteps = LastDraws = LastMaterialSteps = 0;
-        EnsureMaterial();
-        EnsureAge();
         this.sceneParameters = sceneParameters;
-        var boundary = sceneParameters?.Items.FirstOrDefault(p => p.Name == "Fluid")?.Children
-            .FirstOrDefault(p => p.Name == "PeriodicBoundary");
-        PeriodicBoundary = boundary != null && sceneParameters!.GetBoolean(boundary);
-        if (buffers != null) foreach (var pair in buffers) namedBuffers[pair.Key] = pair.Value;
-        if (textures != null) foreach (var pair in textures) namedTextures[pair.Key] = pair.Value;
-        if (samplers != null) foreach (var pair in samplers) namedSamplers[pair.Key] = pair.Value;
+        PeriodicBoundary = programs.Configuration.Periodic;
+        foreach (var pair in buffers) namedBuffers[pair.Key] = pair.Value;
+        foreach (var pair in textures) namedTextures[pair.Key] = pair.Value;
+        foreach (var pair in samplers) namedSamplers[pair.Key] = pair.Value;
         parameters = new Parameters
         {
             B = new((float)TimeStep, 0, 0, 0),
-            // Age follows elapsed time even when motion drops a stalled interval.
             C = new((float)Math.Max(0, dt - .05), 0, 0, 0),
         };
-        if (programs.RingFluid && velocityWarmupPending && audio.Energy > 0)
+        if (velocityWarmupPending && audio.Energy > 0)
         {
-            // Establish inlet flow and pressure before introducing the first dye.
-            // Use the live source without advancing material age or audio history.
             for (int i = 0; i < InitialVelocitySteps; i++) StepVelocity();
             velocityWarmupPending = false;
         }
-        // Fixed steps avoid frame-rate-dependent decay and forcing. Drop excess time
-        // after stalls/minimize rather than replaying seconds of stale injection.
         accumulator += Math.Clamp(dt, 0, .05);
-        // TimeProvider elapsed times are quantized to 100 ns. Tolerate one tick
-        // so a regular 60 Hz source does not alternate zero and two updates.
         while (accumulator + 1e-7 >= TimeStep)
         {
             accumulator -= TimeStep;
             parameters.B.Y = (float)(Math.Max(0, accumulator) / audio.Seconds) * audio.TimeScale;
-            if (programs.RingFluid && displayMaterial) StepVelocity();
-            else
-            {
-                Step();
-                parameters.C.X = 0;
-            }
+            StepVelocity();
+            if (!displayMaterial) { StepMaterial(); parameters.C.X = 0; }
         }
-        if (programs.RingFluid && displayMaterial && dt > 0)
+        if (displayMaterial && dt > 0)
         {
-            // Pressure/velocity keeps its bounded 60 Hz budget. Transport pigment
-            // every displayed frame using that velocity, so 165 Hz lighting and
-            // visible motion do not repeat the same 60 Hz material snapshots.
             parameters.B.X = (float)Math.Clamp(dt, 0, .05);
             parameters.B.Y = 0;
             StepMaterial();
@@ -221,35 +265,42 @@ internal sealed class MandelFluidSimulation : IDisposable
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
     }
 
+    internal void Publish(IDictionary<string, ID3D11ShaderResourceView> textures)
+    {
+        textures["FluidVelocity"] = velocity.View;
+        for (int i = 0; i < 8; i++)
+            if (i < material.Length) textures[MaterialNames[i]] = material[i].View;
+            else textures.Remove(MaterialNames[i]);
+    }
+
     void Grid(Surface surface)
     {
         parameters.A = new(surface.Width, surface.Height, 2 * Aspect / surface.Width, 2f / surface.Height);
         context.UpdateSubresource(parameters, constants);
     }
 
-    void Draw(Pass pass, Surface target, Surface? v = null, Surface? pigment = null,
-        Surface? pressure = null, Surface? rhs = null, Surface? correction = null, Surface? advected = null,
-        Surface? ageInput = null, Surface? agePrediction = null, Surface? ageTarget = null)
+    void Draw(Pass pass, Surface target, Surface? v = null, Surface? pressure = null,
+        Surface? rhs = null, Surface? correction = null, Surface? advected = null, Surface[]? outputs = null)
     {
         if (!drawNames.TryGetValue((pass, target.Width, target.Height), out var label))
             drawNames[(pass, target.Width, target.Height)] = label = $"{pass} {target.Width}x{target.Height}";
         DrawMarker?.Invoke(label, true);
-        // Unbind reads before changing the target; no pass reads its own render target.
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        if (ageTarget != null) context.OMSetRenderTargets([target.Target, ageTarget.Target]);
-        else context.OMSetRenderTargets(target.Target);
+        if (outputs == null) context.OMSetRenderTargets(target.Target);
+        else
+        {
+            for (int i = 0; i < outputs.Length; i++) materialTargets[i] = outputs[i].Target;
+            context.OMSetRenderTargets(materialTargets);
+        }
         context.RSSetViewport(0, 0, target.Width, target.Height);
         namedBuffers["FluidConstants"] = constants;
         namedSamplers["ClampFluid"] = Sampler;
         namedSamplers["PressureSampler"] = PeriodicBoundary ? wrapSampler : pressureSampler;
-        if (v != null) namedTextures["Velocity"] = v.View;
-        if (pigment != null) namedTextures["Dye"] = pigment.View;
+        if (v != null) { namedTextures["Velocity"] = v.View; namedTextures["FluidVelocity"] = v.View; }
         if (pressure != null) namedTextures["Pressure"] = pressure.View;
         if (rhs != null) namedTextures["Rhs"] = rhs.View;
         if (correction != null) namedTextures["Correction"] = correction.View;
         if (advected != null) namedTextures["Advected"] = advected.View;
-        if (ageInput != null) namedTextures["DyeAge"] = ageInput.View;
-        if (agePrediction != null) namedTextures["AdvectedAge"] = agePrediction.View;
         programs.Shaders[pass].Bind(context, sceneParameters, namedBuffers, namedTextures, namedSamplers);
         context.Draw(3, 0);
         LastDraws++;
@@ -266,15 +317,10 @@ internal sealed class MandelFluidSimulation : IDisposable
         }
     }
 
-    // The historical V-cycle: pre-smooth, restrict residual, solve correction,
-    // prolong/add, post-smooth. More levels resolve the global modes the old
-    // 32-cell cutoff left to relaxation. Weighted Jacobi is parallel and symmetric.
     void VCycle(int index)
     {
         var level = levels[index];
-        // Finish low spatial frequencies on the tiny coarse grid rather than
-        // leaving them for the expensive fine-grid smoother to propagate.
-        if (index == levels.Count - 1) { Smooth(level, programs.RingFluid ? 16 : 64); return; }
+        if (index == levels.Count - 1) { Smooth(level, 16); return; }
         Smooth(level, 3);
         Draw(Pass.Residual, level.Residual, pressure: level.Pressure, rhs: level.Rhs);
         var coarse = levels[index + 1];
@@ -295,86 +341,53 @@ internal sealed class MandelFluidSimulation : IDisposable
         Draw(Pass.Divergence, levels[0].Rhs, v: velocity);
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.ClearRenderTargetView(levels[0].Pressure.Target, new(0, 0, 0, 0));
-        // Keep three cycles for fine-grid incompressibility; the tiny V4 coarse
-        // solve converges sufficiently in 16 iterations rather than 64.
         for (int cycle = 0; cycle < 3; cycle++) VCycle(0);
         Grid(velocity);
-        Draw(unforced && programs.RingFluid ? Pass.ProjectUnforced : Pass.Project, nextVelocity, v: velocity, pressure: levels[0].Pressure);
+        Draw(unforced ? Pass.ProjectUnforced : Pass.Project, nextVelocity, v: velocity, pressure: levels[0].Pressure);
         (velocity, nextVelocity) = (nextVelocity, velocity);
         PassMarker?.Invoke("Fluid pressure", false);
     }
 
-    void EnsureMaterial()
-    {
-        // V4 keeps raw STB and density in FP32 for repeated material transport.
-        var format = programs.RingFluid ? Format.R32G32B32A32_Float : Format.R16G16B16A16_Float;
-        if (dye.Texture.Description.Format == format) return;
-        dye = Create(Width, Height, format);
-        nextDye = Create(Width, Height, format);
-        predictedDye = null;
-        Clear();
-    }
-    void EnsureAge()
-    {
-        if (!programs.RingFluid) return;
-        var format = Format.R32G32_Float;
-        if (age != null && age.Texture.Description.Format == format) return;
-        age = Create(Width, Height, format);
-        nextAge = Create(Width, Height, format);
-        predictedAge = Create(Width, Height, format);
-        // A material layout change on shader reload invalidates the old dye too.
-        Clear();
-    }
     void StepVelocity()
     {
         LastSteps++;
         PassMarker?.Invoke("Fluid velocity", true);
+        BindMaterialInputs();
         Grid(velocity);
-        if (programs.RingFluid)
-        {
-            predictedVelocity ??= Create(Width, Height, Format.R32G32_Float);
-            Draw(Pass.PredictVelocity, predictedVelocity, v: velocity);
-        }
+        Draw(Pass.PredictVelocity, predictedVelocity, v: velocity);
         Draw(Pass.AdvectVelocity, nextVelocity, v: velocity, advected: predictedVelocity);
         (velocity, nextVelocity) = (nextVelocity, velocity);
-        if (programs.RingFluid)
+        if (programs.Configuration.Viscous)
         {
-            var viscosity = sceneParameters?.Items.FirstOrDefault(p => p.Name == "Fluid")?.Children
-                .FirstOrDefault(p => p.Name == "Viscosity");
-            if (viscosity != null && sceneParameters!.GetFloat(viscosity) > 0)
-            {
-                Draw(Pass.DiffuseVelocityX, nextVelocity, v: velocity);
-                (velocity, nextVelocity) = (nextVelocity, velocity);
-                Draw(Pass.DiffuseVelocityY, nextVelocity, v: velocity);
-                (velocity, nextVelocity) = (nextVelocity, velocity);
-            }
+            Draw(Pass.DiffuseVelocityX, nextVelocity, v: velocity);
+            (velocity, nextVelocity) = (nextVelocity, velocity);
+            Draw(Pass.DiffuseVelocityY, nextVelocity, v: velocity);
+            (velocity, nextVelocity) = (nextVelocity, velocity);
         }
         PassMarker?.Invoke("Fluid velocity", false);
         Project();
     }
-    void Step()
-    {
-        EnsureMaterial();
-        EnsureAge();
-        StepVelocity();
-        StepMaterial();
-    }
+
     void StepMaterial()
     {
+        if (material.Length == 0) return;
         LastMaterialSteps++;
         PassMarker?.Invoke("Fluid material", true);
-        Grid(dye);
-        if (programs.RingFluid)
-        {
-            predictedDye ??= Create(Width, Height, dye.Texture.Description.Format);
-            Draw(Pass.PredictDye, predictedDye!, v: velocity, pigment: dye,
-                ageInput: age, ageTarget: predictedAge);
-        }
-        Draw(Pass.AdvectDye, nextDye, v: velocity, pigment: dye, advected: predictedDye,
-            ageInput: age, agePrediction: predictedAge, ageTarget: programs.RingFluid ? nextAge : null);
-        (dye, nextDye) = (nextDye, dye);
-        if (programs.RingFluid) (age, nextAge) = (nextAge, age);
+        Grid(material[0]);
+        BindMaterialInputs();
+        Draw(Pass.PredictMaterial, predictedMaterial[0], v: velocity, outputs: predictedMaterial);
+        Draw(Pass.UpdateMaterial, nextMaterial[0], v: velocity, outputs: nextMaterial);
+        (material, nextMaterial) = (nextMaterial, material);
         PassMarker?.Invoke("Fluid material", false);
+    }
+
+    void BindMaterialInputs()
+    {
+        for (int i = 0; i < material.Length; i++)
+        {
+            namedTextures[MaterialNames[i]] = material[i].View;
+            namedTextures[PredictionNames[i]] = predictedMaterial[i].View;
+        }
     }
 
     internal unsafe (double Before, double After, double CurlError) CheckProjection(Programs shaders)
@@ -397,7 +410,7 @@ internal sealed class MandelFluidSimulation : IDisposable
         Draw(Pass.Divergence, levels[0].Rhs, v: velocity);
         double Rms(Surface surface)
         {
-            var values = ReadFloatSurface(surface, 1);
+            var values = ReadFloatSurface(surface);
             if (values.Any(v => !float.IsFinite(v))) throw new InvalidOperationException("Nonfinite fluid state.");
             return Math.Sqrt(values.Average(v => (double)v * v));
         }
@@ -424,73 +437,21 @@ internal sealed class MandelFluidSimulation : IDisposable
         return (before, after, Math.Sqrt(curlError / Math.Max(1e-20, curlPower)));
     }
 
-    internal float[] ReadVelocity() => ReadFloatSurface(velocity, 2);
-    internal unsafe void SeedFilamentsForCheck(float speed = 0)
+    internal float[] ReadVelocity() => ReadFloatSurface(velocity);
+    internal float[] ReadMaterial(int attachment) => ReadFloatSurface(material[attachment]);
+    internal void WriteVelocity(float[] values) => WriteFloatSurface(velocity, values);
+    internal void WriteMaterial(int attachment, float[] values) => WriteFloatSurface(material[attachment], values);
+    internal int MaterialChannels(int attachment) => material[attachment].Channels;
+    unsafe void WriteFloatSurface(Surface surface, float[] values)
     {
-        Clear();
-        var pigment = new float[Width * Height * 4];
-        var material = new float[Width * Height * 2];
-        var flow = new float[Width * Height * 2];
-        for (int i = 0; i < flow.Length; i += 2) flow[i] = speed;
-        for (int y = Height / 4; y < 3 * Height / 4; y++)
-        for (int x = Width / 4; x < 3 * Width / 4; x += 4)
-        {
-            int cell = y * Width + x;
-            pigment[4 * cell] = .2f;
-            pigment[4 * cell + 1] = .1f;
-            pigment[4 * cell + 2] = .05f;
-            pigment[4 * cell + 3] = 1;
-            material[2 * cell + 1] = .5f;
-        }
-        fixed (float* p = pigment) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 16), 0);
-        fixed (float* p = material) context.UpdateSubresource(age!.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
-        fixed (float* p = flow) context.UpdateSubresource(velocity.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
-    }
-    /// <summary>GPU transport fixture: a small dyed patch near the right edge in a uniform current.</summary>
-    internal unsafe void SeedRecirculationForCheck(float densityScale = 1, float speed = .8f)
-    {
-        var flow = new float[Width * Height * 2];
-        var pigment = new float[Width * Height * 4];
-        var residence = new float[Width * Height * 2];
-        for (int y = 0; y < Height; y++)
-            for (int x = 0; x < Width; x++)
-            {
-                int cell = y * Width + x;
-                flow[2 * cell] = speed;
-                double px = (2 * (x + .5) / Width - 1) * Aspect;
-                double py = 2 * (y + .5) / Height - 1;
-                float density = densityScale * (float)Math.Exp(-((px - Aspect + .16) * (px - Aspect + .16) + py * py) / .003);
-                pigment[4 * cell] = pigment[4 * cell + 3] = density;
-                residence[2 * cell] = .5f * density;
-                residence[2 * cell + 1] = .5f * density;
-            }
+        if (values.Length != surface.Width * surface.Height * surface.Channels) throw new ArgumentException("Surface data size mismatch.", nameof(values));
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-        fixed (float* p = flow) context.UpdateSubresource(velocity.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
-        if (dye.Texture.Description.Format == Format.R32G32B32A32_Float)
-        {
-            fixed (float* p = pigment) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 16), 0);
-        }
-        else
-        {
-            var half = pigment.Select(v => (Half)v).ToArray();
-            fixed (Half* p = half) context.UpdateSubresource(dye.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
-        }
-        if (age != null)
-            fixed (float* p = residence) context.UpdateSubresource(age.Texture, 0, null, (IntPtr)p, (uint)(Width * 8), 0);
+        fixed (float* p = values) context.UpdateSubresource(surface.Texture, 0, null, (IntPtr)p, (uint)(surface.Width * surface.Channels * 4), 0);
     }
-    internal float[] ReadAge() => ReadFloatSurface(age!, 2);
-    internal float[] ReadDye()
+    float[] ReadFloatSurface(Surface surface)
     {
-        if (dye.Texture.Description.Format == Format.R32G32B32A32_Float)
-            return ReadFloatSurface(dye, 4);
-        var bytes = ReadSurface(dye, 8);
-        return MemoryMarshal.Cast<byte, Half>(bytes).ToArray().Select(h => (float)h).ToArray();
-    }
-    float[] ReadFloatSurface(Surface surface, int components) =>
-        MemoryMarshal.Cast<byte, float>(ReadSurface(surface, 4 * components)).ToArray();
-    byte[] ReadSurface(Surface surface, int bytesPerPixel)
-    {
+        int stride = surface.Width * surface.Channels * 4;
         var desc = surface.Texture.Description;
         desc.Usage = ResourceUsage.Staging; desc.BindFlags = BindFlags.None; desc.CPUAccessFlags = CpuAccessFlags.Read;
         using var staging = device.CreateTexture2D(desc);
@@ -498,11 +459,10 @@ internal sealed class MandelFluidSimulation : IDisposable
         var map = context.Map(staging, 0, MapMode.Read, global::Vortice.Direct3D11.MapFlags.None);
         try
         {
-            var bytes = new byte[surface.Width * surface.Height * bytesPerPixel];
+            var bytes = new byte[stride * surface.Height];
             for (int y = 0; y < surface.Height; y++)
-                Marshal.Copy(map.DataPointer + y * (int)map.RowPitch, bytes,
-                    y * surface.Width * bytesPerPixel, surface.Width * bytesPerPixel);
-            return bytes;
+                Marshal.Copy(map.DataPointer + y * (int)map.RowPitch, bytes, y * stride, stride);
+            return MemoryMarshal.Cast<byte, float>(bytes).ToArray();
         }
         finally { context.Unmap(staging, 0); }
     }

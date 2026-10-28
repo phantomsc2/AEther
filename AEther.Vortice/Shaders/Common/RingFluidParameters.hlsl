@@ -1,4 +1,3 @@
-#define RING_FLUID
 // All controls are normalized to [0,1] for the shader parameter UI.
 struct EmitterParameters
 {

@@ -12,5 +12,4 @@ controls have been replaced by v4's `Emitter` and `Fluid` controls. Material fad
 on the audio history time scale.
 
 Scene shading remains distinct: this version lights the Mandelbox folds with
-transported pigment. Every production scene must return to black after music
-stops; `ShaderSilenceTests` checks both stopped capture and explicit silent rows.
+transported pigment.

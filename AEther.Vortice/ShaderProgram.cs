@@ -18,11 +18,17 @@ internal sealed class ShaderProgram : IDisposable
     long localVersion = -1;
     readonly Dictionary<string, InputBindingDescription> bindings = new(StringComparer.Ordinal);
     public bool Uses(string name) => bindings.ContainsKey(name);
+    internal readonly List<ShaderParameterDescription> Outputs = [];
+    internal static bool MaterialResource(string name, string prefix) => name.Length == prefix.Length + 1
+        && name.StartsWith(prefix, StringComparison.Ordinal) && name[^1] is >= '0' and <= '7';
+    internal bool UsesFluid => Uses("FluidVelocity") || FluidSimulation.MaterialNames.Any(Uses);
 
     public ShaderProgram(ID3D11Device device, string source, string entry, string file)
     {
         var code = Compiler.Compile(source, entry, file, "ps_5_0");
         using var reflection = Compiler.Reflect<ID3D11ShaderReflection>(code.Span);
+        for (uint i = 0; i < reflection.Description.OutputParameters; i++)
+            Outputs.Add(reflection.GetOutputParameterDescription(i));
         for (uint i = 0; i < reflection.Description.BoundResources; i++)
         {
             var binding = reflection.GetResourceBindingDescription(i);
@@ -33,13 +39,18 @@ internal sealed class ShaderProgram : IDisposable
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "RasterShadowSampler" or "RasterLutSampler",
                 ShaderInputType.Texture => binding.Name is "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1"
-                    or "FluidDye" or "FluidAge" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction"
-                    or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut",
+                    or "FluidVelocity" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction"
+                    or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut"
+                    || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
                 _ => false,
             };
-            if (entry == "PS" && binding.Name is "FluidConstants" or "DyeAge" or "AdvectedAge" or "Velocity" or "Dye" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler")
+            if (entry == "PS" && (binding.Name is "FluidConstants" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler"
+                || MaterialResource(binding.Name, "FluidPredicted")))
                 supported = false;
             if (!supported) throw new InvalidOperationException($"{file}: unknown {binding.Type} resource '{binding.Name}'.");
+            if ((binding.Name == "FluidVelocity" || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"))
+                && (binding.Type != ShaderInputType.Texture || binding.Dimension != ShaderResourceViewDimension.Texture2D || binding.ReturnType != ResourceReturnType.Float))
+                throw new InvalidOperationException($"{file}: {binding.Name} must be a floating-point Texture2D.");
             bindings.Add(binding.Name, binding);
         }
         if (Uses("Parameters"))
@@ -115,23 +126,21 @@ public sealed class ShaderScene : IDisposable
 {
     public string Name { get; }
     readonly ID3D11Device device;
-    readonly string root;
     readonly string source;
     ShaderProgram? program;
-    MandelFluidSimulation.Programs? fluid;
+    FluidSimulation.Programs? fluid;
     RasterLightTransport.Programs? raster;
     bool initialized;
     internal bool ProgramReady => program != null;
     internal ShaderProgram Program => program ?? throw new InvalidOperationException($"Scene '{Name}' has not been compiled yet.");
-    public ShaderParameters? Parameters => program?.Parameters;
-    internal MandelFluidSimulation.Programs? Fluid => fluid;
+    public ShaderParameters? Parameters => program?.Parameters ?? fluid?.Configuration.Values;
+    internal FluidSimulation.Programs? Fluid => fluid;
     internal RasterLightTransport.Programs? Raster => raster;
-    internal ShaderScene(ID3D11Device device, string name, string source, string root, bool compileImmediately = true)
+    internal ShaderScene(ID3D11Device device, string name, string source, bool compileImmediately = true)
     {
         Name = name;
         this.device = device;
         this.source = source;
-        this.root = root;
         if (compileImmediately) EnsureCompiled();
     }
 
@@ -142,13 +151,12 @@ public sealed class ShaderScene : IDisposable
         {
             var nextProgram = new ShaderProgram(device, source, "PS", Name + ".hlsl");
             RasterLightTransport.Programs? nextRaster = null;
-            MandelFluidSimulation.Programs? nextFluid = null;
+            FluidSimulation.Programs? nextFluid = null;
             try
             {
                 if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
-                if (nextProgram.Uses("FluidDye"))
-                    nextFluid = new(device, source + ShaderSource.Read(root, source.Contains("#define RING_FLUID", StringComparison.Ordinal)
-                        ? "Common/RingFluidSimulation.hlsl" : "Common/FluidSimulation.hlsl"));
+                if (nextProgram.UsesFluid)
+                    nextFluid = new(device, source, Name + ".hlsl", nextProgram);
                 program = nextProgram;
                 raster = nextRaster;
                 fluid = nextFluid;
@@ -169,7 +177,7 @@ public sealed class ShaderScene : IDisposable
     }
     internal ShaderScene Recompile()
     {
-        var replacement = new ShaderScene(device, Name, source, root, compileImmediately: false);
+        var replacement = new ShaderScene(device, Name, source, compileImmediately: false);
         replacement.EnsureCompiled();
         if (Parameters is { } old && replacement.Parameters is { } next) next.Restore(old);
         return replacement;

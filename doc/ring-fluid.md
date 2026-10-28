@@ -4,12 +4,12 @@ MandelFluid, MandelFluidv2, MandelFluidv3 and MandelFluidv4 use the same simulat
 V4's numerical passes, emitter, defaults and lighting behavior are preserved;
 the older variants retain their own scene shading and adopt v4's fluid behavior.
 
-`Common/RingFluidParameters.hlsl` owns the emitter/fluid types, defaults and
-`RING_FLUID` capability. Each scene declares these shared types in `Parameters`
-and includes `Common/RingEmitter.hlsl`. The host selects
-`Common/RingFluidSimulation.hlsl` by capability, with no MandelFluid scene-name
-branches. FluidFlight and PlaneFlight retain their optical-flow backend in
-`Common/FluidSimulation.hlsl`.
+All six fluid scenes now use the [plain HLSL fluid contract](fluid-contract.md)
+and one host solver. `Common/RingFluidParameters.hlsl` owns the ring controls and
+defaults. Each MandelFluid scene includes `Common/RingEmitter.hlsl` and
+`Common/RingFluidMaterial.hlsl`, which defines its boundary and material passes
+and explicitly includes the shared `Common/FluidSimulation.hlsl` numerical code.
+There is no `RING_FLUID` capability or host source-file selection.
 
 The ring backend uses a square 512x512 grid, or 128x128 with `Fluid.LowQuality`.
 Velocity and pressure advance at 60 Hz with three multigrid V-cycles, two initial
@@ -32,7 +32,9 @@ density and coordinate moments remain available without keeping pixels lit.
 - `Fluid.LowQuality` changes grid size and recreates simulation state.
 
 The older half-life, diffusion, background and flow controls are removed from
-MandelFluid v1-v3. They remain part of the separate flight backend.
+MandelFluid v1-v3. Flight scenes use the same numerical backend with a single
+RGBA material attachment, no optical-flow carrier/forcing, and their own
+`Flight.HalfLife` decay in HLSL. Ring age/frequency is not a host requirement.
 
 GPU regressions compare the older variants against v4 with identical inputs,
 including viscosity, curl and a 165 Hz display. Other checks cover component

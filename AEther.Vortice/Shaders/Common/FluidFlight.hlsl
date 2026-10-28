@@ -5,23 +5,20 @@
 
 struct FluidParameters
 {
-    float Flow;
-    float HalfLife;
-    float Diffusion;
-    float Background;
-    float Curl;
+    float Viscosity;
     bool PeriodicBoundary;
+    bool LowQuality;
 };
 struct FlightParameters
 {
+    float Flow;
+    float HalfLife;
     float2 Steering;
-    float Depth;
     float Turn;
     float Roll;
     float SourceDistance;
     float Warp;
     float AudioGain;
-    float Dilution;
     float Glow;
     float WingAngle;
     float WingSpan;
@@ -48,15 +45,18 @@ struct CameraParameters
 #endif
 cbuffer Parameters
 {
-    FluidParameters Fluid = { .45, .24, .25, .3, .3, false };
-    FlightParameters Flight = { float2(.5, .5), .65, .5, .5, .45, .7, .75, .08, .3, .5, .65, .75, .35, .45 };
+    FluidParameters Fluid = { 0, false, true };
+    FlightParameters Flight = { .45, .24, float2(.5, .5), .5, .5, .45, .7, .75, .3, .5, .65, .75, .35, .45 };
     ReactionParameters Reaction = { .7, .75, .75, .35, .4 };
 #ifdef FLIGHT_PLANE_PROJECTION
     CameraParameters Camera = { .35, .72, .5, .45 };
 #endif
 };
 
-Texture2D<float4> FluidDye;
+#include "FluidSimulation.hlsl"
+struct FluidMaterial { float4 Color : SV_Target0; };
+Texture2D<float4> FluidMaterial0;
+Texture2D<float4> FluidPredicted0;
 SamplerState FluidSampler;
 
 // Coordinates share the fluid grid's viewport-height units (positive Y down).
@@ -86,7 +86,7 @@ float FlightFocalLength()
     return 1 / tan((40 + 60 * Camera.FieldOfView) * .00872664626);
 }
 
-float FlightForwardSpeed() { return 8 + 20 * Fluid.Flow; }
+float FlightForwardSpeed() { return 8 + 20 * Flight.Flow; }
 
 float3 FlightCameraPosition()
 {
@@ -123,7 +123,7 @@ float4 FlightMap(float2 p)
     float2 chart = hit.xz * (.12 + .5 * Camera.FractalScale);
     float3 z = float3(3 * sin(chart.x), 3 * sin(chart.y), .7 * cos(chart.x * .6 + chart.y * .4));
 #else
-    float speed = 12 + 24 * Fluid.Flow;
+    float speed = 12 + 24 * Flight.Flow;
     float farPlane = speed * (.3 + .6 * Flight.FlashDistance);
     float depth = 1.5 * (.8 + .6 * Flight.SourceDistance) / max(.025, length(q));
     float age = (farPlane - depth) / speed;
@@ -162,33 +162,6 @@ float4 FlightFluidSource(float2 p, float substepOffset)
         step(0, p.x - FlightVanishingPoint().x));
 }
 
-float2 FlightCarrier(float2 p)
-{
-#ifdef FLIGHT_PLANE_PROJECTION
-    float4 hit = FlightPlaneHit(p);
-    if (hit.w <= 0) return 0;
-    float3 right, up, forward;
-    FlightCameraBasis(right, up, forward);
-    // The plane projection is exact. Musical acceleration of the afterglow
-    // uses the available capped velocity proxy for the integrated clock S.
-    float3 velocity = float3(0, 0, FlightForwardSpeed() + .1 * FractalDepth * Reaction.CameraMotion);
-    float3 localVelocity = float3(dot(velocity, right), dot(velocity, up), dot(velocity, forward));
-    float focal = FlightFocalLength();
-    return (p * localVelocity.z + focal * float2(-localVelocity.x, localVelocity.y)) / max(.4, hit.w);
-#else
-    float2 q = p - FlightVanishingPoint();
-    float radius = length(q);
-    // Inverse depth is a chosen screen-space proxy: distant material near the
-    // vanishing point moves slowly, then accelerates as it approaches the camera.
-    float inverseDepth = .16 + (Flight.Depth * 1.7) * radius;
-    float speed = .5 + 6 * Fluid.Flow;
-    float2 forward = speed * inverseDepth * q;
-    float2 lateral = float2((Flight.Turn * 2 - 1) * speed * inverseDepth * .4, 0);
-    float2 roll = (Flight.Roll * 2 - 1) * 1.5 * float2(-q.y, q.x);
-    return (forward - lateral + roll) * (1 + Reaction.CameraMotion * (PoseY + PoseZ));
-#endif
-}
-
 float FlightSliceContour(float2 p, float4 source, float contour)
 {
     float2 wing = FlightRotate(p - FlightVanishingPoint(), (Flight.WingAngle - .5) * 3.14159265);
@@ -199,40 +172,6 @@ float FlightSliceContour(float2 p, float4 source, float contour)
     float blade = exp(-pow(wing.y / .14, 2)) * extent * (.08 + .92 * contour);
     float tone = 1 - exp(-(4 + 60 * Flight.AudioGain) * source.r);
     return (30 + 90 * Reaction.TonalCuts) * Flight.SliceStrength * blade * tone;
-}
-
-float FlightSlice(float2 p, float4 source)
-{
-    return FlightSliceContour(p, source, FlightMap(p).z);
-}
-
-float2 FlightTurbulence(float2 p, float4 source)
-{
-    float2 q = p - FlightVanishingPoint();
-    float radius = length(q);
-    float angle = atan2(q.y, q.x);
-    float noise = 1 - exp(-(8 + 24 * Reaction.Strength) * source.b);
-    float eddy = sin(8 * angle + 18 * radius - .6 * MusicalMovementTime)
-        + .5 * sin(14 * q.x - 11 * q.y + .4 * MusicalMovementTime);
-    float2 stirring = float2(-q.y, q.x) / max(.06, radius) * eddy
-        * (Fluid.Background * 3) * (2 * noise) * exp(-1.5 * radius * radius);
-    // Tonal wing cuts also displace the cloud into a small rotational wake.
-    float2 wake = FlightRotate(float2(0, .025 * sign(q.x) * FlightSlice(p, source)),
-        - (Flight.WingAngle - .5) * 3.14159265);
-    return stirring + wake;
-}
-
-float FlightDilution(float2 p)
-{
-#ifdef FLIGHT_PLANE_PROJECTION
-    float4 hit = FlightPlaneHit(p);
-    return hit.w > 0 ? Flight.Dilution * 2 * FlightForwardSpeed() / max(.4, hit.w) : 0;
-#else
-    // Optional area dilution. Default favors luminous tracers rather than a
-    // conserved pigment density; image-space optical flow is not fluid expansion.
-    float radius = length(p - FlightVanishingPoint());
-    return Flight.Dilution * (.5 + 6 * Fluid.Flow) * (.32 + 3 * Flight.Depth * 1.7 * radius);
-#endif
 }
 
 float FlightCloudNoise(float2 p)
@@ -297,15 +236,41 @@ float4 FlightPigment(float2 p, float4 source, float substepOffset)
     return .65 * material;
 }
 
+// Flight retains its procedural foreground and fading afterglow. The previous
+// optical-flow carrier, distributed forcing and dye diffusion are intentionally
+// removed; its material uses the same flow solver as every other fluid scene.
+float2 FluidApplyBoundary(int2 cell, float2 projectedVelocity)
+{
+    return projectedVelocity;
+}
+FluidMaterial PredictMaterial(PSin input)
+{
+    FluidMaterial output;
+    output.Color = FluidMaterial0.SampleLevel(ClampFluid, Backtrace(input.UV), 0);
+    return output;
+}
+FluidMaterial UpdateMaterial(PSin input)
+{
+    float2 p = World(input.UV);
+    float4 dye = FluidPredicted0.Load(int3(int2(input.Position.xy), 0));
+    // This scene chooses to fade all four channels. Ring material instead
+    // retains density and weighted coordinates while fading pigment alone.
+    dye *= exp(-(.69314718 / (.1 + Flight.HalfLife * 9.9)) * (StepSeconds + CatchupSeconds));
+    float4 source = FlightFluidSource(p, SourceAge);
+    float4 dose = StepSeconds * 6 * FlightPigment(p, source, SourceAge);
+    FluidMaterial output;
+    output.Color = min(dye + (12 - dye) * (1 - exp(-dose / 12)), 12);
+    return output;
+}
 float4 PS(PSin input) : SV_Target
 {
-    float4 dye = FluidDye.Sample(FluidSampler, input.UV);
-    uint width, height; FluidDye.GetDimensions(width, height);
+    float4 dye = FluidMaterial0.Sample(FluidSampler, input.UV);
+    uint width, height; FluidMaterial0.GetDimensions(width, height);
     float2 tap = 1.5 / float2(width, height);
-    float4 left = FluidDye.Sample(FluidSampler, input.UV - float2(tap.x, 0));
-    float4 right = FluidDye.Sample(FluidSampler, input.UV + float2(tap.x, 0));
-    float4 up = FluidDye.Sample(FluidSampler, input.UV - float2(0, tap.y));
-    float4 down = FluidDye.Sample(FluidSampler, input.UV + float2(0, tap.y));
+    float4 left = FluidMaterial0.Sample(FluidSampler, input.UV - float2(tap.x, 0));
+    float4 right = FluidMaterial0.Sample(FluidSampler, input.UV + float2(tap.x, 0));
+    float4 up = FluidMaterial0.Sample(FluidSampler, input.UV - float2(0, tap.y));
+    float4 down = FluidMaterial0.Sample(FluidSampler, input.UV + float2(0, tap.y));
     float3 normal = normalize(float3(2 * (left.a - right.a), 2 * (up.a - down.a), .3));
     float shading = .55 + .65 * saturate(dot(normal, normalize(float3(-.4, -.6, 1))));
     float2 screen = float2((2 * input.UV.x - 1) * AspectRatio, 1 - 2 * input.UV.y);

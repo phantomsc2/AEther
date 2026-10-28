@@ -1,10 +1,10 @@
-#undef Histogram0
-#undef Histogram1
-// Optical-flow fluid/multigrid passes for the flight scenes. Coordinates and
+#ifndef AETHER_FLUID_SIMULATION
+#define AETHER_FLUID_SIMULATION
+// Shared velocity/multigrid passes. Coordinates and
 // velocities are in viewport-height units, independent of the grid resolution.
-cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, UnusedDecay, UnusedDiffusion; float AgeCatchupSeconds; float3 UnusedForcing; };
+cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, UnusedDecay, UnusedDiffusion; float CatchupSeconds; float3 UnusedForcing; };
 Texture2D<float2> Velocity;
-Texture2D<float4> Dye;
+Texture2D<float4> Advected;
 int2 WrapCell(int2 p) { int2 size = int2(GridSize); return (p % size + size) % size; }
 Texture2D<float> Pressure;
 Texture2D<float> Rhs;
@@ -21,7 +21,7 @@ float2 ReadVelocity(int2 p)
 float ReadPressure(int2 p)
 {
     // Neumann pressure boundary, paired with zero normal turbulent velocity.
-    // The expanding carrier and pigment have separate, open outflow boundaries.
+    // Scene velocity constraints are applied after pressure projection.
     return Pressure.Load(int3(Fluid.PeriodicBoundary ? WrapCell(p) : clamp(p, 0, int2(GridSize) - 1), 0));
 }
 float Laplacian(int2 p)
@@ -31,36 +31,16 @@ float Laplacian(int2 p)
         + coefficient.y * (ReadPressure(p + int2(0, 1)) + ReadPressure(p - int2(0, 1)))
         - 2 * (coefficient.x + coefficient.y) * ReadPressure(p);
 }
-float4 Source(float2 p)
-{
-    // The flight scene supplies a continuous IFS-to-history map. SourceAge is
-    // only the solver's substep offset, not a discretized event index.
-    return FlightFluidSource(p, SourceAge);
-}
-float CurlAt(int2 p)
-{
-    return (ReadVelocity(p + int2(1, 0)).y - ReadVelocity(p - int2(1, 0)).y) / (2 * CellSize.x)
-        - (ReadVelocity(p + int2(0, 1)).x - ReadVelocity(p - int2(0, 1)).x) / (2 * CellSize.y);
-}
 float2 SampleTransportVelocity(float2 uv)
 {
-    return Velocity.SampleLevel(ClampFluid, uv, 0);
+    // Pressure is cell centered; x/y velocities live on the right/bottom
+    // faces. Reconstruct both components at the same physical point.
+    return float2(Velocity.SampleLevel(ClampFluid, uv - float2(.5 / GridSize.x, 0), 0).x,
+        Velocity.SampleLevel(ClampFluid, uv - float2(0, .5 / GridSize.y), 0).y);
 }
 float2 Transport(float2 p)
 {
-    if (Fluid.PeriodicBoundary)
-    {
-        // A torus has no net expansion/outflow. A shared translational current
-        // lets old plumes return continuously, instead of colliding radial jets
-        // at the seam. Turbulent velocity remains fully pressure projected.
-        float activity = saturate(PoseX + PoseZ + .2 * PoseY);
-        float2 direction = normalize(float2(-1, .2 * sin(.12 * MusicalMovementTime)));
-        return SampleTransportVelocity(ToUV(p))
-            + activity * Fluid.Flow * 3 * direction;
-    }
-    // Camera optical flow is compressible in image space. Keep it outside the
-    // pressure projection, which applies only to the turbulent perturbation.
-    return Velocity.SampleLevel(ClampFluid, ToUV(p), 0) + FlightCarrier(p);
+    return SampleTransportVelocity(ToUV(p));
 }
 float2 Trace(float2 uv, float dt)
 {
@@ -70,20 +50,43 @@ float2 Trace(float2 uv, float dt)
 }
 float2 Backtrace(float2 uv) { return Trace(uv, StepSeconds); }
 
+// MacCormack correction uses the predicted field transported backward in
+// time. Clamp to the four original donors: no new extrema.
+float4 DonorBounds(float2 uv, bool upper)
+{
+    int2 p = int2(floor(uv * GridSize - .5));
+    float4 bound = upper ? -1e30 : 1e30;
+    [unroll] for (int y = 0; y < 2; ++y)
+        [unroll] for (int x = 0; x < 2; ++x)
+        {
+            int2 q = p + int2(x, y);
+            float4 v = 0;
+            if (Fluid.PeriodicBoundary)
+                v = float4(Velocity.Load(int3(WrapCell(q), 0)), 0, 0);
+            else if (all(q >= 0) && all(q < int2(GridSize)))
+                v = float4(Velocity.Load(int3(q, 0)), 0, 0);
+            bound = upper ? max(bound, v) : min(bound, v);
+        }
+    return bound;
+}
+float2 PredictVelocity(PSin input) : SV_Target
+{
+    float2 x = float2(.5 / GridSize.x, 0), y = float2(0, .5 / GridSize.y);
+    return float2(Velocity.SampleLevel(ClampFluid, Backtrace(input.UV + x) - x, 0).x,
+        Velocity.SampleLevel(ClampFluid, Backtrace(input.UV + y) - y, 0).y);
+}
 float2 AdvectVelocity(PSin input) : SV_Target
 {
-    float2 p = World(input.UV);
-    float2 v = Velocity.SampleLevel(ClampFluid, Backtrace(input.UV), 0) * exp(-.65 * StepSeconds);
-    float4 source = Source(p);
-    float2 force = FlightTurbulence(p, source);
-    // Vorticity confinement restores small curls lost to semi-Lagrangian advection.
     int2 q = int2(input.Position.xy);
-    float2 gradient = float2(abs(CurlAt(q + int2(1, 0))) - abs(CurlAt(q - int2(1, 0))),
-        abs(CurlAt(q + int2(0, 1))) - abs(CurlAt(q - int2(0, 1)))) / (2 * CellSize);
-    gradient /= max(1e-4, length(gradient));
-    force += (Fluid.Curl * 2) * min(CellSize.x, CellSize.y) * CurlAt(q) * float2(gradient.y, -gradient.x);
-    v += StepSeconds * force;
-    v *= min(1, 2.0 / max(1e-5, length(v)));
+    float2 x = float2(.5 / GridSize.x, 0), y = float2(0, .5 / GridSize.y);
+    float2 backX = Backtrace(input.UV + x) - x, backY = Backtrace(input.UV + y) - y;
+    float2 reverse = float2(Advected.SampleLevel(ClampFluid, Trace(input.UV + x, -StepSeconds) - x, 0).x,
+        Advected.SampleLevel(ClampFluid, Trace(input.UV + y, -StepSeconds) - y, 0).y);
+    float2 corrected = Advected.Load(int3(int2(input.Position.xy), 0)).xy
+        + .5 * (Velocity.Load(int3(int2(input.Position.xy), 0)) - reverse);
+    float2 lower = float2(DonorBounds(backX, false).x, DonorBounds(backY, false).y);
+    float2 upper = float2(DonorBounds(backX, true).x, DonorBounds(backY, true).y);
+    float2 v = clamp(corrected, lower, upper);
     if (!Fluid.PeriodicBoundary)
     {
         if (q.x == GridSize.x - 1) v.x = 0;
@@ -92,6 +95,33 @@ float2 AdvectVelocity(PSin input) : SV_Target
     return v;
 }
 
+// The heat equation's Gaussian kernel diffuses velocity without an explicit
+// timestep stability cap. Two separable passes approximate its 2D convolution.
+// Pressure projection and the full-strength inlet follow both passes.
+float2 DiffuseVelocityAxis(float2 uv, float2 axis)
+{
+    float viscosity = .1 * pow(Fluid.Viscosity, 3);
+    float sigma = sqrt(2 * viscosity * StepSeconds);
+    float2 sum = 0;
+    float weight = 0;
+    [unroll] for (int i = -8; i <= 8; ++i)
+    {
+        float x = .5 * i;
+        float w = exp(-.5 * x * x);
+        float2 offset = axis * (x * sigma) / float2(2 * AspectRatio, 2);
+        sum += w * Velocity.SampleLevel(PressureSampler, uv + offset, 0);
+        weight += w;
+    }
+    return sum / weight;
+}
+float2 DiffuseVelocityX(PSin input) : SV_Target
+{
+    return DiffuseVelocityAxis(input.UV, float2(1, 0));
+}
+float2 DiffuseVelocityY(PSin input) : SV_Target
+{
+    return DiffuseVelocityAxis(input.UV, float2(0, 1));
+}
 float Divergence(PSin input) : SV_Target
 {
     int2 p = int2(input.Position.xy);
@@ -133,47 +163,22 @@ float Prolong(PSin input) : SV_Target
     return Pressure.Load(int3(int2(input.Position.xy), 0))
         + Correction.SampleLevel(PressureSampler, input.UV, 0);
 }
+float2 ProjectedVelocity(int2 cell)
+{
+    float center = ReadPressure(cell);
+    return ReadVelocity(cell) - float2(ReadPressure(cell + int2(1, 0)) - center,
+        ReadPressure(cell + int2(0, 1)) - center) / CellSize;
+}
+// Implemented in scene HLSL. The shared solver knows no emitter geometry.
+float2 FluidApplyBoundary(int2 cell, float2 projectedVelocity);
 float2 Project(PSin input) : SV_Target
 {
-    int2 p = int2(input.Position.xy);
-    float center = ReadPressure(p);
-    return ReadVelocity(p) - float2(ReadPressure(p + int2(1, 0)) - center,
-        ReadPressure(p + int2(0, 1)) - center) / CellSize;
+    int2 cell = int2(input.Position.xy);
+    return FluidApplyBoundary(cell, ProjectedVelocity(cell));
 }
-float4 AdvectDye(PSin input) : SV_Target
+// Numerical regression entry point: isolate projection from scene constraints.
+float2 ProjectUnforced(PSin input) : SV_Target
 {
-    float2 uv = Backtrace(input.UV);
-    float4 dye = Dye.SampleLevel(ClampFluid, uv, 0);
-    float4 neighbors = .25 * (Dye.SampleLevel(ClampFluid, uv + float2(1 / GridSize.x, 0), 0)
-        + Dye.SampleLevel(ClampFluid, uv - float2(1 / GridSize.x, 0), 0)
-        + Dye.SampleLevel(ClampFluid, uv + float2(0, 1 / GridSize.y), 0)
-        + Dye.SampleLevel(ClampFluid, uv - float2(0, 1 / GridSize.y), 0));
-    float2 p = World(input.UV);
-    float4 source = Source(p);
-    float noise = 1 - exp(-2 * source.b);
-    float diffusion = saturate(StepSeconds * (Fluid.Diffusion * 0.01) * 4
-        * smoothstep(.02, .35, max(noise, PoseZ))
-        / (CellSize.x * CellSize.y));
-    // Conserve pigment as the carrier expands. Without dilution a fading
-    // ambient plume gains total light merely by occupying more screen area.
-    float expansion = FlightDilution(p);
-    if (Fluid.PeriodicBoundary) expansion = 0;
-    dye = lerp(dye, neighbors, diffusion) * exp(-((0.69314718 / (0.1 + Fluid.HalfLife * 9.9)) + expansion) * StepSeconds);
-    // FP16 subnormals can round an exponential loss back to the same stored
-    // value forever, especially on a closed periodic domain. Remove one minimum
-    // representable quantum per fixed step only in that subnormal range.
-    dye = max(0, dye - (dye < .00006103515625 ? 5.96046448e-8 : 0));
-    // Capture the continuously mapped IFS foreground for a fluid afterglow.
-    float4 dose = StepSeconds * 6 * FlightPigment(p, source, SourceAge);
-    // Smooth finite-capacity accumulation: approximately additive for faint
-    // material, asymptotic near capacity. Convex advection/diffusion and exact
-    // exponential losses keep every update positive and bounded for any input.
-    dye += (12 - dye) * (1 - exp(-dose / 12));
-    // A directional tonal blade removes existing cloud material. Its wake is
-    // retained in the advected state, so the cut travels with the cloud.
-    dye *= exp(-StepSeconds * FlightSlice(p, source));
-    // A soft sink prevents edge buildup and clamped streaks on resize/aspect extremes.
-    float edge = min(min(input.UV.x, 1 - input.UV.x), min(input.UV.y, 1 - input.UV.y));
-    float edgeDecay = Fluid.PeriodicBoundary ? 1 : exp(-StepSeconds * 12 * (1 - smoothstep(0, .04, edge)));
-    return min(dye * edgeDecay, 12);
+    return ProjectedVelocity(int2(input.Position.xy));
 }
+#endif

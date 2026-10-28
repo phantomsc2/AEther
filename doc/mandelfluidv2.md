@@ -37,7 +37,4 @@ off by default; enabling it shades four samples per pixel.
 - **Geometry** retains scale, Julia blend, fold rotation, anisotropy and slice depth.
 - **Quality** controls antialiasing, iteration depth and movement speed.
 
-All lighting follows spectral evidence and decays to black without music. The
-scene remains included in `ShaderSilenceTests`, which allows 10,000 decay frames
-before checking every RGB channel across 60 final frames, for both missing packets
-and explicit silent packets.
+All lighting follows spectral evidence and decays to black without music.

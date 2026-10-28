@@ -10,5 +10,6 @@ cbuffer Parameters
     FluidParameters Fluid = RING_FLUID_DEFAULTS;
 };
 #include "../Common/RingEmitter.hlsl"
+#include "../Common/RingFluidMaterial.hlsl"
 #include "../Common/FluidLight.hlsl"
 #include "../Common/Mandelbox.hlsl"

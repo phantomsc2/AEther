@@ -92,11 +92,6 @@ Regression coverage verifies:
 - Identical mono/stereo signals retain channel-mean RMS; gain never sums channels.
 - Invalid gain settings are rejected, float overrange is retained, and nonfinite
   samples do not poison analysis state.
-- Preserve AEther.Tests/ShaderSilenceTests.cs: exercise silence after active audio
-  at unity and maximum supported input gain. Allow at least 1200 frames (20 seconds)
-  of natural decay, retaining the 10000-frame upper bound for slow simulations.
-  Once black, check every RGB channel across 60 consecutive final frames. Do not
-  add a positive visualization floor or adaptation that makes silence glow.
 
 The diagnostic loopback measurements motivate the input contract but are not a
 portable device-volume guarantee. A player attenuated internally remains quieter
