@@ -6,7 +6,9 @@ Properties are selected through `TypeDescriptor`: writable, browsable bools
 become toggles, enums become dropdowns, and ints/doubles become numeric editors
 with linear sliders.
 
-`Category` groups controls, `DisplayName` supplies labels, `Description` supplies
+`Category` groups controls. Properties with .NET's default category (`Misc`),
+including explicitly categorized `Misc` properties, appear directly above the
+groups; an empty category remains a group. `DisplayName` supplies labels, `Description` supplies
 tooltips, and `System.ComponentModel.DataAnnotations.Range` supplies fixed
 numeric bounds. Defaults come from the option instance's initializers. There
 are no custom slider annotations or property-name cases in the editor.

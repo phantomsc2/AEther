@@ -109,7 +109,7 @@ internal static partial class Program
                                 var audioGroups = ((StackPanel)audio.Content).Children.OfType<Expander>().ToArray();
                                 if (canvasWindow.IsVisible || shadersVisible() || audioGroups.Any(g => g.IsExpanded))
                                     throw new Exception("Startup must leave canvas, shader settings and audio categories collapsed.");
-                                if (!audioGroups.Select(g => g.Header?.ToString()).SequenceEqual(new[] { "DFT", "Input", "Pipeline", "Smoother", "Splitter" }))
+                                if (!audioGroups.Select(g => g.Header?.ToString()).SequenceEqual(new[] { "DFT", "Pipeline", "Smoother", "Splitter" }))
                                     throw new Exception("Audio categories must follow AnalyzerOptions metadata.");
                                 if (Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
                                     - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1

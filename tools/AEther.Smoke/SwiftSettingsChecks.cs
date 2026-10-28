@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -12,6 +13,16 @@ using Microsoft.UI.Xaml.Controls;
 
 internal static partial class Program
 {
+    sealed class CategoryProbeOptions
+    {
+        [Category("Zebra")] public bool Grouped { get; set; }
+        public bool Plain { get; set; }
+        [Category("Misc")] public bool ExplicitMisc { get; set; }
+        [Category("")] public bool EmptyCategory { get; set; }
+        [Category("Alpha")] public bool OtherGroup { get; set; }
+        public CategoryProbeOptions Copy() => (CategoryProbeOptions)MemberwiseClone();
+    }
+
     // Interactive pointer probe: the title counts actual pipeline-setting commits.
     // Dragging should change the NumberBox continuously and increment the title once.
     static void CheckSliderPointerEdits()
@@ -58,6 +69,22 @@ internal static partial class Program
             {
                 try
                 {
+                    var categoryEditor = new OptionsEditor<CategoryProbeOptions>(new(), value => value.Copy());
+                    var categoryChildren = categoryEditor.Content.Children.ToArray();
+                    var topLevel = categoryChildren.Take(2).Select(AutomationProperties.GetName).ToArray();
+                    if (!topLevel.ToHashSet().SetEquals(new[] { "Plain", "ExplicitMisc" }))
+                        throw new Exception("Default and explicit Misc properties must be top-level controls.");
+                    var categoryGroups = categoryChildren.Skip(2).OfType<Expander>().ToArray();
+                    if (categoryGroups.Length != 3 || categoryGroups.Any(e => e.IsExpanded)
+                        || !categoryGroups.Select(e => e.Header?.ToString()).SequenceEqual(new[] { "", "Alpha", "Zebra" }))
+                        throw new Exception("Empty and named categories must remain separate collapsed groups.");
+                    var topToggle = LogicalChildren(categoryChildren.Single(c => AutomationProperties.GetName(c) == "Plain"))
+                        .OfType<ToggleSwitch>().Single();
+                    int categoryChanges = 0;
+                    categoryEditor.Changed += (_, _) => categoryChanges++;
+                    topToggle.IsOn = true;
+                    if (!categoryEditor.Options.Plain || categoryChanges != 1)
+                        throw new Exception("A top-level control must update its option normally.");
                     // Construct the real controls without activating or displaying a window.
                     var settings = new AudioPanel();
                     var restored = new AudioPanel(new AEther.AnalyzerOptions { SwiftWidthScale = 2 });
@@ -67,6 +94,10 @@ internal static partial class Program
                         throw new Exception("Restored analyzer settings were not reflected in the editor.");
                     var elements = LogicalChildren((DependencyObject)settings.Content).ToArray();
                     var graphics = new GraphicsPanel();
+                    var graphicsRows = ((StackPanel)graphics.Content).Children.ToArray();
+                    if (graphicsRows.Length != 2 || graphicsRows.Any(row => row is Expander)
+                        || !graphicsRows.Select(AutomationProperties.GetName).ToHashSet().SetEquals(new[] { "HistorySeconds", "Peak emphasis" }))
+                        throw new Exception("Graphics options must be top-level controls.");
                     var graphicsElements = LogicalChildren((DependencyObject)graphics.Content).ToArray();
                     var history = graphicsElements.OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "HistorySeconds");
                     var emphasis = graphicsElements.OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "Peak emphasis");
@@ -127,9 +158,9 @@ internal static partial class Program
                     Equal(settings.Options.ComplexAccelerationIntensity / 1e-8, 1);
                     noise.Value = -10;
                     Equal(settings.Options.SmoothingNoiseFloor, 1.0 / 1024);
-                    if (elements.OfType<Expander>().Single(e => e.Header?.ToString() == "Input").Content is not StackPanel inputOptions
-                        || !LogicalChildren(inputOptions).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Input gain (dB)"))
-                        throw new Exception("Gain must remain in its declared category.");
+                    if (((StackPanel)settings.Content).Children.FirstOrDefault() is not FrameworkElement gain
+                        || AutomationProperties.GetName(gain) != "Input gain (dB)")
+                        throw new Exception("Input gain must be a top-level control above the analyzer categories.");
                     var toggle = elements.OfType<ToggleSwitch>().Single(t => AutomationProperties.GetName(t) == "Spectrum analysis");
                     var window = elements.OfType<ComboBox>().Single(c => AutomationProperties.GetName(c) == "Window function");
                     toggle.IsOn = false;

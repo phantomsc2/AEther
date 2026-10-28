@@ -45,8 +45,8 @@ rate. Graphics retention is configured separately:
 | `AnalysisRate` | Map rows to time; size history and handoff buffers | Reset history; reallocate textures if the computed row count changes |
 
 `GraphicsOptions.HistorySeconds` belongs to `AEther.Vortice`, defaults to 2 seconds,
-and accepts finite values from 0.01 to 60 seconds. Its control belongs to the generated
-Graphics category in the right column below the scene selector and above shader parameters. Pointer slider
+and accepts finite values from 0.01 to 60 seconds. Its control is at the top level
+in the right column below the scene selector and above shader parameters. Pointer slider
 edits commit on release; numeric edits apply immediately.
 
 `Renderer.SetGraphicsOptions` clears retained histogram data and reallocates only

@@ -79,7 +79,6 @@ namespace AEther
         [Description("Hann: balanced. Rectangular: narrowest peak, most leakage. Hamming/Blackman: exact coefficients. Nuttall: very low sidelobes, wider peak. FlatTop: accurate off-bin levels, widest peak.")]
         public DFTWindow WindowFunction { get; set; } = DFTWindow.Hann;
 
-        [Category("Input")]
         [DisplayName("Input gain (dB)")]
         [Range(-60.0, 60.0)]
         [Description("Gain before all analysis, from -60 to +60 dB. 0 dB preserves full-scale input units. For consistent loopback visuals, keep player volume at 100% and adjust listening volume downstream of capture.")]

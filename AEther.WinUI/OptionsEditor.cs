@@ -21,18 +21,24 @@ internal sealed class OptionsEditor<T> where T : class
     {
         Options = options;
         this.copy = copy;
-        var properties = TypeDescriptor.GetProperties(typeof(T)).Cast<PropertyDescriptor>()
-            .Where(p => p.IsBrowsable && !p.IsReadOnly);
-        foreach (var category in properties.GroupBy(p => p.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
+        var groups = TypeDescriptor.GetProperties(typeof(T)).Cast<PropertyDescriptor>()
+            .Where(p => p.IsBrowsable && !p.IsReadOnly)
+            .GroupBy(p => p.Category).ToArray();
+        var defaultCategory = CategoryAttribute.Default.Category;
+        FrameworkElement Build(PropertyDescriptor property)
+        {
+            var editor = CreateEditor(property);
+            AutomationProperties.SetName(editor, property.DisplayName);
+            if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
+            return editor;
+        }
+        foreach (var property in groups.Where(g => g.Key == defaultCategory).SelectMany(g => g))
+            Content.Children.Add(Build(property));
+        foreach (var category in groups.Where(g => g.Key != defaultCategory).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var rows = new StackPanel { Spacing = 8 };
             foreach (var property in category)
-            {
-                var editor = CreateEditor(property);
-                AutomationProperties.SetName(editor, property.DisplayName);
-                if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
-                rows.Children.Add(editor);
-            }
+                rows.Children.Add(Build(property));
             Content.Children.Add(new Expander
             {
                 Header = category.Key, Content = rows, IsExpanded = false,
