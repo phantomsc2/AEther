@@ -11,6 +11,13 @@ copy the same directory structure beside the executable. The recursive watcher
 debounces saves, creation, renames and deletion by 250 ms. No .NET build is needed
 for shader edits, parameter changes or scene discovery.
 
+Procedural triangle scenes can use the [geometry contract](geometry-contract.md):
+HLSL supplies vertex/instance counts and evaluates vertices, and the host executes
+one indirect instanced draw per view. The separate
+[raster airlight contract](raster-airlight-contract.md) supplies shared surface,
+shadow, and homogeneous single-scattering transport, currently with the spectral
+light-ring adapter.
+
 ## Debug analysis scene
 
 `Debug` combines the presented analysis block and its stereo history on shared

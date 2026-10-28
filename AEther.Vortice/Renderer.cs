@@ -486,6 +486,10 @@ public sealed partial class Renderer : IDisposable
         if (!active.ProgramReady && !CompileScene(active.Name, reportFailure: false))
             throw new InvalidOperationException(ShaderError, shaderException);
         active = ActiveShader!;
+        namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
+        namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
+        // Compatibility names refer to the core evidence, including in geometry stages.
+        namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.Raster != null)
         {
             rasterTransport ??= new(device, context);
@@ -494,16 +498,12 @@ public sealed partial class Renderer : IDisposable
             namedBuffers["RasterAirlightConstants"] = rasterTransport.AirlightBuffer;
             namedSamplers["RasterLutSampler"] = rasterTransport.LookupSampler;
             rasterTransport.PassMarker = GpuMarker;
-            rasterTransport.Prepare(active.Raster, active.Parameters!, Audio, (float)now, width, height,
+            rasterTransport.Prepare(active.Raster, active.Parameters!, Audio, width, height,
                 namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
             context.RSSetViewport(0, 0, width, height);
             rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers);
         }
-        namedTextures["Spectrum0"] = views[0]; namedTextures["Spectrum1"] = views[1];
-        namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
-        // Compatibility names now refer to the core evidence; there is no scene filter pass.
-        namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.Fluid != null)
         {
             if (fluid != null && !fluid.CompatibleWith(active.Fluid))

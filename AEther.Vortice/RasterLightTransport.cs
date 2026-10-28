@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Numerics;
-using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -25,7 +24,7 @@ internal sealed class RasterLightTransport : IDisposable
     {
         internal readonly ShaderProgram Surface;
         internal readonly ShaderProgram Airlight;
-        internal readonly ID3D11VertexShader Vertex;
+        internal readonly RasterGeometry.Programs Geometry;
         internal Programs(ID3D11Device device, string source, string file)
         {
             Surface = new(device, source, "RasterSurfacePS", file);
@@ -33,12 +32,12 @@ internal sealed class RasterLightTransport : IDisposable
             try
             {
                 nextAirlight = new(device, source, "RasterAirlightPS", file);
-                Vertex = device.CreateVertexShader(Compiler.Compile(source, "RasterGeometryVS", file, "vs_5_0").Span);
+                Geometry = new(device, source, file);
                 Airlight = nextAirlight;
             }
             catch { nextAirlight?.Dispose(); Surface.Dispose(); throw; }
         }
-        public void Dispose() { Vertex.Dispose(); Airlight.Dispose(); Surface.Dispose(); }
+        public void Dispose() { Geometry.Dispose(); Airlight.Dispose(); Surface.Dispose(); }
     }
 
     readonly ID3D11Device device;
@@ -47,6 +46,8 @@ internal sealed class RasterLightTransport : IDisposable
     readonly ID3D11Buffer lights;
     readonly ID3D11Buffer airlightConstants;
     readonly UnshadowedAirlightLookup lookup;
+    readonly RasterGeometry geometry;
+    readonly Dictionary<string, ID3D11Buffer> geometryBuffers = [];
     // Header, positions (w reserved), RGB radiance, then packed active indices.
     readonly Vector4[] lightData = new Vector4[RingGeometryOffset + 1];
     readonly ID3D11DepthStencilState depthState;
@@ -54,12 +55,10 @@ internal sealed class RasterLightTransport : IDisposable
     readonly Dictionary<string, ID3D11SamplerState> rasterSamplers = [];
     readonly Dictionary<string, ID3D11ShaderResourceView> textures = [];
     readonly ID3D11DepthStencilView?[] shadowTargets = new ID3D11DepthStencilView?[12 * MaximumLights];
-    readonly float[]?[] keys = new float[]?[2 * MaximumLights];
     ID3D11Texture2D? shadows, color, depth, airlight;
     ID3D11ShaderResourceView? shadowView, colorView, depthView, airlightView;
     ID3D11RenderTargetView? colorTarget, airlightTarget;
     ID3D11DepthStencilView? depthTarget;
-    Programs? previousProgram;
     int size, shadowLayers, width, height, airWidth, airHeight;
     internal Action<string, bool>? PassMarker { get; set; }
     internal ID3D11SamplerState ShadowSampler => shadowSampler;
@@ -96,7 +95,12 @@ internal sealed class RasterLightTransport : IDisposable
         try
         {
             airlightConstants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
-            try { lookup = new(device, context); }
+            try
+            {
+                lookup = new(device, context);
+                try { geometry = new(device); }
+                catch { lookup.Dispose(); throw; }
+            }
             catch { airlightConstants.Dispose(); throw; }
         }
         catch { shadowSampler.Dispose(); depthState.Dispose(); lights.Dispose(); selection.Dispose(); throw; }
@@ -115,7 +119,7 @@ internal sealed class RasterLightTransport : IDisposable
     unsafe int UpdateLights(ShaderParameters p, AudioHistory audio, int count)
     {
         Array.Clear(lightData);
-        float ringRadius = (2 + 10 * Read(p, "Shape", "Spread")) * Read(p, "Lights", "RingRadius");
+        float ringRadius = (2 + 10 * Read(p, "Lights", "Spread")) * Read(p, "Lights", "RingRadius");
         float gain = Flag(p, "Lights", "Enabled") ? 3000 * MathF.Pow(2, 12 * Read(p, "Lights", "Gain") - 6) : 0;
         float tonalGain = Flag(p, "TonalLights", "Enabled") ? .75f * 3000 * MathF.Pow(2, 12 * Read(p, "TonalLights", "Gain") - 6) : 0;
         // Fixed world-space plane facing the initial camera. Camera motion does
@@ -291,7 +295,7 @@ internal sealed class RasterLightTransport : IDisposable
         }
         catch { ReleaseAirlight(); throw; }
     }
-    internal void Prepare(Programs program, ShaderParameters p, AudioHistory audio, float time, int w, int h,
+    internal void Prepare(Programs program, ShaderParameters p, AudioHistory audio, int w, int h,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
         IDictionary<string, ID3D11ShaderResourceView> sceneTextures,
         IReadOnlyDictionary<string, ID3D11SamplerState> samplers)
@@ -318,25 +322,23 @@ internal sealed class RasterLightTransport : IDisposable
         bool half = Flag(p, "Quality", "HalfResolutionAirlight");
         int nextAirWidth = half ? (w + 1) / 2 : w, nextAirHeight = half ? (h + 1) / 2 : h;
         if (airWidth != nextAirWidth || airHeight != nextAirHeight) AllocateAirlight(nextAirWidth, nextAirHeight);
-        if (!ReferenceEquals(previousProgram, program)) { Array.Clear(keys); previousProgram = program; }
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.OMSetBlendState(null);
-        textures.Clear(); textures["RasterShadows"] = shadowView!;
+        textures.Clear(); foreach (var pair in sceneTextures) textures[pair.Key] = pair.Value;
+        textures["RasterShadows"] = shadowView!;
         textures["RasterAirlightLut"] = lookup.View;
         rasterSamplers.Clear(); foreach (var pair in samplers) rasterSamplers[pair.Key] = pair.Value;
         rasterSamplers["RasterShadowSampler"] = shadowSampler;
         rasterSamplers["RasterLutSampler"] = lookup.Sampler;
-        // Surface PS can omit FrameConstants now that lights are static. The
-        // geometry VS still needs it for camera projection and cube motion.
-        program.Surface.Bind(context, p, buffers, textures, rasterSamplers, vertexConstants: true);
-        context.VSSetConstantBuffer(0, buffers["FrameConstants"]);
+        geometryBuffers.Clear(); foreach (var pair in buffers) geometryBuffers[pair.Key] = pair.Value;
+        geometryBuffers["RasterPassConstants"] = selection;
+        PassMarker?.Invoke("Raster geometry prepare", true);
+        geometry.Prepare(context, program.Geometry, p, geometryBuffers, textures, rasterSamplers);
+        PassMarker?.Invoke("Raster geometry prepare", false);
+        program.Geometry.Vertex.Bind(context, p, geometryBuffers, textures, rasterSamplers);
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.PSSetShader(null);
-        context.VSSetShader(program.Vertex);
-        context.VSSetConstantBuffer(2, selection);
-        context.VSSetConstantBuffer(3, lights);
         context.OMSetDepthStencilState(depthState);
-        int count = Flag(p, "Shape", "Enabled") ? 1 + (int)MathF.Round(4095 * Read(p, "Shape", "Count")) : 0;
         int previewLight = (int)MathF.Round((Math.Max(1,requiredMaps) - 1) * Read(p, "View", "ShadowLight"));
         for (int slot = 0; slot < requiredMaps; slot++)
         {
@@ -346,14 +348,9 @@ internal sealed class RasterLightTransport : IDisposable
             int radianceOffset=strobe ? 1+MaximumLights : TonalRadianceOffset;
             if (!(preview && slot == previewLight)
                 && (shadowCount==0 || lightData[radianceOffset+index].W <= 0)) continue;
-            float motion = Read(p, "Shape", "Speed");
-            Vector4 position = lightData[(strobe ? 1 : TonalPositionOffset)+index];
             Vector4 cone=lightData[(strobe ? StrobeConeOffset : TonalConeOffset)+index];
             int firstSlice=(int)lightData[ShadowUpOffset+light].W;
             int faces=cone.W>=0 ? 1 : 6;
-            float[] key = [count, Read(p, "Shape", "Seed"), Read(p, "Shape", "Size"), Read(p, "Shape", "Spread"),
-                motion, position.X, position.Y, position.Z, cone.X, cone.Y, cone.Z, cone.W, firstSlice, motion > 0 ? time : 0];
-            if (keys[slot] != null && key.AsSpan().SequenceEqual(keys[slot])) continue;
             context.RSSetViewport(0, 0, size, size);
             string marker=$"Raster light {light} {(faces==1 ? "spot" : "cube")}";
             PassMarker?.Invoke(marker, true);
@@ -363,20 +360,19 @@ internal sealed class RasterLightTransport : IDisposable
                 var target = shadowTargets[firstSlice + face]!;
                 context.ClearDepthStencilView(target, DepthStencilClearFlags.Depth, 1, 0);
                 context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>(), target);
-                if (count > 0) context.DrawInstanced(36, (uint)count, 0, 0);
+                geometry.Draw(context);
             }
             PassMarker?.Invoke(marker, false);
             context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-            keys[slot] = key;
         }
         context.RSSetViewport(0, 0, w, h);
-        program.Surface.Bind(context, p, buffers, textures, rasterSamplers, vertexConstants: true);
+        program.Surface.Bind(context, p, buffers, textures, rasterSamplers);
         context.UpdateSubresource(new Selection(0, 0, 0), selection);
         context.ClearRenderTargetView(colorTarget!, new(0, 0, 0, 0));
         context.ClearDepthStencilView(depthTarget!, DepthStencilClearFlags.Depth, 1, 0);
         context.OMSetRenderTargets(colorTarget!, depthTarget!);
         PassMarker?.Invoke("Raster surface", true);
-        if (count > 0) context.DrawInstanced(36, (uint)count, 0, 0);
+        geometry.Draw(context);
         PassMarker?.Invoke("Raster surface", false);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.OMSetDepthStencilState(null);
@@ -407,7 +403,7 @@ internal sealed class RasterLightTransport : IDisposable
     {
         foreach (var target in shadowTargets) target?.Dispose(); Array.Clear(shadowTargets);
         shadowView?.Dispose(); shadowView = null; shadows?.Dispose(); shadows = null;
-        Array.Clear(keys); size = shadowLayers = 0;
+        size = shadowLayers = 0;
     }
     void ReleaseCamera()
     {
@@ -421,5 +417,5 @@ internal sealed class RasterLightTransport : IDisposable
         airlightTarget?.Dispose(); airlightTarget = null; airlightView?.Dispose(); airlightView = null; airlight?.Dispose(); airlight = null;
         airWidth = airHeight = 0;
     }
-    public void Dispose() { ReleaseCamera(); ReleaseShadows(); lookup.Dispose(); airlightConstants.Dispose(); lights.Dispose(); selection.Dispose(); depthState.Dispose(); shadowSampler.Dispose(); }
+    public void Dispose() { ReleaseCamera(); ReleaseShadows(); geometry.Dispose(); lookup.Dispose(); airlightConstants.Dispose(); lights.Dispose(); selection.Dispose(); depthState.Dispose(); shadowSampler.Dispose(); }
 }

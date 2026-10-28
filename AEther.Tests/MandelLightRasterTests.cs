@@ -13,6 +13,47 @@ namespace AEther.Tests;
 public class MandelLightRasterTests
 {
     [Test, Category("GPU")]
+    public void GeometryShaderOwnsVertexAndInstanceCountsWithoutShapeParameters()
+    {
+        using var shaders = new ShaderTree(geometryProbe: true);
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle, 160, 90, 32, 60,
+            shaderDirectory: shaders.Path, timeProvider: new FixedClock());
+        renderer.SelectScene("MandelLightv4");
+        Set(renderer, "View.ShowDepth", true);
+        Set(renderer, "Objects.Count", 0f);
+        Set(renderer, "Objects.Size", 0f);
+        int triangle = Coverage();
+        Assert.That(triangle, Is.GreaterThan(100));
+        Set(renderer, "Objects.Size", 1f);
+        int quad = Coverage();
+        Assert.That(quad, Is.InRange(1.8 * triangle, 2.2 * triangle),
+            "Changing only HLSL's vertex count must draw the second triangle.");
+        Set(renderer, "Objects.Count", 1f);
+        int instances = Coverage();
+        Assert.That(instances, Is.InRange(1.9 * quad, 2.1 * quad),
+            "Changing only HLSL's instance count must draw the second quad.");
+        Set(renderer, "Objects.Enabled", false);
+        Assert.That(Coverage(), Is.Zero, "Zero GPU instances must clear the previous geometry.");
+        Set(renderer, "Objects.Enabled", true);
+        Assert.That(Coverage(), Is.EqualTo(instances));
+        Set(renderer, "Objects.Seed", 1f);
+        Assert.That(Coverage(), Is.Zero);
+        FeedTonal(renderer, transient: .02);
+        Assert.That(Coverage(), Is.EqualTo(instances),
+            "The count compute shader must receive the current spectrum and sampler.");
+        Set(renderer, "Objects.Seed", .25f);
+        Assert.That(renderer.ReloadShaders(), Is.True, renderer.ShaderError);
+        Assert.That(Coverage(), Is.EqualTo(instances));
+
+        int Coverage()
+        {
+            renderer.Render(false);
+            return renderer.ReadPixels(false).Where((_, i) => i % 4 == 0).Count(v => v > 0);
+        }
+    }
+
+    [Test, Category("GPU")]
     public void TonalRingUsesStructureWithoutShadowDrawsAndMatchesTheStrobeLayout()
     {
         using var shaders = new ShaderTree();
@@ -394,7 +435,7 @@ public class MandelLightRasterTests
     {
         readonly string root = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()).TrimEnd(System.IO.Path.DirectorySeparatorChar);
         internal string Path { get; }
-        internal ShaderTree(bool filterProbe = false, bool shadowProbe = false, bool finiteAirlight = false)
+        internal ShaderTree(bool filterProbe = false, bool shadowProbe = false, bool finiteAirlight = false, bool geometryProbe = false)
         {
             string source = null!;
             for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null; dir = dir.Parent)
@@ -406,16 +447,50 @@ public class MandelLightRasterTests
             Path = System.IO.Path.Combine(root, "AEther-raster-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Common"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
-            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl" })
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl" })
                 File.Copy(System.IO.Path.Combine(source, "Common", file), System.IO.Path.Combine(Path, "Common", file));
             string scene=File.ReadAllText(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"));
+            string airlightPath=System.IO.Path.Combine(Path,"Common","RasterAirlight.hlsl");
+            string airlight=File.ReadAllText(airlightPath);
+            if (geometryProbe)
+            {
+                // No host-recognized Shape group; two triangles and two instances
+                // are enough to detect either count being hardcoded or stale.
+                scene=scene.Replace("Shape", "Objects");
+                int begin=scene.IndexOf("uint2 GeometryCount()",StringComparison.Ordinal);
+                int end=scene.IndexOf("float4 Display(",begin,StringComparison.Ordinal);
+                scene=scene[..begin] + """
+                    uint2 GeometryCount()
+                    {
+                        uint instances=Objects.Enabled ? 1+(uint)round(Objects.Count) : 0;
+                        if (Objects.Seed>.5 && Spectrum0.SampleLevel(Linear,float2(.5,.5),0).g<=0) instances=0;
+                        return uint2(3+3*(uint)round(Objects.Size),instances);
+                    }
+                    GeometryVertex EvaluateGeometry(uint vertex, uint instance)
+                    {
+                        float2 corners[6]={float2(-1,-1),float2(-1,1),float2(1,-1),
+                            float2(1,-1),float2(-1,1),float2(1,1)};
+                        float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
+                        GeometryVertex v;
+                        v.World=origin+8*forward+(corners[vertex].x+(instance==0 ? -2 : 2))*right+corners[vertex].y*up;
+                        v.Normal=-forward; v.Albedo=1;
+                        return v;
+                    }
+
+                    """ + scene[end..];
+            }
             // These fixtures isolate the point/spot paths; the live scene's ring
             // remains enabled and participates in the scene-wide silence check.
             scene=scene.Replace("FilamentRingSettings RingLight = { .5 };","FilamentRingSettings RingLight = { 0 };");
             if (finiteAirlight)
+            {
                 scene=scene.Replace("float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;", "hit=true; float end=24;");
+                airlight=airlight.Replace("float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;", "hit=true; float end=24;");
+            }
             if (filterProbe)
-                scene=scene.Replace("float4 RasterAirlightPS(", "float4 OriginalRasterAirlightPS(") + """
+            {
+                airlight=airlight.Replace("float4 RasterAirlightPS(", "float4 OriginalRasterAirlightPS(");
+                scene += """
 
                     float4 RasterAirlightPS(PSin input) : SV_Target
                     {
@@ -425,6 +500,7 @@ public class MandelLightRasterTests
                         return float4(color,p.x<8 ? 0 : p.x<12 ? 20 : 40);
                     }
                     """;
+            }
             if (shadowProbe)
                 scene=scene.Replace("float4 PS(PSin input)", "float4 OriginalPS(PSin input)") + """
 
@@ -457,6 +533,7 @@ public class MandelLightRasterTests
                         return float4(invalid ? 1 : 0,actual>.01 && actual<.99 ? 1 : 0,0,1);
                     }
                     """;
+            File.WriteAllText(airlightPath,airlight);
             File.WriteAllText(System.IO.Path.Combine(Path, "Scenes", "MandelLightv4.hlsl"),scene);
         }
         public void Dispose()

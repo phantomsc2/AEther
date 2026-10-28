@@ -1,5 +1,11 @@
 # MandelLightv4: raster geometry and infinite homogeneous air
 
+Geometry now follows the [shader-owned geometry contract](geometry-contract.md).
+The integral and surface/shadow support live in the shared
+[raster airlight contract](raster-airlight-contract.md). Geometry counts are written
+on the GPU and consumed by indirect draws; enabled shadow maps refresh each frame.
+Older cache measurements below describe the previous implementation.
+
 Historical 720p point/cone/line costs, including shadow refresh versus caching, are
 in [the light-type GPU comparison](mandellight-light-costs.md). Older measurements
 below retain their original scene versions and light counts.
@@ -29,9 +35,10 @@ describe the earlier four-light prototypes unless stated otherwise.
 
 Lights.Count selects 1..96 lights per ring, default 60. Their positions form a fixed
 world-space ring facing the initial camera, with radius
-`(2+10*Shape.Spread)*Lights.RingRadius`, default 5.7 inside the cube cloud's
+`(2+10*Lights.Spread)*Lights.RingRadius`, default 5.7 inside the cube cloud's
 9.5-unit half extent. Camera motion does not move the ring. Positions do not
-respond to music. Cubes retain their independent rotation control.
+respond to music. Light spread and geometry spread are independent controls.
+Cubes retain their independent rotation control.
 
 The ring uses the same polar frequency/stereo mapping and frequency palette as
 `Common/RingEmitter.hlsl`. For unit ring coordinates `p=(sin(a),cos(a))`:
@@ -57,9 +64,9 @@ other shaders' clamped linear texture sampling at `(f,.5)`, then uploads positio
 RGB intensities and nonzero-light indices in a small constant buffer. This avoids
 reading/interpolating spectrum textures at every airlight distance sample. Silent
 lights are omitted from surface/airlight loops and shadow refreshes. A light that
-becomes active with shadows enabled receives a valid shadow map before it is used. Intensity changes
-do not invalidate maps; geometry motion, ring placement/count, geometry edits,
-resolution changes and reloads do.
+becomes active with shadows enabled receives a valid shadow map before it is used.
+Required active and diagnostic maps refresh every frame, without CPU knowledge
+of which scene parameters change geometry.
 
 The random-light mode caches only indices and cone intervals for lights that
 intersect each ray, constructing a full proposal only for the selected light.

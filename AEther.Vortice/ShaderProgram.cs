@@ -8,7 +8,10 @@ namespace AEther.Vortice;
 internal sealed class ShaderProgram : IDisposable
 {
     internal static readonly ID3D11ShaderResourceView[] EmptyViews = new ID3D11ShaderResourceView[128];
-    public ID3D11PixelShader Pixel { get; }
+    public ID3D11PixelShader Pixel { get; } = null!;
+    readonly ID3D11VertexShader? vertex;
+    readonly ID3D11ComputeShader? compute;
+    readonly char stage;
     public ShaderParameters? Parameters { get; }
     readonly ID3D11Buffer? parameterBuffer;
     readonly byte[]? uploaded;
@@ -23,9 +26,10 @@ internal sealed class ShaderProgram : IDisposable
         && name.StartsWith(prefix, StringComparison.Ordinal) && name[^1] is >= '0' and <= '7';
     internal bool UsesFluid => Uses("FluidVelocity") || FluidSimulation.MaterialNames.Any(Uses);
 
-    public ShaderProgram(ID3D11Device device, string source, string entry, string file)
+    public ShaderProgram(ID3D11Device device, string source, string entry, string file, string profile = "ps_5_0")
     {
-        var code = Compiler.Compile(source, entry, file, "ps_5_0");
+        stage = profile[0];
+        var code = Compiler.Compile(source, entry, file, profile);
         using var reflection = Compiler.Reflect<ID3D11ShaderReflection>(code.Span);
         for (uint i = 0; i < reflection.Description.OutputParameters; i++)
             Outputs.Add(reflection.GetOutputParameterDescription(i));
@@ -42,6 +46,7 @@ internal sealed class ShaderProgram : IDisposable
                     or "FluidVelocity" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction"
                     or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut"
                     || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
+                ShaderInputType.UnorderedAccessViewRWByteAddress => stage == 'c' && binding.Name == "GeometryDrawArguments",
                 _ => false,
             };
             if (entry == "PS" && (binding.Name is "FluidConstants" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler"
@@ -59,14 +64,20 @@ internal sealed class ShaderProgram : IDisposable
             uploaded = new byte[Parameters.Data.Length];
             parameterBuffer = device.CreateBuffer((uint)Parameters.Data.Length, BindFlags.ConstantBuffer);
         }
-        try { Pixel = device.CreatePixelShader(code.Span); Pixel.DebugName = $"{file}:{entry}"; }
+        try
+        {
+            if (stage == 'v') vertex = device.CreateVertexShader(code.Span);
+            else if (stage == 'c') compute = device.CreateComputeShader(code.Span);
+            else { Pixel = device.CreatePixelShader(code.Span); Pixel.DebugName = $"{file}:{entry}"; }
+        }
         catch { parameterBuffer?.Dispose(); throw; }
     }
 
     public unsafe void Bind(ID3D11DeviceContext context, ShaderParameters? values,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
         IReadOnlyDictionary<string, ID3D11ShaderResourceView> textures,
-        IReadOnlyDictionary<string, ID3D11SamplerState> samplers, bool vertexConstants = false)
+        IReadOnlyDictionary<string, ID3D11SamplerState> samplers,
+        IReadOnlyDictionary<string, ID3D11UnorderedAccessView>? outputs = null)
     {
         foreach (var (name, binding) in bindings)
         {
@@ -95,31 +106,44 @@ internal sealed class ShaderProgram : IDisposable
                             hasUploaded = true;
                         }
                     }
-                    context.PSSetConstantBuffer(slot, parameterBuffer!);
-                    if (vertexConstants) context.VSSetConstantBuffer(slot, parameterBuffer!);
+                    BindConstant(slot, parameterBuffer!);
                 }
                 else if (buffers.TryGetValue(name, out var buffer))
                 {
-                    context.PSSetConstantBuffer(slot, buffer);
-                    if (vertexConstants) context.VSSetConstantBuffer(slot, buffer);
+                    BindConstant(slot, buffer);
                 }
                 else throw new InvalidOperationException($"Unknown shader buffer: {name}");
             }
             else if (binding.Type == ShaderInputType.Sampler)
             {
                 if (!samplers.TryGetValue(name, out var sampler)) throw new InvalidOperationException($"Unknown shader sampler: {name}");
-                context.PSSetSampler(slot, sampler);
+                if (stage == 'v') context.VSSetSampler(slot, sampler);
+                else if (stage == 'c') context.CSSetSampler(slot, sampler);
+                else context.PSSetSampler(slot, sampler);
             }
+            else if (binding.Type == ShaderInputType.UnorderedAccessViewRWByteAddress)
+                context.CSSetUnorderedAccessView(slot, outputs![name]);
             else
             {
                 if (!textures.TryGetValue(name, out var texture)) throw new InvalidOperationException($"Unknown shader resource: {name}");
-                context.PSSetShaderResource(slot, texture);
+                if (stage == 'v') context.VSSetShaderResource(slot, texture);
+                else if (stage == 'c') context.CSSetShaderResource(slot, texture);
+                else context.PSSetShaderResource(slot, texture);
             }
         }
-        context.PSSetShader(Pixel);
+        if (stage == 'v') context.VSSetShader(vertex);
+        else if (stage == 'c') context.CSSetShader(compute);
+        else context.PSSetShader(Pixel);
+
+        void BindConstant(uint slot, ID3D11Buffer buffer)
+        {
+            if (stage == 'v') context.VSSetConstantBuffer(slot, buffer);
+            else if (stage == 'c') context.CSSetConstantBuffer(slot, buffer);
+            else context.PSSetConstantBuffer(slot, buffer);
+        }
     }
 
-    public void Dispose() { Pixel.Dispose(); parameterBuffer?.Dispose(); }
+    public void Dispose() { Pixel?.Dispose(); vertex?.Dispose(); compute?.Dispose(); parameterBuffer?.Dispose(); }
 }
 
 public sealed class ShaderScene : IDisposable
