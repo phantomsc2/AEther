@@ -37,7 +37,18 @@ public sealed class FrameTimeView : UserControl
         new("gpu.frame_ms", "GPU", new SKColor(235, 170, 60)),
         new("capture.input_age_ms", "Input", new SKColor(70, 185, 140)),
     ];
-    readonly Axis timeAxis = new() { TextSize = 11, MinStep = 1 };
+    readonly Axis timeAxis = new()
+    {
+        TextSize = 11, MinStep = 1,
+        MinLimit = 0, MaxLimit = HistorySeconds,
+        Labeler = value => $"{value:0}s",
+    };
+    readonly RectangularSection present = new()
+    {
+        Xi = 0, Xj = 0,
+        Stroke = new SolidColorPaint(new SKColor(160, 160, 160, 200), 1),
+        Fill = null,
+    };
     readonly Axis durationAxis = new()
     {
         TextSize = 11,
@@ -45,7 +56,7 @@ public sealed class FrameTimeView : UserControl
         CustomSeparators = Array.Empty<double>(),
         Labeler = value => Math.Pow(10, value).ToString("G3"),
     };
-    readonly DispatcherTimer refresh = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    readonly DispatcherTimer refresh = new() { Interval = TimeSpan.FromSeconds(1.0 / 5) };
     readonly Window owner;
     PipelineProfile? profile;
     long origin, lost, measureStart;
@@ -66,11 +77,7 @@ public sealed class FrameTimeView : UserControl
     {
         this.owner = owner;
         chart.Series = traces.Select(trace => trace.Series).ToArray();
-        timeAxis.Labeler = value =>
-        {
-            var seconds = Math.Round(value - latestTime);
-            return seconds == 0 ? "0s" : $"{seconds:0}s";
-        };
+        chart.Sections = [present];
         chart.XAxes = [timeAxis];
         chart.YAxes = [durationAxis];
         timeAxis.ShowSeparatorLines = false;
@@ -82,7 +89,7 @@ public sealed class FrameTimeView : UserControl
             if (start != 0) profile?.Elapsed("chart.frame_time_update_ms", start);
             Interlocked.Increment(ref completedUpdates);
         };
-        ToolTipService.SetToolTip(chart, "Frame time: interval between render starts. CPU: elapsed frame preparation and draw submission before Present. GPU: execution duration measured by GPU timestamps. Input: age of the packet's newest audio at capture callback arrival, estimated from the WASAPI timestamp plus packet duration; excludes subsequent analysis and rendering. One raw point per capture packet with a valid device timestamp. Nonpositive ages cannot appear on the logarithmic axis. All durations are milliseconds; CPU and GPU durations overlap and do not add up to frame time.");
+        ToolTipService.SetToolTip(chart, "Seven-second wrapping timeline, refreshed three times per second. The thin vertical bar marks the present; points stay in place until they expire. Frame time: interval between render starts. CPU: elapsed frame preparation and draw submission before Present. GPU: execution duration measured by GPU timestamps. Input: age of the packet's newest audio at capture callback arrival, estimated from the WASAPI timestamp plus packet duration; excludes subsequent analysis and rendering. One raw point per capture packet with a valid device timestamp. Nonpositive ages cannot appear on the logarithmic axis. All durations are milliseconds; CPU and GPU durations overlap and do not add up to frame time.");
 
         Content = chart;
         refresh.Tick += (_, _) => Refresh();
@@ -104,12 +111,16 @@ public sealed class FrameTimeView : UserControl
         Interlocked.Exchange(ref measureStart, 0);
         latestTime = 0;
         lock (chart.SyncContext)
+        {
+            present.Xi = present.Xj = 0;
+            durationAxis.MinLimit = durationAxis.MaxLimit = null;
             foreach (var trace in traces)
             {
                 trace.History = next?.Track(trace.Metric, Capacity);
                 trace.Cursor = 0;
                 trace.Points.Clear();
             }
+        }
         dirty = true;
     }
 
@@ -134,7 +145,6 @@ public sealed class FrameTimeView : UserControl
                 {
                     if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
                     var time = Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds;
-                    latestTime = Math.Max(latestTime, time);
                     unordered |= trace.Points.Count > 0 && time < trace.Points[^1].Time;
                     trace.Points.Add(new(time, sample.Milliseconds));
                 }
@@ -155,23 +165,31 @@ public sealed class FrameTimeView : UserControl
                     min = Math.Min(min, point.LogMilliseconds);
                     max = Math.Max(max, point.LogMilliseconds);
                 }
-            // LiveCharts creates/measures custom tick visuals even outside the visible range.
-            // Keep only the useful 1-2-5 ticks, rather than all sixteen decades.
-            var lower = LogTicks.LastOrDefault(tick => tick <= min, LogTicks[0]);
-            var upper = LogTicks.FirstOrDefault(tick => tick >= max, LogTicks[^1]);
-            if (upper <= lower)
-                upper = LogTicks.FirstOrDefault(tick => tick > lower, lower + 1);
-            var ticks = LogTicks.Where(tick => tick >= lower && tick <= upper).ToArray();
-            if (!ticks.SequenceEqual(durationAxis.CustomSeparators ?? [])) durationAxis.CustomSeparators = ticks;
-            durationAxis.MinLimit = lower;
-            durationAxis.MaxLimit = upper;
-            timeAxis.MinLimit = latestTime - HistorySeconds;
-            timeAxis.MaxLimit = latestTime;
+            if (double.IsFinite(min))
+            {
+                // LiveCharts creates/measures custom tick visuals even outside the visible range.
+                // Keep only the useful 1-2-5 ticks, rather than all sixteen decades.
+                // Retain the established range when samples expire, avoiding vertical jitter.
+                if (durationAxis.MinLimit is double oldMin) min = Math.Min(min, oldMin);
+                if (durationAxis.MaxLimit is double oldMax) max = Math.Max(max, oldMax);
+                var lower = LogTicks.LastOrDefault(tick => tick <= min, LogTicks[0]);
+                var upper = LogTicks.FirstOrDefault(tick => tick >= max, LogTicks[^1]);
+                if (upper <= lower)
+                    upper = LogTicks.FirstOrDefault(tick => tick > lower, lower + 1);
+                var ticks = LogTicks.Where(tick => tick >= lower && tick <= upper).ToArray();
+                if (!ticks.SequenceEqual(durationAxis.CustomSeparators ?? [])) durationAxis.CustomSeparators = ticks;
+                durationAxis.MinLimit = lower;
+                durationAxis.MaxLimit = upper;
+            }
+            present.Xi = present.Xj = WrapTime(latestTime);
         }
         ((IChartView)chart).CoreChart.Update(new ChartUpdateParams { IsAutomaticUpdate = false, Throttling = false });
         UpdateCount++;
         dirty = false;
     }
+
+    // Keep absolute timestamps for expiry and ordering; only plotted coordinates wrap.
+    static double WrapTime(double time) => (time % HistorySeconds + HistorySeconds) % HistorySeconds;
 
     sealed class Trace
     {
@@ -210,7 +228,7 @@ public sealed class FrameTimeView : UserControl
         {
             Time = time;
             LogMilliseconds = Math.Log10(milliseconds);
-            Coordinate = new(time, LogMilliseconds);
+            Coordinate = new(WrapTime(time), LogMilliseconds);
         }
     }
 }

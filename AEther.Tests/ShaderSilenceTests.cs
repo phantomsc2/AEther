@@ -34,6 +34,8 @@ public class ShaderSilenceTests
         renderer.AttachDebugOutput(debugWindow.Handle, 300, 80, lowCost: lowCost);
         renderer.Render(false);
         var initialCanvas = renderer.ReadPixels(false);
+        var canvasPasses = 0;
+        renderer.TransportPassMarker = (name, start) => { if (start && name == "Scene") canvasPasses++; };
         for (int frame = 0; frame < 90; frame++)
         {
             if (frame < 60)
@@ -50,7 +52,10 @@ public class ShaderSilenceTests
                     target.PostAudio(new SampleEvent<double>(samples, 32, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
             }
             clock.Advance();
+            var previousPasses = canvasPasses;
             renderer.Render(false, renderCanvas: drawCanvas, renderDebug: true);
+            Assert.That(canvasPasses - previousPasses, Is.EqualTo(drawCanvas ? 1 : 0),
+                "The retained canvas scene must not run while only Debug is rendered.");
             reference.Render(false);
             canvasReference.Render(false);
             Assert.That(renderer.DebugOutputError, Is.Null);

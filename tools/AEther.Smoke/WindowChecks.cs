@@ -260,6 +260,8 @@ internal static partial class Program
                                 NativeClose(canvasWindow);
                                 if (canvasWindow.IsVisible || !host.AppWindow.IsVisible)
                                     throw new Exception("Closing canvas must leave the hub open.");
+                                if (Field<bool>("renderCanvas"))
+                                    throw new Exception("Closing canvas must stop scheduling scene rendering immediately.");
                                 if (Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene").SelectedItem != null)
                                     throw new Exception("Closing canvas must clear scene selection.");
                                 host.Activate();

@@ -100,6 +100,7 @@ public sealed class MainWindow : Window
         {
             if (closing) return;
             canvasDismissed = true;
+            UpdateRendering();
             RefreshScenePicker();
         };
         settings.SceneSelected += name =>
@@ -471,7 +472,7 @@ public sealed class MainWindow : Window
         RefreshScenePicker();
     }
 
-    bool CanvasVisible => visible && canvasWindow.AppWindow.Presenter is not OverlappedPresenter
+    bool CanvasVisible => !canvasDismissed && visible && canvasWindow.IsVisible && canvasWindow.AppWindow.Presenter is not OverlappedPresenter
         { State: OverlappedPresenterState.Minimized };
 
     void UpdateRendering()
