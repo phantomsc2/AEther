@@ -3,7 +3,8 @@
 `RasterGeometry` executes one non-indexed, instanced triangle-list draw. HLSL
 owns both counts and all vertex construction. There is no CPU geometry count,
 vertex buffer, index buffer, count readback, or reserved `Shape` parameter group.
-The current consumer is the shared [raster airlight transport](raster-airlight-contract.md).
+Consumers are the shared [raster airlight transport](raster-airlight-contract.md)
+and the separate [procedural point-light pass](mandellight-v5.md).
 
 Include `Common/RasterGeometry.hlsl` and implement:
 

@@ -18,6 +18,10 @@ one indirect instanced draw per view. The separate
 shadow, and homogeneous single-scattering transport, currently with the spectral
 light-ring adapter.
 
+For a smaller GPU-defined point-light path, see [MandelLight v5](mandellight-v5.md).
+It shares the geometry contract and atmosphere LUT, with a separate full-resolution
+surface/airlight backend and shader-emitted position/intensity records.
+
 ## Debug analysis scene
 
 `Debug` combines the presented analysis block and its stereo history on shared

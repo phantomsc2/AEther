@@ -447,7 +447,7 @@ public class MandelLightRasterTests
             Path = System.IO.Path.Combine(root, "AEther-raster-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Common"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
-            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl" })
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl", "PointAirlightIntegral.hlsl" })
                 File.Copy(System.IO.Path.Combine(source, "Common", file), System.IO.Path.Combine(Path, "Common", file));
             string scene=File.ReadAllText(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"));
             string airlightPath=System.IO.Path.Combine(Path,"Common","RasterAirlight.hlsl");

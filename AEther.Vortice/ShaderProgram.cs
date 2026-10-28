@@ -45,8 +45,12 @@ internal sealed class ShaderProgram : IDisposable
                     or "FilteredHistogram0" or "FilteredHistogram1"
                     or "FluidVelocity" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction"
                     or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut"
+                    or "PointSurface" or "PointDepth" or "PointAirlight"
                     || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
-                ShaderInputType.UnorderedAccessViewRWByteAddress => stage == 'c' && binding.Name == "GeometryDrawArguments",
+                ShaderInputType.Structured => binding.Name == "PointLights",
+                ShaderInputType.ByteAddress => binding.Name == "PointLightCount",
+                ShaderInputType.UnorderedAccessViewRWStructured => stage == 'c' && binding.Name == "PointLightOutput",
+                ShaderInputType.UnorderedAccessViewRWByteAddress => stage == 'c' && binding.Name is "GeometryDrawArguments" or "PointLightCountOutput",
                 _ => false,
             };
             if (entry == "PS" && (binding.Name is "FluidConstants" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler"
@@ -121,7 +125,7 @@ internal sealed class ShaderProgram : IDisposable
                 else if (stage == 'c') context.CSSetSampler(slot, sampler);
                 else context.PSSetSampler(slot, sampler);
             }
-            else if (binding.Type == ShaderInputType.UnorderedAccessViewRWByteAddress)
+            else if (binding.Type is ShaderInputType.UnorderedAccessViewRWByteAddress or ShaderInputType.UnorderedAccessViewRWStructured)
                 context.CSSetUnorderedAccessView(slot, outputs![name]);
             else
             {
@@ -154,12 +158,14 @@ public sealed class ShaderScene : IDisposable
     ShaderProgram? program;
     FluidSimulation.Programs? fluid;
     RasterLightTransport.Programs? raster;
+    ProceduralPointLightTransport.Programs? points;
     bool initialized;
     internal bool ProgramReady => program != null;
     internal ShaderProgram Program => program ?? throw new InvalidOperationException($"Scene '{Name}' has not been compiled yet.");
     public ShaderParameters? Parameters => program?.Parameters ?? fluid?.Configuration.Values;
     internal FluidSimulation.Programs? Fluid => fluid;
     internal RasterLightTransport.Programs? Raster => raster;
+    internal ProceduralPointLightTransport.Programs? Points => points;
     internal ShaderScene(ID3D11Device device, string name, string source, bool compileImmediately = true)
     {
         Name = name;
@@ -175,20 +181,25 @@ public sealed class ShaderScene : IDisposable
         {
             var nextProgram = new ShaderProgram(device, source, "PS", Name + ".hlsl");
             RasterLightTransport.Programs? nextRaster = null;
+            ProceduralPointLightTransport.Programs? nextPoints = null;
             FluidSimulation.Programs? nextFluid = null;
             try
             {
                 if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
+                if (nextProgram.Uses("PointSurface")) nextPoints = new(device, source, Name + ".hlsl");
+                if (nextRaster != null && nextPoints != null)
+                    throw new InvalidOperationException("A scene must select one raster backend.");
                 if (nextProgram.UsesFluid)
                     nextFluid = new(device, source, Name + ".hlsl", nextProgram);
                 program = nextProgram;
                 raster = nextRaster;
+                points = nextPoints;
                 fluid = nextFluid;
                 initialized = true;
             }
             catch
             {
-                nextProgram.Dispose(); nextRaster?.Dispose(); nextFluid?.Dispose();
+                nextProgram.Dispose(); nextRaster?.Dispose(); nextPoints?.Dispose(); nextFluid?.Dispose();
                 throw;
             }
         }
@@ -196,8 +207,8 @@ public sealed class ShaderScene : IDisposable
     }
     void DisposePrograms()
     {
-        program?.Dispose(); raster?.Dispose(); fluid?.Dispose();
-        raster = null; fluid = null;
+        program?.Dispose(); raster?.Dispose(); points?.Dispose(); fluid?.Dispose();
+        raster = null; points = null; fluid = null;
     }
     internal ShaderScene Recompile()
     {
@@ -212,6 +223,7 @@ public sealed class ShaderScene : IDisposable
         program = replacement.program; replacement.program = null;
         fluid = replacement.fluid; replacement.fluid = null;
         raster = replacement.raster; replacement.raster = null;
+        points = replacement.points; replacement.points = null;
         initialized = true;
     }
     public void Dispose() => DisposePrograms();

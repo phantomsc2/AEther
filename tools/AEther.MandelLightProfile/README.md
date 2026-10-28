@@ -124,3 +124,8 @@ argument is a shader root containing `Common` and `Scenes`. The second is an
 output directory. The tool copies the selected scene and common includes into
 that output. Use distinct output directories for comparisons. Source shaders
 are not modified.
+# Procedural point-light POC
+
+`--point-lights` profiles MandelLightv5 at 1280x720, captures its individual S/T/B
+rings and combined scene, and compares with v4 using the same total point-light
+count. Both use full-resolution airlight. See `doc/mandellight-v5.md`.

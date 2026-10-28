@@ -67,9 +67,9 @@ internal sealed class RasterLightTransport : IDisposable
     internal ID3D11SamplerState LookupSampler => lookup.Sampler;
     internal bool LookupReady => lookup.Ready;
 
-    internal RasterLightTransport(ID3D11Device device, ID3D11DeviceContext context)
+    internal RasterLightTransport(ID3D11Device device, ID3D11DeviceContext context, UnshadowedAirlightLookup lookup)
     {
-        this.device = device; this.context = context;
+        this.device = device; this.context = context; this.lookup = lookup;
         selection = device.CreateBuffer(16, BindFlags.ConstantBuffer);
         try { lights = device.CreateBuffer((uint)(16 * lightData.Length), BindFlags.ConstantBuffer); }
         catch { selection.Dispose(); throw; }
@@ -97,9 +97,7 @@ internal sealed class RasterLightTransport : IDisposable
             airlightConstants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
             try
             {
-                lookup = new(device, context);
-                try { geometry = new(device); }
-                catch { lookup.Dispose(); throw; }
+                geometry = new(device);
             }
             catch { airlightConstants.Dispose(); throw; }
         }
@@ -417,5 +415,5 @@ internal sealed class RasterLightTransport : IDisposable
         airlightTarget?.Dispose(); airlightTarget = null; airlightView?.Dispose(); airlightView = null; airlight?.Dispose(); airlight = null;
         airWidth = airHeight = 0;
     }
-    public void Dispose() { ReleaseCamera(); ReleaseShadows(); geometry.Dispose(); lookup.Dispose(); airlightConstants.Dispose(); lights.Dispose(); selection.Dispose(); depthState.Dispose(); shadowSampler.Dispose(); }
+    public void Dispose() { ReleaseCamera(); ReleaseShadows(); geometry.Dispose(); airlightConstants.Dispose(); lights.Dispose(); selection.Dispose(); depthState.Dispose(); shadowSampler.Dispose(); }
 }

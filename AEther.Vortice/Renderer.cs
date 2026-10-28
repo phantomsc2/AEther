@@ -36,6 +36,9 @@ public sealed partial class Renderer : IDisposable
 
     FluidSimulation? fluid;
     RasterLightTransport? rasterTransport;
+    ProceduralPointLightTransport? pointTransport;
+    UnshadowedAirlightLookup? atmosphereLookup;
+    ID3D11Buffer? pointAirlightConstants;
     string? previousScene;
     internal FluidSimulation Fluid => fluid!;
     internal FluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
@@ -113,7 +116,7 @@ public sealed partial class Renderer : IDisposable
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
     // Optional GPU timestamp markers used by the transport profiling tool.
     internal Action<string, bool>? TransportPassMarker { get; set; }
-    internal bool UnshadowedAirlightReady => rasterTransport?.LookupReady == true;
+    internal bool UnshadowedAirlightReady => atmosphereLookup?.Ready == true;
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
@@ -492,7 +495,8 @@ public sealed partial class Renderer : IDisposable
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.Raster != null)
         {
-            rasterTransport ??= new(device, context);
+            atmosphereLookup ??= new(device, context);
+            rasterTransport ??= new(device, context, atmosphereLookup);
             namedSamplers["RasterShadowSampler"] = rasterTransport.ShadowSampler;
             namedBuffers["RasterLightConstants"] = rasterTransport.LightBuffer;
             namedBuffers["RasterAirlightConstants"] = rasterTransport.AirlightBuffer;
@@ -503,6 +507,31 @@ public sealed partial class Renderer : IDisposable
             context.VSSetShader(vertex);
             context.RSSetViewport(0, 0, width, height);
             rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers);
+        }
+        else if (active.Points != null)
+        {
+            atmosphereLookup ??= new(device, context);
+            pointAirlightConstants ??= Own(device.CreateBuffer(16, BindFlags.ConstantBuffer));
+            pointTransport ??= new(device, context, atmosphereLookup);
+            var p = active.Parameters!;
+            var air = p.Items.Single(x => x.Name == "Air").Children;
+            float density = p.GetFloat(air.Single(x => x.Name == "Density"));
+            Vector3 ReadVector(string name)
+            {
+                var v = air.Single(x => x.Name == name).Children;
+                return new(p.GetFloat(v.Single(x => x.Name == "x")),
+                    p.GetFloat(v.Single(x => x.Name == "y")), p.GetFloat(v.Single(x => x.Name == "z")));
+            }
+            var scatter = .3f * density * density * ReadVector("Scattering");
+            var extinction = scatter + .3f * density * density * ReadVector("Absorption");
+            atmosphereLookup.Prepare(extinction, scatter.X > 0 || scatter.Y > 0 || scatter.Z > 0);
+            context.UpdateSubresource(atmosphereLookup.Info, pointAirlightConstants);
+            namedBuffers["RasterAirlightConstants"] = pointAirlightConstants;
+            namedSamplers["RasterLutSampler"] = atmosphereLookup.Sampler;
+            pointTransport.PassMarker = GpuMarker;
+            pointTransport.Prepare(active.Points, p, width, height, namedBuffers, namedTextures, namedSamplers);
+            context.VSSetShader(vertex);
+            pointTransport.IntegrateAirlight(active.Points, p, namedBuffers);
         }
         if (active.Fluid != null)
         {
@@ -525,8 +554,10 @@ public sealed partial class Renderer : IDisposable
         GpuMarker("Scene", true);
         active.Program.Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         if (active.Raster != null) GpuMarker("Raster composite", true);
+        if (active.Points != null) GpuMarker("Point composite", true);
         context.Draw(3, 0);
         if (active.Raster != null) GpuMarker("Raster composite", false);
+        if (active.Points != null) GpuMarker("Point composite", false);
         GpuMarker("Scene", false);
         GpuMarker("Output", true);
         output.Draw(outputPixel, now);
@@ -558,6 +589,8 @@ public sealed partial class Renderer : IDisposable
 
         fluid?.Dispose();
         rasterTransport?.Dispose();
+        pointTransport?.Dispose();
+        atmosphereLookup?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }
