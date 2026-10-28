@@ -92,9 +92,6 @@ public sealed class SettingsPanel : UserControl
         // Row 2: Audio controls (left column)
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0: input
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: AudioSettings
-        var audioStack = (StackPanel)audio.Content;
-        audioStack.Children.Insert(0, audio.GainEditor);
-        audio.PipelineControls.Children.Add(graphics.SpectrumAggregationEditor);
         AudioSettings = new ScrollViewer
         {
             Content = audio,

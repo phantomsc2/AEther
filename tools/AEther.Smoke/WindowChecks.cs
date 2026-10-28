@@ -109,15 +109,19 @@ internal static partial class Program
                                 var audioGroups = ((StackPanel)audio.Content).Children.OfType<Expander>().ToArray();
                                 if (canvasWindow.IsVisible || shadersVisible() || audioGroups.Any(g => g.IsExpanded))
                                     throw new Exception("Startup must leave canvas, shader settings and audio categories collapsed.");
-                                if (!audioGroups.Select(g => g.Header?.ToString()).SequenceEqual(new[] { "DFT", "Pipeline", "Smoother", "Splitter" }))
-                                    throw new Exception("Audio categories must be DFT, Pipeline, Smoother and Splitter, without GPU or an outer Audio block.");
+                                if (!audioGroups.Select(g => g.Header?.ToString()).SequenceEqual(new[] { "DFT", "Input", "Pipeline", "Smoother", "Splitter" }))
+                                    throw new Exception("Audio categories must follow AnalyzerOptions metadata.");
                                 if (Math.Abs(Top(settings.AudioSettings) + settings.AudioSettings.ActualHeight
                                     - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1
                                     || analysis.ActualHeight <= 0 || Grid.GetRow(analysis) != 0)
                                     throw new Exception("Audio settings and live views must occupy bounded grid rows.");
-                                if (Descendants(audio).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds"))
+                                if (LogicalChildren((DependencyObject)audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds"))
                                     throw new Exception("HistorySeconds must not belong to audio settings.");
-                                if (!Descendants(graphics).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds")
+                                if (!LogicalChildren((DependencyObject)audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Input gain (dB)")
+                                    || LogicalChildren((DependencyObject)audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Peak emphasis"))
+                                    throw new Exception("Analyzer and graphics options must appear in their respective columns.");
+                                if (!LogicalChildren((DependencyObject)graphics.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "HistorySeconds")
+                                    || !LogicalChildren((DependencyObject)graphics.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Peak emphasis")
                                     || graphics.Visibility != Visibility.Visible || Grid.GetRow(graphics) >= Grid.GetRow(shaderPanel)
                                     || !settings.SceneColumn.Children.Contains(graphics))
                                     throw new Exception("HistorySeconds must remain visible above scene-specific controls in the right column.");
@@ -161,7 +165,7 @@ internal static partial class Program
                                 if (!Descendants(audio.Content).OfType<NumberBox>().Any())
                                     throw new Exception("Analyzer property editor is missing.");
                                 if (!Descendants(settings.Content).OfType<ComboBox>().Any(c => AutomationProperties.GetName(c) == "Input")
-                                    || !Descendants(audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Gain"))
+                                    || !Descendants(audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Input gain (dB)"))
                                     throw new Exception("Input and Gain must live in the hub.");
                                 selector.SelectedItem = "Spectrum";
                                 selector.SelectedItem = "Mandelbox";
@@ -174,9 +178,11 @@ internal static partial class Program
                                 if (!settings.Columns.Children.Contains(backlog) || Grid.GetColumn(backlog) != 2 || Grid.GetRow(backlog) != 0
                                     || !backlog.CurveNames.SequenceEqual(new[] { "Total", "CPU", "GPU", "Input" }))
                                     throw new Exception("The frame-time graph must occupy the right live-view pane.");
-                                if (!Descendants(shaderPanel.Content).OfType<Expander>().Any(g => g.Header?.ToString() == "Geometry")
-                                    || !Descendants(shaderPanel.Content).OfType<Slider>().Any())
+                                var shaderGroups = LogicalChildren((DependencyObject)shaderPanel.Content).OfType<Expander>().ToArray();
+                                if (!shaderGroups.Any(g => g.Header?.ToString() == "Geometry"))
                                     throw new Exception("Dynamic shader parameter tree is missing.");
+                                foreach (var group in shaderGroups) group.IsExpanded = true;
+                                if (!Descendants(shaderPanel.Content).OfType<Slider>().Any()) return;
                                 var audioScroll = settings.AudioSettings;
                                 var shaderScroll = ((Grid)shaderPanel.Content).Children.OfType<ScrollViewer>().Single();
                                 if (audioScroll.ViewportHeight <= 32 || audioScroll.ScrollableHeight <= 0
@@ -275,7 +281,7 @@ internal static partial class Program
                                 eventLog.Toggle();
                                 stage++;
                                 if (added != null) File.Delete(added);
-                                Descendants(settings.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "Gain").Value += 1;
+                                Descendants(settings.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "Input gain (dB)").Value += 1;
                                 break;
                             case 5:
                                 if (started != 2 || Field<RenderWorker?>("renderWorker") == null) return;

@@ -60,50 +60,84 @@ internal static partial class Program
                 {
                     // Construct the real controls without activating or displaying a window.
                     var settings = new AudioPanel();
+                    var restored = new AudioPanel(new AEther.AnalyzerOptions { SwiftWidthScale = 2 });
+                    var restoredWidth = LogicalChildren((DependencyObject)restored.Content).OfType<NumberBox>()
+                        .Single(n => AutomationProperties.GetName(n) == "SWIFT width (octaves)");
+                    if (restoredWidth.Value != 1 || restored.Options.SwiftWidthScale != 2)
+                        throw new Exception("Restored analyzer settings were not reflected in the editor.");
                     var elements = LogicalChildren((DependencyObject)settings.Content).ToArray();
+                    var graphics = new GraphicsPanel();
+                    var graphicsElements = LogicalChildren((DependencyObject)graphics.Content).ToArray();
+                    var history = graphicsElements.OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "HistorySeconds");
+                    var emphasis = graphicsElements.OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "Peak emphasis");
+                    int graphicsChanges = 0;
+                    graphics.SettingsChanged += (_, _) => graphicsChanges++;
+                    history.Value = 3;
+                    emphasis.Value = .75;
+                    if (graphics.Options.HistorySeconds != 3 || graphics.Options.SpectrumAggregation != .75 || graphicsChanges != 2)
+                        throw new Exception("Generated graphics editors did not publish options.");
+                    graphics.SetOptions(new AEther.Vortice.GraphicsOptions(4, .25));
+                    if (history.Value != 4 || emphasis.Value != .25 || graphicsChanges != 2)
+                        throw new Exception("Graphics option replacement did not refresh the editors.");
                     var numbers = elements.OfType<NumberBox>().ToArray();
-                    var width = numbers.Single(n => AutomationProperties.GetName(n) == "SWIFT width");
+                    var width = numbers.Single(n => AutomationProperties.GetName(n) == "SWIFT width (octaves)");
                     var imbalance = numbers.Single(n => AutomationProperties.GetName(n) == "SWIFT imbalance");
                     Grid Controls(NumberBox n) => elements.OfType<Grid>().Single(p => p.Children.Contains(n));
-                    Grid Row(NumberBox n) => elements.OfType<Grid>().Single(p => p.Children.Contains(Controls(n)));
                     Slider SliderFor(NumberBox n) => Controls(n).Children.OfType<Slider>().Single();
-                    ContentControl Container(NumberBox n) => elements.OfType<ContentControl>().Single(c => ReferenceEquals(c.Content, Row(n)));
                     var widthSlider = SliderFor(width);
                     var dSlider = SliderFor(imbalance);
+                    var rate = numbers.Single(n => AutomationProperties.GetName(n) == "TimeResolution");
+                    var windowSeconds = numbers.Single(n => AutomationProperties.GetName(n) == "TimeWindowSeconds");
+                    rate.Value = 500;
+                    if (windowSeconds.Minimum != 0)
+                        throw new Exception("Numeric bounds must come directly from Range metadata.");
                     void Equal(double actual, double expected)
                     {
                         if (Math.Abs(actual - expected) > 1e-10)
                             throw new Exception($"SWIFT settings: expected {expected}, got {actual}.");
                     }
-                    Equal(width.Minimum, .25); Equal(width.Maximum, 8); Equal(width.Value, 1);
+                    Equal(width.Minimum, -2); Equal(width.Maximum, 3); Equal(width.Value, 0);
                     Equal(widthSlider.Minimum, -2); Equal(widthSlider.Maximum, 3); Equal(widthSlider.Value, 0);
                     Equal(imbalance.Minimum, 0); Equal(imbalance.Maximum, 1); Equal(imbalance.Value, 0);
-                    Equal(dSlider.StepFrequency, .01);
                     foreach (var value in new[] { .25, 1.0, 2.0, 8.0 })
                     {
-                        width.Value = value;
+                        width.Value = Math.Log2(value);
                         Equal(settings.Options.SwiftWidthScale, value);
                         Equal(widthSlider.Value, Math.Log2(value));
-                        var tooltip = widthSlider.ThumbToolTipValueConverter.Convert(widthSlider.Value, typeof(string), null!, "en-US");
-                        Equal(double.Parse(tooltip.ToString()!, CultureInfo.CurrentCulture), value);
+                        if (widthSlider.ThumbToolTipValueConverter != null)
+                            throw new Exception("Slider must not know about option value transformations.");
                     }
                     widthSlider.Value = -1;
-                    Equal(width.Value, .5); Equal(settings.Options.SwiftWidthScale, .5);
+                    Equal(width.Value, -1); Equal(settings.Options.SwiftWidthScale, .5);
                     foreach (var value in new[] { 0.0, .5, 1.0 })
                     {
                         dSlider.Value = value;
                         Equal(imbalance.Value, value); Equal(settings.Options.SwiftImbalance, value);
                     }
+                    var logAcceleration = numbers.Single(n => AutomationProperties.GetName(n) == "Log acceleration intensity (log2 control)");
+                    var complexAcceleration = numbers.Single(n => AutomationProperties.GetName(n) == "Complex acceleration intensity (log2 control)");
+                    var noise = numbers.Single(n => AutomationProperties.GetName(n) == "Measurement noise RMS (log2)");
+                    logAcceleration.Value = 0;
+                    complexAcceleration.Value = 0;
+                    Equal(settings.Options.LogAccelerationIntensity, 0);
+                    Equal(settings.Options.ComplexAccelerationIntensity, 0);
+                    logAcceleration.Value = 1;
+                    complexAcceleration.Value = 1;
+                    Equal(settings.Options.LogAccelerationIntensity / 1e-8, 1);
+                    Equal(settings.Options.ComplexAccelerationIntensity / 1e-8, 1);
+                    noise.Value = -10;
+                    Equal(settings.Options.SmoothingNoiseFloor, 1.0 / 1024);
+                    if (elements.OfType<Expander>().Single(e => e.Header?.ToString() == "Input").Content is not StackPanel inputOptions
+                        || !LogicalChildren(inputOptions).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Input gain (dB)"))
+                        throw new Exception("Gain must remain in its declared category.");
                     var toggle = elements.OfType<ToggleSwitch>().Single(t => AutomationProperties.GetName(t) == "Spectrum analysis");
                     var window = elements.OfType<ComboBox>().Single(c => AutomationProperties.GetName(c) == "Window function");
-                    var windowRow = elements.OfType<Grid>().Single(g => g.Children.Contains(window));
-                    var windowContainer = elements.OfType<ContentControl>().Single(c => ReferenceEquals(c.Content, windowRow));
                     toggle.IsOn = false;
-                    if (Container(width).IsEnabled || Container(imbalance).IsEnabled || !windowContainer.IsEnabled)
-                        throw new Exception("SWIFT controls must be disabled and DFT window enabled in DFT mode.");
+                    if (settings.Options.UseSwift || !width.IsEnabled || !window.IsEnabled)
+                        throw new Exception("Backend selection must update the option without special control handling.");
                     toggle.IsOn = true;
-                    if (!Container(width).IsEnabled || !Container(imbalance).IsEnabled || windowContainer.IsEnabled)
-                        throw new Exception("SWIFT controls must be enabled and DFT window disabled in SWIFT mode.");
+                    if (!settings.Options.UseSwift)
+                        throw new Exception("Backend toggle did not update its option.");
                     finished = true;
                 }
                 catch (Exception error) { failure = error; }
@@ -112,7 +146,7 @@ internal static partial class Program
         });
         if (failure != null) throw new Exception("SWIFT settings checks failed.", failure);
         if (!finished) throw new Exception("SWIFT settings checks did not finish.");
-        Console.WriteLine("SWIFT settings: defaults, slider endpoints, logarithmic width, numeric sync, physical tooltip and backend enablement passed.");
+        Console.WriteLine("Generated settings: defaults, ranges, numeric sync, option-owned conversions, graphics edits and backend selection passed.");
     }
 
     static IEnumerable<DependencyObject> LogicalChildren(DependencyObject root)

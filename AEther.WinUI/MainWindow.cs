@@ -20,7 +20,7 @@ public sealed class MainWindow : Window
     readonly AnalysisView analysis;
     readonly FrameTimeView frameTime;
     readonly CanvasWindow canvasWindow;
-    readonly AudioPanel audio = new();
+    readonly AudioPanel audio;
     readonly GraphicsPanel graphics = new();
     readonly ShaderPanel shaders = new();
     readonly SemaphoreSlim sessionGate = new(1, 1);
@@ -28,12 +28,15 @@ public sealed class MainWindow : Window
     readonly DispatcherTimer timingTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     readonly Func<SampleSource>? createSource;
     readonly string? shaderDirectory;
+    readonly SettingsStore? settingsStore;
+    readonly AppSettings appSettings;
     Session? session;
     RenderWorker? renderWorker;
     FileSystemWatcher? watcher;
     IDXGISwapChain1? canvasChain;
     bool loaded, closing, shutdownComplete, fullscreen, visible;
     bool changingSession, renderCanvas, renderDebug, canvasDismissed;
+    bool analyzerSettingsDirty;
     long restartVersion;
     RectInt32 windowBounds;
     PipelineWarnings? pipelineWarnings;
@@ -46,6 +49,16 @@ public sealed class MainWindow : Window
         ApplicationLog.Initialize();
         this.createSource = createSource;
         this.shaderDirectory = shaderDirectory;
+        // Injected sources and shader directories are used by development probes.
+        settingsStore = createSource == null && shaderDirectory == null ? new SettingsStore() : null;
+        try { appSettings = settingsStore?.Load() ?? new(); }
+        catch (Exception error)
+        {
+            Log.ForContext<MainWindow>().Warning(error, "Could not load settings; using defaults");
+            appSettings = new();
+        }
+        audio = new AudioPanel(appSettings.Analyzer);
+        graphics.SetOptions(appSettings.Graphics);
         Title = "AEther";
         AppWindow.TitleBar.PreferredTheme = TitleBarTheme.UseDefaultAppMode;
         AppWindow.TitleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
@@ -118,13 +131,19 @@ public sealed class MainWindow : Window
             }
         };
         settings.InputChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
-        audio.SettingsChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
+        audio.SettingsChanged += async (_, _) =>
+        {
+            analyzerSettingsDirty = true;
+            await RestartCoreAsync(preserveGraphics: true);
+        };
         graphics.SettingsChanged += (_, _) =>
         {
             try
             {
                 session?.Renderer.SetGraphicsOptions(graphics.Options);
                 Logger.Information("Graphics configuration changed to {@GraphicsOptions}", graphics.Options);
+                appSettings.Graphics = graphics.Options;
+                SaveSettings();
             }
             catch (Exception error)
             {
@@ -255,6 +274,7 @@ public sealed class MainWindow : Window
                     current.Start();
                     StartRenderWorker(current);
                     PipelineStarted(current);
+                    SaveAcceptedAnalyzerSettings(current, version);
                     UpdateRendering();
                 }
                 catch
@@ -299,6 +319,7 @@ public sealed class MainWindow : Window
                 watcher.EnableRaisingEvents = true;
                 StartRenderWorker(next);
                 PipelineStarted(next);
+                SaveAcceptedAnalyzerSettings(next, version);
                 UpdateRendering();
             }
             catch
@@ -319,6 +340,20 @@ public sealed class MainWindow : Window
                 .Error(error, "Could not start audio pipeline");
         }
         finally { changingSession = false; sessionGate.Release(); UpdateRendering(); }
+    }
+
+    void SaveAcceptedAnalyzerSettings(Session current, long version)
+    {
+        if (!analyzerSettingsDirty || version != restartVersion) return;
+        analyzerSettingsDirty = false;
+        appSettings.Analyzer = current.Analyzer.Options.Copy();
+        SaveSettings();
+    }
+
+    void SaveSettings()
+    {
+        try { settingsStore?.Save(appSettings); }
+        catch (Exception error) { Logger.Warning(error, "Could not save settings"); }
     }
 
     void CaptureStopped(object? sender, Exception? error)

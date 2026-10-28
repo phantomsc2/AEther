@@ -45,8 +45,8 @@ rate. Graphics retention is configured separately:
 | `AnalysisRate` | Map rows to time; size history and handoff buffers | Reset history; reallocate textures if the computed row count changes |
 
 `GraphicsOptions.HistorySeconds` belongs to `AEther.Vortice`, defaults to 2 seconds,
-and accepts finite values from 0.01 to 60 seconds. Its control is always visible
-in the right column below the scene selector and above shader parameters. Pointer slider
+and accepts finite values from 0.01 to 60 seconds. Its control belongs to the generated
+Graphics category in the right column below the scene selector and above shader parameters. Pointer slider
 edits commit on release; numeric edits apply immediately.
 
 `Renderer.SetGraphicsOptions` clears retained histogram data and reallocates only
@@ -59,7 +59,8 @@ Capture, analysis, mailboxes, source timing, live spectrum, feature envelopes,
 musical clocks, fluid state, compiled shaders and swap chains survive a graphics
 edit. The existing AudioHistory instance is retained. Analysis restarts preserve
 the graphics duration. The main window keeps the selection across scene changes
-and session recreation, without adding disk persistence. The existing row cap
+and session recreation. Analyzer and graphics settings now persist through the
+JSON store described in [Settings UI](settings-ui.md). The existing row cap
 and history-dependent shader decay are unchanged.
 
 The rate is `sampleRate / floor(sampleRate / requestedRate)`, rather than the

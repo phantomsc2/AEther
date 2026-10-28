@@ -19,6 +19,8 @@
     <!-- Exercise the host's scheduler without loading the WinUI application. -->
     <Compile Include="../AEther.WinUI/RenderWorker.cs" Link="RenderWorker.cs" />
     <Compile Include="../AEther.WinUI/Session.cs" Link="Session.cs" />
+    <Compile Include="../AEther.WinUI/AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="../AEther.WinUI/SettingsStore.cs" Link="SettingsStore.cs" />
     <ProjectReference Include="..\AEther.NAudio\AEther.NAudio.csproj" />
     <ProjectReference Include="..\AEther\AEther.csproj" />
     <ProjectReference Include="../AEther.Vortice/AEther.Vortice.csproj" />
