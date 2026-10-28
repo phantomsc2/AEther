@@ -16,10 +16,12 @@ cbuffer Parameters
 // This is a finite fold construction, not a Mandelbox distance estimator.
 float4 PS(PSin input) : SV_Target
 {
-    float2 screen = FlightScreen(input.UV, Steering);
+    float2 screen = ProjectionScreen(input.UV);
     float speed = 12 + 24 * FlightSpeed;
     float farPlane = speed;
     float camera = MusicalMovementTime * speed;
+    ProjectionCamera view=FlightCamera(float3(0,0,camera),Steering);
+    float3 direction=ProjectionDirection(view,input.UV);
     float spacing = 1.55;
     float first = floor(camera / spacing) + 1;
     float3 light = 0;
@@ -30,7 +32,9 @@ float4 PS(PSin input) : SV_Target
         if (depth > farPlane) break;
         float age = saturate((farPlane - depth) / speed);
         float birth = MusicalMovementTime - age;
-        float2 p = screen * depth / 1.5;
+        float t=FlightSliceDistance(view,direction,world);
+        if (t<0) continue;
+        float2 p=(view.Origin+t*direction).xy;
         p -= Bend * float2(1.1 * sin(world * .15) - 1.1 * sin(camera * .15),
             .7 * cos(world * .11) - .7 * cos(camera * .11));
         p = FlightRotate(p, (Twist * 2 - 1) * world * .14);

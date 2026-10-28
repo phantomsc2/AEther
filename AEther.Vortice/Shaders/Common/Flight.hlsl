@@ -1,6 +1,7 @@
 #ifndef AETHER_FLIGHT
 #define AETHER_FLIGHT
 #include "Inputs.hlsl"
+#include "Projection.hlsl"
 
 float2 FlightRotate(float2 p, float angle)
 {
@@ -8,10 +9,17 @@ float2 FlightRotate(float2 p, float angle)
     return float2(c * p.x - s * p.y, s * p.x + c * p.y);
 }
 
-float2 FlightScreen(float2 uv, float2 steering)
+ProjectionCamera FlightCamera(float3 origin, float2 steering)
 {
-    return float2((2 * uv.x - 1) * AspectRatio, 1 - 2 * uv.y)
-        - (steering * 2 - 1) * float2(.8, .5);
+    float yaw=steering.x-.5,pitch=steering.y-.5;
+    float3 forward=float3(sin(yaw)*cos(pitch),sin(pitch),cos(yaw)*cos(pitch));
+    float3 right=float3(cos(yaw),0,-sin(yaw)),up=cross(forward,right);
+    return MakeProjectionCamera(origin,forward,right,up);
+}
+// World-Z cohorts are geometric planes shared by all forward-flight sketches.
+float FlightSliceDistance(ProjectionCamera camera, float3 direction, float worldZ)
+{
+    return ProjectionPlane(camera,direction,float3(0,0,1),worldZ);
 }
 
 // Age is a fraction of the retained history, with new material at the far plane.

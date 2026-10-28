@@ -111,7 +111,8 @@ public partial class ShaderRenderingTests
                 {
                     float2 corners[6]={float2(-1,-1),float2(-1,1),float2(1,-1),
                         float2(1,-1),float2(-1,1),float2(1,1)};
-                    float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
+                    ProjectionCamera camera=SceneCamera();
+                    float3 origin=camera.Origin,forward=camera.Forward,right=camera.Right,up=camera.Up;
                     GeometryVertex v;
                     v.World=origin+24*forward+100*(corners[vertex].x*right+corners[vertex].y*up);
                     v.Normal=-forward; v.Albedo=0;

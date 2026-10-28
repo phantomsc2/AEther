@@ -18,7 +18,7 @@ camera, exposure, and depth preview retain their v4 meanings.
 
 Include `Common/RasterGeometry.hlsl`, `Common/PointLights.hlsl`, and
 `Common/PointRasterAirlight.hlsl`. Implement the geometry callbacks,
-`CameraFrame`, and:
+`ProjectionCamera SceneCamera()` using the [shared projection layer](projection-contract.md), and:
 
 ```hlsl
 uint LightCount();

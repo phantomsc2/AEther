@@ -1,4 +1,5 @@
 #include "../Common/Inputs.hlsl"
+#include "../Common/Projection.hlsl"
 
 // Three fixed spectral point-light rings. Geometry and lighting live in HLSL.
 struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
@@ -12,13 +13,15 @@ cbuffer Parameters : register(b1)
     LightSettings Lights = { true, .62105263, .57, .66666667 };
     ViewSettings View = { .55, .15, .5, .4, false };
 };
-void CameraFrame(out float3 origin, out float3 forward, out float3 right, out float3 up)
+ProjectionCamera SceneCamera()
 {
+    float3 origin,forward,right,up;
     float s,c; sincos(T*.25*View.CameraSpeed,s,c);
     forward=normalize(float3(-9*c-13.5*s,-6,13.5*c-9*s));
     right=normalize(cross(forward,float3(0,1,0))); up=cross(right,forward);
     float distance=40*View.CameraDistance;
     origin=-distance*forward+(2*View.HorizontalOffset-1)*distance*right;
+    return MakeProjectionCamera(origin,forward,right,up);
 }
 #include "../Common/RasterGeometry.hlsl"
 #include "../Common/PointLights.hlsl"

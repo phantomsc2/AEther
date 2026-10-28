@@ -1,8 +1,9 @@
 #ifndef AETHER_RASTER_AIRLIGHT
 #define AETHER_RASTER_AIRLIGHT
+#include "Projection.hlsl"
 
 // Homogeneous single-scattering transport for the raster geometry contract.
-// The scene supplies settings and CameraFrame; see doc/raster-airlight-contract.md.
+// The scene supplies settings and SceneCamera; see doc/raster-airlight-contract.md.
 cbuffer RasterPassConstants : register(b2) { uint RasterLight; uint RasterFace; uint RasterShadow; float RasterShadowScale; };
 // Shared light records uploaded by the host. Matching capacity is
 // RasterLightTransport.MaximumLights; the host currently supplies spectral rings.
@@ -35,7 +36,7 @@ Texture2D<float4> RasterAirlight;
 Texture2D<float4> RasterAirlightLut;
 SamplerState RasterLutSampler;
 static const float Pi=3.14159265359;
-static const float Near=.025, Far=128;
+static const float Near=ProjectionNear, Far=ProjectionFar; // Shadow frusta.
 // Numerical denominator guards only, far below world-coordinate precision.
 // No world-space source radius or smoothing is applied to either light kernel.
 static const float NumericDistance2=1e-30,NumericDistance=1e-15,HdrMaximum=3.402823466e38;
@@ -159,8 +160,8 @@ float3 ShadowDirection(int light, int face, float2 uv)
     }
     return ray;
 }
-float ProjectDepth(float z) { return (Far*z-Near*Far)/(Far-Near); }
-float LinearDepth(float z) { return Near*Far/(Far-z*(Far-Near)); }
+float ProjectDepth(float z) { return ProjectionClipDepth(z,Near,Far); }
+float LinearDepth(float z) { return ProjectionLinearDepth(z,Near,Far); }
 float ShadowBias() { return .0005+.02*Quality.ShadowBias; }
 float Visibility(int light, float3 p, float3 normal)
 {
@@ -257,19 +258,12 @@ float FilamentPhase(float3 q, float3 direction)
 }
 float4 GeometryProject(float3 world)
 {
-    float3 p;
     if (RasterShadow!=0)
     {
-        p=ShadowPosition(world-LightPosition(RasterLight),RasterLight,RasterFace);
-        p.xy*=RasterShadowScale/RasterShadowRight[RasterLight].w;
+        float3 p=ShadowPosition(world-LightPosition(RasterLight),RasterLight,RasterFace);
+        return ProjectionViewClip(p,(RasterShadowScale/RasterShadowRight[RasterLight].w).xx,Near,Far);
     }
-    else
-    {
-        float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
-        float3 v=world-origin;
-        p=float3(2*dot(v,right)/max(1,AspectRatio),2*dot(v,up)/max(1,1/AspectRatio),dot(v,forward));
-    }
-    return float4(p.xy,ProjectDepth(p.z),p.z);
+    return ProjectionClip(SceneCamera(),world);
 }
 float4 RasterSurfacePS(GeometryOutput input) : SV_Target
 {
@@ -548,12 +542,11 @@ float3 UnshadowedAirlight(float3 origin, float3 direction, bool hit, float end, 
 }
 float4 IntegrateAirlight(int2 pixel)
 {
-    float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
-    float2 screen=(2*(pixel+.5)/Resolution-1)*float2(max(1,AspectRatio),-max(1,1/AspectRatio));
-    float3 direction=normalize(2*forward+screen.x*right+screen.y*up);
+    ProjectionCamera camera=SceneCamera();
+    float3 origin=camera.Origin,direction=ProjectionDirection(camera,(pixel+.5)/Resolution);
     float z=RasterDepth.Load(int3(pixel,0)); bool hit=z<1;
-    float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;
-    float guide=hit ? LinearDepth(z) : 0;
+    float end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;
+    float guide=hit ? ProjectionLinearDepth(camera,z) : 0;
     float3 scatter=AirScatter(),extinction=AirExtinction();
     float3 radiance=UnshadowedAirlight(origin,direction,hit,end,scatter,extinction);
     [branch] if (any(RasterRingRadiance.rgb>0))
@@ -637,7 +630,7 @@ float3 ReconstructAirlight(int2 pixel)
 {
     uint width,height; RasterAirlight.GetDimensions(width,height);
     float z=RasterDepth.Load(int3(pixel,0));
-    float guide=z<1 ? LinearDepth(z) : 0;
+    float guide=z<1 ? ProjectionLinearDepth(SceneCamera(),z) : 0;
     float2 grid=(pixel-1)*.5;
     // With an odd viewport the last representative is clamped to the final
     // full-resolution pixel, so its final lattice interval is one pixel wide.

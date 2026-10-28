@@ -447,7 +447,7 @@ public class MandelLightRasterTests
             Path = System.IO.Path.Combine(root, "AEther-raster-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Common"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
-            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl", "PointAirlightIntegral.hlsl" })
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl", "PointAirlightIntegral.hlsl", "Projection.hlsl" })
                 File.Copy(System.IO.Path.Combine(source, "Common", file), System.IO.Path.Combine(Path, "Common", file));
             string scene=File.ReadAllText(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"));
             string airlightPath=System.IO.Path.Combine(Path,"Common","RasterAirlight.hlsl");
@@ -470,7 +470,8 @@ public class MandelLightRasterTests
                     {
                         float2 corners[6]={float2(-1,-1),float2(-1,1),float2(1,-1),
                             float2(1,-1),float2(-1,1),float2(1,1)};
-                        float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
+                        ProjectionCamera camera=SceneCamera();
+                        float3 origin=camera.Origin,forward=camera.Forward,right=camera.Right,up=camera.Up;
                         GeometryVertex v;
                         v.World=origin+8*forward+(corners[vertex].x+(instance==0 ? -2 : 2))*right+corners[vertex].y*up;
                         v.Normal=-forward; v.Albedo=1;
@@ -484,8 +485,8 @@ public class MandelLightRasterTests
             scene=scene.Replace("FilamentRingSettings RingLight = { .5 };","FilamentRingSettings RingLight = { 0 };");
             if (finiteAirlight)
             {
-                scene=scene.Replace("float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;", "hit=true; float end=24;");
-                airlight=airlight.Replace("float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;", "hit=true; float end=24;");
+                scene=scene.Replace("float end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;", "hit=true; float end=24;");
+                airlight=airlight.Replace("float end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;", "hit=true; float end=24;");
             }
             if (filterProbe)
             {

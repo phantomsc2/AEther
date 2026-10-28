@@ -8,18 +8,18 @@ renderer feature independent of how the scene constructs its
 The shared HLSL contains Lambertian surface lighting, point/spot shadow lookup,
 infinite homogeneous single scattering, the unshadowed-light LUT path, filament
 integration, and depth-guided airlight reconstruction. The scene supplies its
-geometry callbacks, camera frame, parameters, and final `PS` composition/display
+geometry callbacks, camera, parameters, and final `PS` composition/display
 mapping. The shared airlight include supplies `GeometryProject`,
 `RasterSurfacePS`, and `RasterAirlightPS`; include `RasterGeometry.hlsl` first.
 
 ```hlsl
-void CameraFrame(out float3 origin, out float3 forward,
-                 out float3 right, out float3 up);
+ProjectionCamera SceneCamera();
 ```
 
-Return an orthonormal camera basis. The current projection uses a fixed focal
-scale of two, the frame aspect ratio, near distance 0.025, and far distance 128.
-The same projection defines depth reconstruction and integration endpoints.
+Return the shader-owned camera from the [shared projection contract](projection-contract.md).
+Defaults are vertical focal scale two, near distance 0.025, and far distance 128.
+The same camera defines raster projection, rays, and surface-depth reconstruction.
+Background airlight still integrates to infinity, independently of the far plane.
 
 ## Settings contract
 

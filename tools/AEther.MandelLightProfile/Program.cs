@@ -14,6 +14,7 @@ internal static partial class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Contains("--projection")) { RunProjectionCapture(args); return; }
         if (args.Contains("--point-lights")) { RunPointLightProfile(args); return; }
         if (args.Contains("--fluid-v4")) { RunFluidV4Profile(args); return; }
         if (args.Contains("--light-types")) { RunLightTypeProfile(args); return; }

@@ -21,18 +21,20 @@ float RoadCurve(float world)
 // recursive overhead arches. The road has no gameplay or collision state.
 float4 PS(PSin input) : SV_Target
 {
-    float2 screen = FlightScreen(input.UV, Steering);
-    screen.y -= .12;
+    float2 screen = ProjectionScreen(input.UV);
     float speed = 12 + 24 * FlightSpeed;
     float camera = MusicalMovementTime * speed;
+    ProjectionCamera view=FlightCamera(float3(0,1,camera),Steering);
+    float3 direction=ProjectionDirection(view,input.UV);
     float3 light = 0;
 
     // Ray intersection with a horizontal road below the camera.
-    if (screen.y < -.001)
+    float roadT=ProjectionPlane(view,direction,float3(0,1,0),0);
+    if (roadT>0)
     {
-        float depth = -1.5 / screen.y;
-        float world = camera + depth;
-        float x = screen.x * depth / 1.5 - (RoadCurve(world) - RoadCurve(camera));
+        float3 hit=view.Origin+roadT*direction;
+        float world=hit.z,depth=world-camera;
+        float x=hit.x-(RoadCurve(world)-RoadCurve(camera));
         float age = saturate((speed - depth) / speed);
         float frequency = saturate((x + 2.2) / 4.4);
         float4 audio = FlightAudio(frequency, age, step(0, x));
@@ -58,7 +60,9 @@ float4 PS(PSin input) : SV_Target
         if (depth > speed) break;
         float age = saturate((speed - depth) / speed);
         float birth = MusicalMovementTime - age;
-        float2 p = screen * depth / 1.5;
+        float t=FlightSliceDistance(view,direction,world);
+        if (t<0) continue;
+        float2 p=(view.Origin+t*direction).xy-float2(0,1);
         p.x -= RoadCurve(world) - RoadCurve(camera);
         float frequency = saturate((abs(p.x) - 2.5) / 3.0);
         float band = min(11, floor(frequency * 12));

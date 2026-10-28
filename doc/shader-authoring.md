@@ -22,6 +22,11 @@ For a smaller GPU-defined point-light path, see [MandelLight v5](mandellight-v5.
 It shares the geometry contract and atmosphere LUT, with a separate full-resolution
 surface/airlight backend and shader-emitted position/intensity records.
 
+Perspective scenes share the [HLSL projection contract](projection-contract.md)
+for shader-owned cameras, vertical field of view, near/far depth mapping, rays,
+and world-position reconstruction. Infinite homogeneous airlight remains separate
+from finite camera clipping.
+
 ## Debug analysis scene
 
 `Debug` combines the presented analysis block and its stereo history on shared

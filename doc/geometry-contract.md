@@ -14,6 +14,8 @@ GeometryVertex EvaluateGeometry(uint vertex, uint instance);
 float4 GeometryProject(float3 world); // homogeneous clip position
 ```
 
+Both airlight consumers project through the [shared shader-owned camera](projection-contract.md).
+
 `GeometryVertex` contains `float3 World`, `Normal`, and `Albedo`. Normals are
 world-space unit vectors. The shared vertex wrapper outputs world position and
 flat, noninterpolated normal/albedo for the surface shader. It does not interpret

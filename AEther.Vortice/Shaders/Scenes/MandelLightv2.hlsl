@@ -1,4 +1,4 @@
-#include "../Common/Inputs.hlsl"
+#include "../Common/Projection.hlsl"
 #include "../Common/AnalyticVolumes.hlsl"
 
 // Audio-independent prototype. Additive ellipsoid densities, exact segment
@@ -35,16 +35,16 @@ uint Hash(uint x)
 float Random(uint x) { return ((Hash(x)>>9)+.5)/8388608.0; }
 float Mean(float3 x) { return dot(x,float3(1,1,1)/3); }
 
-void Camera(out float3 origin, out float3 direction, float2 uv)
+ProjectionCamera SceneCamera()
 {
+    float3 origin;
     float sine,cosine; sincos(T*.25*View.CameraSpeed,sine,cosine);
     float3 forward=normalize(float3(-9*cosine-13.5*sine,-6,13.5*cosine-9*sine));
     float3 right=normalize(cross(forward,float3(0,1,0)));
     float3 up=cross(right,forward);
     float distance=40*View.CameraDistance;
     origin=-distance*forward+(2*View.HorizontalOffset-1)*distance*right;
-    float2 screen=(2*uv-1)*float2(max(1,AspectRatio),-max(1,1/AspectRatio));
-    direction=normalize(2*forward+screen.x*right+screen.y*up);
+    return MakeProjectionCamera(origin,forward,right,up);
 }
 float3 CloudSpace(float3 p, float sine, float cosine)
 {
@@ -179,11 +179,12 @@ bool SegmentHitsBox(float3 p, float3 w, float distance, float3 lo, float3 hi)
 
 float4 PS(PSin input) : SV_Target
 {
-    float3 origin,direction; Camera(origin,direction,input.UV);
+    ProjectionCamera camera=SceneCamera();
+    float3 origin=camera.Origin,direction=ProjectionDirection(camera,input.UV);
     float sine,cosine; sincos(T*.2*Shape.Speed,sine,cosine);
     origin=CloudSpace(origin,sine,cosine); direction=CloudSpace(direction,sine,cosine);
     float nearT,farT;
-    if (!AirInterval(origin,direction,nearT,farT)) return float4(0,0,0,1);
+    if (!AirInterval(origin,direction,nearT,farT) || !ProjectionClipInterval(camera,ProjectionDirection(camera,input.UV),nearT,farT)) return float4(0,0,0,1);
 
     float concentration=Material.Enabled ? 4*Material.Density*Material.Density : 0;
     float3 scatter=concentration*Material.Scattering;

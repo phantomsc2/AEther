@@ -1,4 +1,5 @@
 #include "../Common/Inputs.hlsl"
+#include "../Common/Projection.hlsl"
 
 // Audio-reactive prototype. Independent shadow toggles for transient and tonal
 // rings plus a live-S filament ring. Homogeneous single scattering, no history.
@@ -24,13 +25,15 @@ cbuffer Parameters : register(b1)
     FilterSettings Filter = { true };
     ViewSettings View = { .55, .15, .5, .4, false, false, 0 };
 };
-void CameraFrame(out float3 origin, out float3 forward, out float3 right, out float3 up)
+ProjectionCamera SceneCamera()
 {
+    float3 origin,forward,right,up;
     float s,c; sincos(T*.25*View.CameraSpeed,s,c);
     forward=normalize(float3(-9*c-13.5*s,-6,13.5*c-9*s));
     right=normalize(cross(forward,float3(0,1,0))); up=cross(right,forward);
     float distance=40*View.CameraDistance;
     origin=-distance*forward+(2*View.HorizontalOffset-1)*distance*right;
+    return MakeProjectionCamera(origin,forward,right,up);
 }
 #include "../Common/RasterGeometry.hlsl"
 #include "../Common/RasterAirlight.hlsl"
@@ -80,11 +83,10 @@ float4 PS(PSin input) : SV_Target
             ShadowSlice(light)+(spot ? 0 : cell.x+3*cell.y),0));
         return float4((z>=1 ? 0 : exp(-.06*LinearDepth(z))).xxx,1);
     }
-    float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
-    float2 screen=(2*input.UV-1)*float2(max(1,AspectRatio),-max(1,1/AspectRatio));
-    float3 direction=normalize(2*forward+screen.x*right+screen.y*up);
+    ProjectionCamera camera=SceneCamera();
+    float3 direction=ProjectionDirection(camera,input.UV);
     float z=RasterDepth.Load(int3(pixel,0)); bool hit=z<1;
-    float end=hit ? LinearDepth(z)/dot(direction,forward) : 0;
+    float end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;
     if (View.ShowDepth) return float4((hit ? exp(-.04*end) : 0).xxx,1);
     float3 surface=hit ? RasterSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
     float3 air=any(AirScatter()>0) ? FilterAirlight(pixel) : 0;

@@ -129,3 +129,7 @@ are not modified.
 `--point-lights` profiles MandelLightv5 at 1280x720, captures its individual S/T/B
 rings and combined scene, and compares with v4 using the same total point-light
 count. Both use full-resolution airlight. See `doc/mandellight-v5.md`.
+
+`--projection` captures all nine scenes migrated to the shared camera layer at
+1280x720, 720x1280, and 720x720, writing `artifacts/shared-projection/captures.json`
+and PNGs. This mode performs visual smoke checks without timing comparisons.

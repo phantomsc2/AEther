@@ -1,4 +1,4 @@
-#include "../Common/Inputs.hlsl"
+#include "../Common/Projection.hlsl"
 
 // Audio-independent proof of concept: this scene deliberately stays visible in
 // silence. Static fractal/camera, one moving light, no emission or image history.
@@ -194,20 +194,21 @@ float Random01(uint seed)
     return ((RandomHash(seed) >> 9) + .5) / 8388608.0;
 }
 
+ProjectionCamera SceneCamera()
+{
+    float3 origin=float3(9,6,-13.5),forward=normalize(-origin);
+    float3 right=normalize(cross(forward,float3(0,1,0))),up=cross(right,forward);
+    return MakeProjectionCamera(origin,forward,right,up);
+}
 float4 PS(PSin input) : SV_Target
 {
     if ((Density.Strength <= 0 && Density.Ambient <= 0) || Density.Albedo <= 0 || Light.Intensity <= 0)
         return float4(0, 0, 0, 1);
 
-    float3 origin = float3(9, 6, -13.5);
-    float3 forward = normalize(-origin);
-    float3 right = normalize(cross(forward, float3(0, 1, 0)));
-    float3 up = cross(right, forward);
-    float2 screen = (2 * input.UV - 1)
-        * float2(max(1, AspectRatio), -max(1, 1 / AspectRatio));
-    float3 direction = normalize(2 * forward + screen.x * right + screen.y * up);
+    ProjectionCamera camera=SceneCamera();
+    float3 origin=camera.Origin,direction=ProjectionDirection(camera,input.UV);
     float nearT, farT;
-    if (!VolumeInterval(origin, direction, nearT, farT)) return float4(0, 0, 0, 1);
+    if (!VolumeInterval(origin, direction, nearT, farT) || !ProjectionClipInterval(camera,direction,nearT,farT)) return float4(0, 0, 0, 1);
 
     // Orbit within the fractal and its existing bounds. Speed zero freezes it.
     float angle = T * .5 * Light.Speed;

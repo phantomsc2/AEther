@@ -1,5 +1,9 @@
 # MandelLightv4: raster geometry and infinite homogeneous air
 
+Camera projection and depth reconstruction use the [shared HLSL projection layer](projection-contract.md).
+The vertical field of view is fixed across viewport shapes; background airlight
+continues to integrate to infinity.
+
 Geometry now follows the [shader-owned geometry contract](geometry-contract.md).
 The integral and surface/shadow support live in the shared
 [raster airlight contract](raster-airlight-contract.md). Geometry counts are written

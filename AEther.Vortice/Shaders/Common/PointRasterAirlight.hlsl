@@ -1,5 +1,6 @@
 #ifndef AETHER_POINT_RASTER_AIRLIGHT
 #define AETHER_POINT_RASTER_AIRLIGHT
+#include "Projection.hlsl"
 Texture2D<float4> PointSurface;
 Texture2D<float> PointDepth;
 Texture2D<float4> PointAirlight;
@@ -7,7 +8,6 @@ Texture2D<float4> RasterAirlightLut;
 SamplerState RasterLutSampler;
 cbuffer RasterAirlightConstants : register(b5) { float4 RasterLookupInfo; };
 static const float Pi=3.14159265359;
-static const float Near=.025, Far=128;
 // Numerical denominator guards only, far below world-coordinate precision.
 // No world-space source radius or smoothing is applied to either light kernel.
 static const float NumericDistance2=1e-30,NumericDistance=1e-15,HdrMaximum=3.402823466e38;
@@ -29,18 +29,13 @@ float3 CubeDirection(int face, float2 uv)
     return float3(-q.x,-q.y,-1);
 }
 
-float LinearDepth(float z) { return Near*Far/(Far-z*(Far-Near)); }
 float3 AirScatter() { return .3*Air.Density*Air.Density*Air.Scattering; }
 float3 AirExtinction() { return .3*Air.Density*Air.Density*(Air.Scattering+Air.Absorption); }
 #include "PointAirlightIntegral.hlsl"
 
 float4 GeometryProject(float3 world)
 {
-    float3 origin,forward,right,up; CameraFrame(origin,forward,right,up);
-    float3 v=world-origin;
-    float z=dot(v,forward);
-    return float4(2*dot(v,right)/max(1,AspectRatio),2*dot(v,up)/max(1,1/AspectRatio),
-        (Far*z-Near*Far)/(Far-Near),z);
+    return ProjectionClip(SceneCamera(),world);
 }
 float4 PointSurfacePS(GeometryOutput input) : SV_Target
 {
@@ -60,11 +55,10 @@ float4 PointSurfacePS(GeometryOutput input) : SV_Target
 }
 void PointRay(int2 pixel, out float3 origin, out float3 direction, out bool hit, out float end)
 {
-    float3 forward,right,up; CameraFrame(origin,forward,right,up);
-    float2 screen=(2*(pixel+.5)/Resolution-1)*float2(max(1,AspectRatio),-max(1,1/AspectRatio));
-    direction=normalize(2*forward+screen.x*right+screen.y*up);
+    ProjectionCamera camera=SceneCamera();
+    origin=camera.Origin; direction=ProjectionDirection(camera,(pixel+.5)/Resolution);
     float z=PointDepth.Load(int3(pixel,0)); hit=z<1;
-    end=hit ? LinearDepth(z)/dot(direction,forward) : 0;
+    end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;
 }
 float4 IntegratePointAirlight(int2 pixel)
 {
