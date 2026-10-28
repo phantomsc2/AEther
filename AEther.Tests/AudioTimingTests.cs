@@ -402,28 +402,29 @@ public class AudioTimingTests
         }
     }
 
-    [Test]
-    public void FrameMeanWeightsDurations()
+    [TestCase(0), TestCase(.5), TestCase(.75), TestCase(.99), TestCase(1)]
+    public void SpectrumPowerMeanWeightsDurationsAndRetainsUntilStale(double a)
     {
         var clock = new Clock { Milliseconds = 20 };
-        var history = new AudioHistory(1, 100, timeProvider: clock);
+        var history = new AudioHistory(1, 100, timeProvider: clock) { SpectrumAggregation = a };
         history.Post(Row(0, 0, 5, 0), 1);
         history.Post(Row(1, 5, 20, 1), 1);
         history.Advance(.02);
-        Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
+        double expected = Math.Pow(.75, 1 - a);
+        Assert.That(history.Spectrum[0], Is.All.EqualTo(expected).Within(1e-7));
         Assert.That(history.BlockSpectrum[0], Is.All.EqualTo(1f), "Expose the last actual block without averaging.");
         clock.Milliseconds = 40; history.Advance(.02);
-        Assert.That(history.Spectrum[0], Is.All.EqualTo(.75f));
+        Assert.That(history.Spectrum[0], Is.All.EqualTo(expected).Within(1e-7));
         Assert.That(history.BlockSpectrum[0], Is.All.Zero, "No newly consumed block means a visible gap in Spectrum.");
         clock.Milliseconds = 71; history.Advance(.031);
         Assert.That(history.Spectrum[0], Is.All.Zero);
     }
 
-    [Test]
-    public void DelayBuffersHistoryAheadOfPresentationWithoutExposingFutureSpectrum()
+    [TestCase(0), TestCase(.5), TestCase(.9999999999999999), TestCase(1)]
+    public void DelayBuffersHistoryAheadOfPresentationWithoutExposingFutureSpectrum(double a)
     {
         var clock = new Clock { Milliseconds = 20 };
-        var history = new AudioHistory(1, 100, presentationDelay: .01, timeProvider: clock);
+        var history = new AudioHistory(1, 100, presentationDelay: .01, timeProvider: clock) { SpectrumAggregation = a };
         history.Post(Row(0, 0, 10, .2), 1); history.Post(Row(1, 10, 20, .8), 1);
         history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.2f));
@@ -431,6 +432,9 @@ public class AudioTimingTests
         clock.Milliseconds = 30; history.Advance(.01);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(.8f));
         Assert.That(history.NewestAge, Is.Zero);
+        history.Post(Row(2, 20, 30, .1), 1);
+        clock.Milliseconds = 40; history.Advance(.01);
+        Assert.That(history.Spectrum[0], Is.All.EqualTo(.1f), "Previous-interval peaks must not leak into the new interval.");
     }
 
     [Test]
@@ -450,18 +454,20 @@ public class AudioTimingTests
         Assert.That(history.Flash, Is.Zero);
     }
 
-    [Test]
-    public void FractionalOverlapAndMissingIntervalsHaveCorrectWeights()
+    [TestCase(0), TestCase(.5), TestCase(.75), TestCase(.99), TestCase(1)]
+    public void FractionalOverlapAndMissingIntervalsHaveCorrectWeights(double a)
     {
         var clock = new Clock { Milliseconds = 10 };
-        var history = new AudioHistory(1, 100, timeProvider: clock);
+        var history = new AudioHistory(1, 100, timeProvider: clock) { SpectrumAggregation = a };
         history.Post(Row(0, 0, 10, .1), 1); history.Advance(.01);
         clock.Milliseconds = 65;
         history.Post(Row(1, 10, 30, .2), 1);
         history.Post(Row(3, 40, 65, .8), 1);
         history.Advance(.055);
         // Latest 50 ms: 15ms at .2, 10ms missing, 25ms at .8.
-        Assert.That(history.Spectrum[0], Is.All.EqualTo(.46f).Within(1e-7));
+        double p = 1 / (1 - a);
+        double expected = a == 1 ? .8 : Math.Pow(.3 * Math.Pow(.2, p) + .5 * Math.Pow(.8, p), 1 / p);
+        Assert.That(history.Spectrum[0], Is.All.EqualTo(expected).Within(1e-7));
         Assert.That(history.History[0].AsSpan(8, 4).ToArray(), Is.All.Zero);
     }
 

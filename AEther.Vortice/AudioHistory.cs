@@ -15,11 +15,13 @@ public sealed class AudioHistory
     readonly long started;
     readonly double rate;
     readonly int handoffRows;
-    readonly double[] sum, residualSum;
+    readonly double[] sum, residualSum, maximum, residualMaximum;
     long newestRow = -1, consumedRow = -1, firstRow, generation = -1;
     double position, newestEnd, newestArrival, cursor, stateTime;
     double historyClockTime;
     double historyClockRow;
+    double aggregateStart;
+    double appliedSpectrumAggregation = .5, spectrumAggregation = .5;
     AudioStreamClock? streamClock;
     bool haveHistoryClock;
     bool haveCursor, haveState, haveConsumed, live;
@@ -65,11 +67,21 @@ public sealed class AudioHistory
     /// <summary>Physical ring storage. Direct edits require InvalidateHistory before rendering.</summary>
     public float[][] History { get; private set; }
     public float[][] Spectrum { get; }
+    /// <summary>Overlap-weighted power mean: 0 = mean, .5 = RMS, 1 = maximum.</summary>
+    public double SpectrumAggregation
+    {
+        get => spectrumAggregation;
+        set
+        {
+            if (!double.IsFinite(value) || value < 0 || value > 1) throw new ArgumentOutOfRangeException(nameof(value));
+            spectrumAggregation = value;
+        }
+    }
     /// <summary>Newest analysis block consumed this display frame; zero when no new block became due.</summary>
     internal float[][] BlockSpectrum { get; }
     internal float[][] BlockResidualSpectrum { get; }
     internal float[][] BlockMomentaryResidual { get; }
-    /// <summary>Residual RMS averaged over the same rows as Spectrum.</summary>
+    /// <summary>Residual RMS selected or averaged over the same rows as Spectrum.</summary>
     public float[][] ResidualSpectrum { get; }
     public Vector3 Components { get; private set; }
     public float FractalEnergy { get; private set; }
@@ -114,6 +126,8 @@ public sealed class AudioHistory
         InvalidateHistory();
         sum = new double[8 * bands];
         residualSum = new double[2 * bands];
+        maximum = new double[8 * bands];
+        residualMaximum = new double[2 * bands];
         ResidualSpectrum = [new float[bands], new float[bands]];
         handoffRows = Math.Max(2, (int)Math.Ceiling((HandoffSeconds + presentationDelay) * rate));
         pending = Mailbox(handoffRows);
@@ -123,7 +137,7 @@ public sealed class AudioHistory
 
     // A new analysis generation rewinds row numbers, but must not rewind the renderer clock.
     internal AudioHistory Restart(AnalysisOutput input) => new(input.Domain.Length, input.AnalysisRate,
-        Seconds, PresentationDelay, timeProvider, started);
+        Seconds, PresentationDelay, timeProvider, started) { SpectrumAggregation = SpectrumAggregation };
 
     internal sealed record HistoryConfiguration(double Seconds, int Rows, float[][] History);
 
@@ -262,10 +276,14 @@ public sealed class AudioHistory
         {
             double start = haveCursor ? cursor : recent.TryPeek(out var first) ? first.Start : end;
             if (live) start = Math.Max(start, end - Retention);
+            aggregateStart = start;
             Aggregate(start, end);
             cursor = end;
             haveCursor = true;
         }
+        else if (haveConsumed && haveCursor && appliedSpectrumAggregation != SpectrumAggregation)
+            Aggregate(aggregateStart, cursor);
+        appliedSpectrumAggregation = SpectrumAggregation;
         if (haveConsumed && age > Retention)
         {
             ClearLive();
@@ -386,12 +404,38 @@ public sealed class AudioHistory
         Array.Clear(residualSum);
         double width = end - start;
         if (width <= 0) return;
-        foreach (var row in recent)
+        double a = SpectrumAggregation;
+        if (a > 0)
         {
-            double weight = Math.Max(0, Math.Min(end, row.End) - Math.Max(start, row.Start)) / width;
-            if (weight == 0) continue;
-            for (var i = 0; i < sum.Length; i++) sum[i] += weight * row.Samples[i];
-            for (var i = 0; i < residualSum.Length; i++) residualSum[i] += weight * row.Residual[i];
+            Array.Clear(maximum);
+            Array.Clear(residualMaximum);
+            foreach (var row in recent)
+            {
+                if (row.End <= start || row.Start >= end) continue;
+                for (var i = 0; i < maximum.Length; i++) maximum[i] = Math.Max(maximum[i], row.Samples[i]);
+                for (var i = 0; i < residualMaximum.Length; i++) residualMaximum[i] = Math.Max(residualMaximum[i], row.Residual[i]);
+            }
+        }
+        if (a == 1)
+        {
+            maximum.CopyTo(sum, 0);
+            residualMaximum.CopyTo(residualSum, 0);
+        }
+        else
+        {
+            double p = 1 / (1 - a);
+            foreach (var row in recent)
+            {
+                double weight = Math.Max(0, Math.Min(end, row.End) - Math.Max(start, row.Start)) / width;
+                if (weight == 0) continue;
+                Accumulate(row.Samples, sum, maximum, weight, p, a > 0);
+                Accumulate(row.Residual, residualSum, residualMaximum, weight, p, a > 0);
+            }
+            if (a > 0)
+            {
+                FinishPowerMean(sum, maximum, 1 - a);
+                FinishPowerMean(residualSum, residualMaximum, 1 - a);
+            }
         }
         for (var c = 0; c < 2; c++)
             for (var i = 0; i < Bands * 4; i++) Spectrum[c][i] = (float)Math.Clamp(sum[c * Bands * 4 + i], 0, float.MaxValue);
@@ -400,6 +444,27 @@ public sealed class AudioHistory
         double power = 0;
         for (var i = 3; i < sum.Length; i += 4) power += sum[i] * sum[i];
         Energy = (float)Math.Sqrt(power / (2 * Bands));
+    }
+
+    static void Accumulate(float[] values, double[] totals, double[] peaks, double weight, double p, bool normalize)
+    {
+        for (var i = 0; i < totals.Length; i++)
+        {
+            if (!normalize) totals[i] += weight * values[i];
+            else if (peaks[i] > 0)
+            {
+                double x = values[i] / peaks[i];
+                totals[i] += weight * (p == 2 ? x * x : Math.Pow(x, p));
+            }
+        }
+    }
+
+    static void FinishPowerMean(double[] totals, double[] peaks, double inversePower)
+    {
+        // Normalize before exponentiation to avoid overflow even arbitrarily close to Max.
+        // Missing intervals contribute zero; do not renormalize the overlap weights.
+        for (var i = 0; i < totals.Length; i++)
+            totals[i] = totals[i] > 0 ? peaks[i] * Math.Exp(inversePower * Math.Log(totals[i])) : 0;
     }
 
     void ClearLive()

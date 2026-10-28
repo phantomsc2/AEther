@@ -48,6 +48,13 @@ properties use standard WinUI controls with the system's default appearance.
 The resizable hub has two equal-width columns. Input, Gain and the live analysis
 view are pinned on the left. Below them, DFT, Pipeline, Smoother and Splitter are
 separate expandable blocks, all closed initially, inside one shared scroller.
+Pipeline includes a graphics-owned **Peak emphasis** aggregation parameter:
+0 = Mean, 0.5 = RMS (default), 1 = Max. Intermediate values use a power mean with
+`p = 1 / (1 - a)`, weighted by each row's overlap with the display interval.
+Missing intervals contribute zero; Max includes every row with positive overlap.
+Scenes hold the aggregate between arrivals until it becomes stale after 50 ms.
+Changing peak emphasis preserves history and analysis. Spectrum and Debug diagnostics
+continue to show only blocks newly consumed in each display frame.
 HistorySeconds is a graphics setting in the right column, below the scene selector
 and above shader controls. Changing it clears the histogram without restarting audio.
 There is no outer Audio expander.

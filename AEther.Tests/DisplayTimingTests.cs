@@ -315,6 +315,7 @@ public class DisplayTimingTests
         var clock = new Clock { Milliseconds = 20 };
         using var renderer = new Renderer(window.Handle, width, height, 1, 100,
             initialScene: "Spectrum", timeProvider: clock);
+        renderer.SetGraphicsOptions(renderer.Options with { SpectrumAggregation = 0 });
         for (int row = 0; row < 2; row++)
         {
             double value = row == 0 ? .2 : .8;

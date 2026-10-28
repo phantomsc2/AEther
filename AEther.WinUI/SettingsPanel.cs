@@ -94,6 +94,7 @@ public sealed class SettingsPanel : UserControl
         AudioColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 1: AudioSettings
         var audioStack = (StackPanel)audio.Content;
         audioStack.Children.Insert(0, audio.GainEditor);
+        audio.PipelineControls.Children.Add(graphics.SpectrumAggregationEditor);
         AudioSettings = new ScrollViewer
         {
             Content = audio,

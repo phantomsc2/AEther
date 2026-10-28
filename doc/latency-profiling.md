@@ -57,8 +57,12 @@ The Histogram scene loads discrete rows over their actual analysis intervals wit
 interpolating amplitudes between neighboring blocks. Missing rows and the unwritten strip
 remain black. Its sharp edges move on the physical pixel grid.
 The default added presentation delay is **zero**. Explicit delay applies to all audio fields.
-Live spectral fields use a duration-weighted arithmetic mean over the audio
-interval; missing intervals contribute zero and partial intersections receive fractional weight.
+Live spectral fields use the Pipeline panel's **Peak emphasis** aggregation parameter:
+0 = arithmetic mean, 0.5 = RMS (default), 1 = maximum. Intermediate values use the
+power mean with `p = 1 / (1 - a)`. Each row is weighted by its fractional overlap
+with the audio interval; missing intervals contribute zero without renormalization.
+Max includes every row with positive overlap. Normalizing each component by its
+maximum before exponentiation prevents overflow as the parameter approaches 1.
 Individual historical rows retain their original values.
 
 The Spectrum scene displays the latest new analysis block consumed in each display frame,
@@ -169,7 +173,8 @@ The CPU and GPU histories use the same physical ring slots. The render thread up
 changed rows, including cleared gaps, after consuming analysis events. Adjacent rows are batched;
 a wrap needs at most two region updates per stereo channel. Startup and complete history clears
 upload the full ring once. Frames without history changes upload no histogram data. The two
-small current-spectrum textures still upload every frame, with their existing averaging behavior.
+small current-spectrum textures still upload every frame, using the selected power mean
+(RMS by default).
 Direct edits to `AudioHistory.History` must call `InvalidateHistory()` on the render thread before
 rendering. Analysis events invalidate their own rows automatically.
 

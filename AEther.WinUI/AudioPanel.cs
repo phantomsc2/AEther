@@ -11,6 +11,7 @@ public sealed class AudioPanel : UserControl
 {
     public AnalyzerOptions Options { get; } = new();
     internal FrameworkElement GainEditor { get; private set; } = null!;
+    internal StackPanel PipelineControls { get; private set; } = null!;
     public event EventHandler? SettingsChanged;
 
     public AudioPanel() => Content = BuildOptions();
@@ -30,6 +31,7 @@ public sealed class AudioPanel : UserControl
         foreach (var category in properties.GroupBy(p => p.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var rows = new StackPanel { Spacing = 8 };
+            if (category.Key == "Pipeline") PipelineControls = rows;
             foreach (var property in category)
             {
                 var displayName = property.Name == nameof(AnalyzerOptions.InputGainDb) ? "Gain" : property.DisplayName;

@@ -52,8 +52,9 @@ public class TimedSessionTests
         using var window = new Window();
         var source = new Source { Emit = false };
         await using var session = new Session(window.Handle, 1280, 720, source, Options(),
-            shaderDirectory: shaders.Root, initialScene: "Probe", graphicsOptions: new(1));
+            shaderDirectory: shaders.Root, initialScene: "Probe", graphicsOptions: new(1, SpectrumAggregation: 0));
         session.Start();
+        Assert.That(session.Renderer.Audio.SpectrumAggregation, Is.EqualTo(0), "Apply initial graphics options.");
         var analyzer = session.Analyzer;
         var renderer = session.Renderer;
         var output = renderer.Input;
@@ -81,7 +82,7 @@ public class TimedSessionTests
             shaderDirectory: shaders.Root, initialScene: "Probe");
         session.Start();
         var renderer = session.Renderer;
-        renderer.SetGraphicsOptions(new(3));
+        renderer.SetGraphicsOptions(new(3, SpectrumAggregation: 0));
         var frameReady = renderer.FrameReady;
         var originalAnalyzer = session.Analyzer;
         var rejectedSource = new Source { Emit = false };
@@ -139,6 +140,8 @@ public class TimedSessionTests
             Assert.That(renderer.FrameReady, Is.SameAs(frameReady), edit.Name);
             Assert.That(renderer.Input, Is.EqualTo(options.GetAnalysisOutput(source.Format)), edit.Name);
             Assert.That(renderer.Options.HistorySeconds, Is.EqualTo(3), edit.Name);
+            Assert.That(renderer.Options.SpectrumAggregation, Is.EqualTo(0), edit.Name);
+            Assert.That(renderer.Audio.SpectrumAggregation, Is.EqualTo(0), edit.Name);
             Assert.That(renderer.Audio.Seconds, Is.EqualTo(3), edit.Name);
             Assert.That(renderer.ActiveShader, Is.SameAs(scene), edit.Name);
             Assert.That(scene.Program.Pixel, Is.SameAs(program), edit.Name);
@@ -297,7 +300,7 @@ public class TimedSessionTests
     }
 
     [Test, Category("GPU")]
-    public void TimestampedFrameMeanReachesGpuAndExpiresAt720p()
+    public void PowerMeanAggregationReachesGpuAndExpiresAt720p()
     {
         string temporaryRoot = Path.GetFullPath(Path.GetTempPath());
         string root = Path.Combine(temporaryRoot, "AEther-timed-gpu-" + Guid.NewGuid().ToString("N"));
@@ -335,8 +338,23 @@ public class TimedSessionTests
             }
             renderer.Render(false);
             var pixels = renderer.ReadPixels(false);
-            Assert.That(renderer.Audio.Spectrum[0], Is.All.EqualTo(.5f));
+            Assert.That(renderer.Audio.Spectrum[0], Is.All.EqualTo(Math.Sqrt(.34)).Within(1e-7));
             Assert.That(pixels.Where((_, i) => i % 4 != 3).Any(v => v > 100), Is.True);
+            var history = renderer.Audio.History;
+            var stored = renderer.ReadHistogram(0);
+            renderer.SetGraphicsOptions(renderer.Options with { SpectrumAggregation = 0 });
+            renderer.Render(false);
+            Assert.That(renderer.Audio.Spectrum[0], Is.All.EqualTo(.5f));
+            Assert.That(renderer.ReadPixels(false), Is.Not.EqualTo(pixels));
+            Assert.That(renderer.Audio.History, Is.SameAs(history));
+            Assert.That(renderer.ReadHistogram(0), Is.EqualTo(stored));
+            renderer.SetGraphicsOptions(renderer.Options with { SpectrumAggregation = 1 });
+            renderer.Render(false);
+            Assert.That(renderer.Audio.Spectrum[0], Is.All.EqualTo(.8f));
+            Assert.That(renderer.ReadPixels(false), Is.Not.EqualTo(pixels));
+            renderer.SetGraphicsOptions(renderer.Options with { SpectrumAggregation = .5 });
+            renderer.Render(false);
+            Assert.That(renderer.ReadPixels(false), Is.EqualTo(pixels));
             clock.Milliseconds = 40; renderer.Render(false);
             Assert.That(renderer.ReadPixels(false), Is.EqualTo(pixels), "No packet must not become a black frame.");
             clock.Milliseconds = 71; renderer.Render(false);

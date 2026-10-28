@@ -130,6 +130,7 @@ public sealed partial class Renderer : IDisposable
             shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile, logger: logger)
     {
         Input = input;
+        if (graphicsOptions != null) SetGraphicsOptions(graphicsOptions);
     }
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,

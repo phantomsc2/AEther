@@ -25,7 +25,7 @@ public class AudioHistoryTests
     public void ResidualIsOwnedAveragedAndClearedWithSpectrum()
     {
         var clock = new HistoryClock();
-        var history = new AudioHistory(1, 100, timeProvider: clock);
+        var history = new AudioHistory(1, 100, timeProvider: clock) { SpectrumAggregation = 0 };
         var residual = new[] { .2 };
         history.Post(new(new double[4], 4, DateTime.UnixEpoch) { ResidualRms = residual }, 1);
         residual[0] = .9; // The producer may recycle its storage immediately.
@@ -256,7 +256,7 @@ public class AudioHistoryTests
     [Test]
     public void SpectrumAveragesRowsAndRetainsTheAggregateBetweenPackets()
     {
-        var history = new AudioHistory(1, 100);
+        var history = new AudioHistory(1, 100) { SpectrumAggregation = 0 };
         history.Post(new(new[] { .8, .1, .6, .2 }, 4, DateTime.Now), 1);
         history.Post(new(new[] { .2, .9, .3, .7 }, 4, DateTime.Now) { AnalysisRow = 1 }, 1);
         history.Advance(0);
@@ -266,6 +266,68 @@ public class AudioHistoryTests
         Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .1f, .2f, .3f, .4f }));
         history.Advance(0);
         Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .1f, .2f, .3f, .4f }));
+    }
+
+    [Test]
+    public void RmsIsDefaultAndAggregationChangesPreserveHistoryAndStaleClearing()
+    {
+        var clock = new HistoryClock();
+        var history = new AudioHistory(1, 100, timeProvider: clock);
+        history.Post(new(new[] { .8, .1, .6, .2 }, 4, DateTime.UnixEpoch)
+            { ResidualRms = new[] { .2 } }, 1);
+        history.Post(new(new[] { .2, .9, .3, .7 }, 4, DateTime.UnixEpoch)
+            { AnalysisRow = 1, ResidualRms = new[] { .6 } }, 1);
+        history.Advance(0);
+        var rms = new[] { (float)Math.Sqrt(.34), (float)Math.Sqrt(.41), (float)Math.Sqrt(.225), (float)Math.Sqrt(.265) };
+        Assert.That(history.Spectrum[0], Is.EqualTo(rms).Within(1e-7));
+        Assert.That(history.Spectrum[1], Is.EqualTo(history.Spectrum[0]));
+        Assert.That(history.ResidualSpectrum[0], Is.EqualTo(new[] { (float)Math.Sqrt(.2) }).Within(1e-7));
+        var rows = history.History[0].AsSpan().ToArray();
+        history.Advance(0);
+        Assert.That(history.Spectrum[0], Is.EqualTo(rms).Within(1e-7));
+        history.SpectrumAggregation = 0;
+        history.Advance(0);
+        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .5f, .5f, .45f, .45f }).Within(1e-7));
+        Assert.That(history.ResidualSpectrum[0], Is.EqualTo(new[] { .4f }).Within(1e-7));
+        history.SpectrumAggregation = 1;
+        history.Advance(0);
+        Assert.That(history.Spectrum[0], Is.EqualTo(new[] { .8f, .9f, .6f, .7f }));
+        Assert.That(history.ResidualSpectrum[0], Is.EqualTo(new[] { .6f }));
+        Assert.That(history.History[0], Is.EqualTo(rows));
+        clock.Milliseconds = 100;
+        history.Advance(.1);
+        Assert.That(history.Spectrum[0], Is.All.Zero);
+        Assert.That(history.ResidualSpectrum[0], Is.All.Zero);
+        history.SpectrumAggregation = 0;
+        history.Advance(0);
+        Assert.That(history.Spectrum[0], Is.All.Zero, "Switching modes must not revive stale audio.");
+    }
+
+    [TestCase(0), TestCase(double.Epsilon), TestCase(.5), TestCase(.75), TestCase(.99), TestCase(.9999999999999999), TestCase(1)]
+    public void PowerMeanStaysFiniteAcrossExtremeAmplitudesAndApproachesMaximum(double a)
+    {
+        var history = new AudioHistory(1, 100, timeProvider: new HistoryClock()) { SpectrumAggregation = a };
+        history.Post(new(new[] { 0.0, (double)float.Epsilon, (double)float.MaxValue, 0.0 }, 4, DateTime.UnixEpoch)
+            { ResidualRms = new[] { (double)float.MaxValue } }, 1);
+        history.Post(new(new[] { (double)float.MaxValue, (double)float.Epsilon, 0.0, 0.0 }, 4, DateTime.UnixEpoch)
+            { AnalysisRow = 1 }, 1);
+        history.Advance(0);
+        double expected = float.MaxValue * Math.Pow(.5, 1 - a);
+        Assert.That(history.Spectrum[0][0] / (double)float.MaxValue, Is.EqualTo(expected / float.MaxValue).Within(1e-7));
+        Assert.That(history.Spectrum[0][2], Is.EqualTo(history.Spectrum[0][0]));
+        Assert.That(history.Spectrum[0][1], Is.EqualTo(float.Epsilon));
+        Assert.That(history.Spectrum[0][3], Is.Zero);
+        Assert.That(history.ResidualSpectrum[0][0], Is.EqualTo(history.Spectrum[0][0]));
+        Assert.That(float.IsFinite(history.Energy), Is.True);
+    }
+
+    [TestCase(double.NaN), TestCase(double.PositiveInfinity), TestCase(-.01), TestCase(1.01)]
+    public void InvalidAggregationLeavesPreviousValueUntouched(double a)
+    {
+        var history = new AudioHistory(1, 100);
+        Assert.Throws<ArgumentOutOfRangeException>(() => history.SpectrumAggregation = a);
+        Assert.That(history.SpectrumAggregation, Is.EqualTo(.5));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new GraphicsOptions(SpectrumAggregation: a).Validate());
     }
 
     [Test]
