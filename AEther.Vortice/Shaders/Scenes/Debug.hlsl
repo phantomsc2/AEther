@@ -10,12 +10,12 @@ float4 PS(PSin input) : SV_Target
     uint bands, rows;
     Histogram0.GetDimensions(bands, rows);
     int bin = min((int)((1 - input.UV.y) * bands), (int)bands - 1);
-    if (input.UV.x >= .8)
+    bool left = input.UV.x < .5;
+    if (input.UV.x >= .4 && input.UV.x < .6)
     {
-        // The channels grow away from the seam between their strips.
-        bool first = input.UV.x < .9;
-        float4 v = first ? Spectrum0.Load(int3(bin, 0, 0)) : Spectrum1.Load(int3(bin, 0, 0));
-        float x = first ? (.9 - input.UV.x) / .1 : (input.UV.x - .9) / .1;
+        // Each channel grows inward from its history edge.
+        float4 v = left ? Spectrum0.Load(int3(bin, 0, 0)) : Spectrum1.Load(int3(bin, 0, 0));
+        float x = left ? (input.UV.x - .4) / .1 : (.6 - input.UV.x) / .1;
         float pixel = 1 / (.1 * Resolution.x);
         float3 bars = saturate((saturate(v.rgb) - x) / pixel + .5) * step(1e-20, v.rgb);
         float total = v.a > 0 ? saturate((saturate(v.a) - x) / pixel + .5) : 0;
@@ -25,9 +25,9 @@ float4 PS(PSin input) : SV_Target
     }
 
     // Integrate actual row coverage, including fractional pixels at event edges.
-    // The full history runs from oldest at the left edge to newest at the seam.
-    float age = (.8 - input.UV.x) / .8;
-    float halfPixel = HistorySpan / (1.6 * Resolution.x);
+    // Each channel's history runs outward from its spectrum edge.
+    float age = left ? (.4 - input.UV.x) / .4 : (input.UV.x - .6) / .4;
+    float halfPixel = HistorySpan / (.8 * Resolution.x);
     float lo = max(0, age * HistorySpan - halfPixel);
     float hi = age * HistorySpan + halfPixel;
     float footprint = max(1e-8, (hi - lo) * rows);
@@ -41,7 +41,7 @@ float4 PS(PSin input) : SV_Target
     {
         int slot = (row % (int)rows + (int)rows) % (int)rows;
         float coverage = max(0, min(end, row + 1.0) - max(first, (float)row));
-        float4 block = .5 * (Histogram0.Load(int3(bin, slot, 0)) + Histogram1.Load(int3(bin, slot, 0)));
+        float4 block = left ? Histogram0.Load(int3(bin, slot, 0)) : Histogram1.Load(int3(bin, slot, 0));
         history += block * (coverage / footprint);
     }
     return float4(CombinedLevel ? history.aaa : history.rgb, 1);
