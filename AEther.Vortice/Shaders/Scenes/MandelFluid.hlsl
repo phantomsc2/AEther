@@ -7,8 +7,10 @@ struct LightingParameters
     float Ambient;           // Steady illumination, additive with live flashes at every age.
     float FlashStrength;     // 0 .. 1023x live spectral T multiplier; 0 disables flashes.
 };
+struct ResourceSizes { uint2 FluidVelocity; };
 cbuffer Parameters
 {
+    ResourceSizes Sizes = { uint2(512,512) };
     EmitterParameters Emitter = RING_EMITTER_DEFAULTS;
     FluidParameters Fluid = RING_FLUID_DEFAULTS;
     LightingParameters Lighting = { .1960, .3330 };

@@ -1,17 +1,14 @@
 # Shared MandelFluid backend
 
-MandelFluid, MandelFluidv2, MandelFluidv3 and MandelFluid use the same simulation.
-V4's numerical passes, emitter, defaults and lighting behavior are preserved;
-the older variants retain their own scene shading and adopt v4's fluid behavior.
-
-All six fluid scenes now use the [plain HLSL fluid contract](fluid-contract.md)
+MandelFluid uses the [plain HLSL fluid contract](fluid-contract.md)
 and one host solver. `Common/RingFluidParameters.hlsl` owns the ring controls and
 defaults. Each MandelFluid scene includes `Common/RingEmitter.hlsl` and
 `Common/RingFluidMaterial.hlsl`, which defines its boundary and material passes
 and explicitly includes the shared `Common/FluidSimulation.hlsl` numerical code.
 There is no `RING_FLUID` capability or host source-file selection.
 
-The ring backend uses a square 512x512 grid, or 128x128 with `Fluid.LowQuality`.
+The scene defaults to a 512x512 grid. Sizes.FluidVelocity exposes independent
+power-of-two axes; see [resource sizes](resource-sizes.md).
 Velocity and pressure advance at 60 Hz with three multigrid V-cycles, two initial
 velocity warmup steps on live input, and a 16-iteration coarse solve. Material
 advances on every displayed frame; catch-up remains bounded to 50 ms. At a 4:1
@@ -29,7 +26,7 @@ density and coordinate moments remain available without keeping pixels lit.
 - Local B controls `Fluid.EmissionVelocity`, `VelocityGain` and `Curl`.
 - T contributes to scene lighting, never material injection or inlet motion.
 - `Fluid.Viscosity` maps to `0.1 * value^3`; `PeriodicBoundary` wraps the domain.
-- `Fluid.LowQuality` changes grid size and recreates simulation state.
+- Sizes.FluidVelocity changes grid dimensions and recreates simulation state.
 
 The older half-life, diffusion, background and flow controls are removed from
 MandelFluid v1-v3. Flight scenes use the same numerical backend with a single

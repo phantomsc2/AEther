@@ -15,8 +15,7 @@ struct FluidParameters
     float Viscosity;         // 0 .. .1 via .1 * slider^3; no dye diffusion.
     float Curl;              // Local B-driven counter-rotating launch velocity.
     bool PeriodicBoundary;
-    bool LowQuality;         // 128x128 simulation instead of the default 512x512.
 };
 
 #define RING_EMITTER_DEFAULTS { .667, .1600, .1, .1600, 1, .12 }
-#define RING_FLUID_DEFAULTS { .3270, .0690, 0, 0, true, false }
+#define RING_FLUID_DEFAULTS { .3270, .0690, 0, 0, true }

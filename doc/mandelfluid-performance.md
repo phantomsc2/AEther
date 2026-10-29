@@ -46,7 +46,7 @@ and `--fast`; it records GPU cost independently of live presentation.
 ## Historical 4070 solver optimization (2026-10-21)
 
 Measured 2026-10-21 in Release, 1280x720 output on an NVIDIA GeForce RTX 4070 Laptop GPU.
-The simulation retains its 512x512 grid (128x128 only when LowQuality is explicitly selected).
+The simulation retains its 512x512 grid (configurable through Sizes.FluidVelocity).
 
 ## Changes
 

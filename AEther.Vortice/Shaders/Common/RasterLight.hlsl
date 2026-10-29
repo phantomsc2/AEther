@@ -2,21 +2,18 @@
 #define AETHER_RASTER_LIGHT
 #include "Projection.hlsl"
 
-// Scene callbacks. The host owns capacity, never the light count or properties.
+// Scene properties; the backend owns allocation and the authoritative count.
 struct PointLight { float3 Position; float3 Intensity; };
-uint LightCount();
+
 PointLight EvaluateLight(uint index);
-static const uint PointLightCapacity=512;
+
 RWStructuredBuffer<PointLight> PointLightOutput : register(u0);
-RWByteAddressBuffer PointLightCountOutput : register(u1);
 StructuredBuffer<PointLight> PointLights;
-ByteAddressBuffer PointLightCount;
 
 [numthreads(64,1,1)]
 void PreparePointLights(uint3 id : SV_DispatchThreadID)
 {
-    uint count=min(LightCount(),PointLightCapacity);
-    if (id.x==0) PointLightCountOutput.Store(0,count);
+    uint count=Sizes.PointLights;
     if (id.x<count) PointLightOutput[id.x]=EvaluateLight(id.x);
 }
 
@@ -44,7 +41,7 @@ float4 GeometryProject(float3 world)
 float4 RasterSurfacePS(GeometryOutput input) : SV_Target
 {
     float3 sum=0,extinction=AirExtinction();
-    uint count=PointLightCount.Load(0);
+    uint count=Sizes.PointLights;
     [loop] for (uint i=0;i<count;++i)
     {
         PointLight light=PointLights[i];
@@ -60,7 +57,8 @@ float4 RasterSurfacePS(GeometryOutput input) : SV_Target
 void RasterRay(int2 pixel, out float3 origin, out float3 direction, out bool hit, out float end)
 {
     ProjectionCamera camera=SceneCamera();
-    origin=camera.Origin; direction=ProjectionDirection(camera,(pixel+.5)/Resolution);
+    origin=camera.Origin; uint w,h; RasterDepth.GetDimensions(w,h);
+    direction=ProjectionDirection(camera,(pixel+.5)/float2(w,h));
     float z=RasterDepth.Load(int3(pixel,0)); hit=z<1;
     end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;
 }
@@ -71,7 +69,7 @@ float4 IntegrateRasterAirlight(int2 pixel)
     float3 sum=0,scatter=AirScatter(),extinction=AirExtinction();
     uint w,h; RasterAirlightLut.GetDimensions(w,h);
     float4 layout=float4((w-1.0)/w,(h-1.0)/h,.5/w,.5/h);
-    uint count=PointLightCount.Load(0);
+    uint count=Sizes.PointLights;
     [branch] if (any(scatter>0))
     [loop] for (uint i=0;i<count;++i)
     {
@@ -89,6 +87,7 @@ float4 IntegrateRasterAirlight(int2 pixel)
 }
 float4 RasterAirlightPS(PSin input) : SV_Target
 {
-    return IntegrateRasterAirlight((int2)input.Position.xy);
+    uint w,h; RasterDepth.GetDimensions(w,h);
+    return IntegrateRasterAirlight(min(int2(input.UV*float2(w,h)),int2(w-1,h-1)));
 }
 #endif

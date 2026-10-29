@@ -12,8 +12,9 @@ public partial class ShaderRenderingTests
     {
         using var shaders = new SceneShaders("MandelFluid");
         File.WriteAllText(Path.Combine(shaders.Path,"Scenes","MandelFluid.hlsl"),"""
-            struct FluidSettings { bool PeriodicBoundary; bool LowQuality; float Viscosity; };
-            cbuffer Parameters { FluidSettings Fluid = { true, true, 0 }; };
+            struct FluidSettings { bool PeriodicBoundary; float Viscosity; };
+            struct ResourceSizes { uint2 FluidVelocity; };
+            cbuffer Parameters { ResourceSizes Sizes = { uint2(128,128) }; FluidSettings Fluid = { true, 0 }; };
             #include "../Common/FluidSimulation.hlsl"
             float2 FluidApplyBoundary(int2 cell, float2 v) { return v; }
             Texture2D<float2> FluidVelocity;

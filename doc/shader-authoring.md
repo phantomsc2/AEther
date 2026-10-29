@@ -12,8 +12,8 @@ debounces saves, creation, renames and deletion by 250 ms. No .NET build is need
 for shader edits, parameter changes or scene discovery.
 
 Procedural triangle scenes can use the [geometry contract](geometry-contract.md):
-HLSL supplies vertex/instance counts and evaluates vertices, and the host executes
-one indirect instanced draw. The [RasterLight contract](raster-airlight-contract.md)
+HLSL declares default counts in Parameters.Sizes and evaluates vertices; the host
+executes one direct instanced draw. See [resource sizes](resource-sizes.md). The [RasterLight contract](raster-airlight-contract.md)
 supplies point-light surfaces and precalculated homogeneous single-scattering
 airlight, with shader-emitted position/intensity records. MandelLight uses this
 single raster backend.
@@ -290,7 +290,7 @@ defaults, offsets and bindings. Byte offsets are used only to serialize values i
 the compiled layout. No author-assigned `register` or `packoffset` is required.
 
 Fluid scenes use the [plain HLSL fluid contract](fluid-contract.md): reserved
-`Fluid.PeriodicBoundary`, `Fluid.LowQuality` and `Fluid.Viscosity` controls,
+`Fluid.PeriodicBoundary`, `Sizes.FluidVelocity` and `Fluid.Viscosity` controls,
 a scene-defined velocity boundary, and optional material structs reflected from
 matching `PredictMaterial`/`UpdateMaterial` output signatures. All six scenes
 share one flow solver. Material meanings, emission and decay belong to HLSL.

@@ -7,7 +7,7 @@ namespace AEther.Vortice;
 // Point-lit procedural geometry and homogeneous single scattering.
 internal sealed class RasterLight : IDisposable
 {
-    internal const int Capacity = 512;
+
     internal sealed class Programs : IDisposable
     {
         readonly List<IDisposable> owned = [];
@@ -27,68 +27,109 @@ internal sealed class RasterLight : IDisposable
             }
             catch { Dispose(); throw; }
         }
+        internal IEnumerable<ShaderParameters?> ParameterLayouts => owned.OfType<ShaderProgram>().Select(p => p.Parameters).Append(Geometry.Vertex.Parameters);
         T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
         public void Dispose() { for (int i = owned.Count - 1; i >= 0; i--) owned[i].Dispose(); owned.Clear(); }
     }
 
     readonly ID3D11Device device;
     readonly ID3D11DeviceContext context;
-    readonly AirlightLookup lookup;
+    AirlightLookup? lookup;
     readonly List<IDisposable> owned = [];
-    readonly RasterGeometry geometry;
+
     readonly ID3D11DepthStencilState depthState;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [], lookupOutputs = [];
     readonly Dictionary<string, ID3D11ShaderResourceView> textures = [];
     readonly Dictionary<string, ID3D11SamplerState> samplers = [];
-    readonly ID3D11ShaderResourceView lightsView, countView;
+    LightBuffer? lights;
+    internal ID3D11ShaderResourceView LightsView => lights!.View;
+    internal uint LightCount { get; private set; }
     readonly Dictionary<string, ID3D11Buffer> passBuffers = [];
     Target? surface, depth, air;
     Programs? lookupPrograms;
     internal Action<string, bool>? PassMarker { get; set; }
-    internal ID3D11SamplerState LookupSampler => lookup.Sampler;
+    internal ID3D11SamplerState LookupSampler => lookup!.Sampler;
+    internal SceneSizes AllocatedSizes { get; private set; }
 
     internal RasterLight(ID3D11Device device, ID3D11DeviceContext context)
     {
         this.device = device; this.context = context;
         try
         {
-            lookup = Own(new AirlightLookup(device, context));
-            geometry = Own(new RasterGeometry(device));
             depthState = Own(device.CreateDepthStencilState(new DepthStencilDescription
             {
                 DepthEnable = true, DepthWriteMask = DepthWriteMask.All,
                 DepthFunc = ComparisonFunction.LessEqual, StencilEnable = false,
             }));
-            var lights = Own(device.CreateBuffer(new BufferDescription
-            {
-                ByteWidth = Capacity * 24, StructureByteStride = 24, Usage = ResourceUsage.Default,
-                BindFlags = BindFlags.UnorderedAccess | BindFlags.ShaderResource, MiscFlags = ResourceOptionFlags.BufferStructured,
-            }));
-            outputs["PointLightOutput"] = Own(device.CreateUnorderedAccessView(lights, new UnorderedAccessViewDescription
-            {
-                ViewDimension = UnorderedAccessViewDimension.Buffer,
-                Buffer = new BufferUnorderedAccessView { NumElements = Capacity },
-            }));
-            lightsView = Own(device.CreateShaderResourceView(lights));
-            var count = Own(device.CreateBuffer(new BufferDescription
-            {
-                ByteWidth = 16, Usage = ResourceUsage.Default, BindFlags = BindFlags.UnorderedAccess | BindFlags.ShaderResource,
-                MiscFlags = ResourceOptionFlags.BufferAllowRawViews,
-            }));
-            outputs["PointLightCountOutput"] = Own(device.CreateUnorderedAccessView(count, new UnorderedAccessViewDescription
-            {
-                Format = Format.R32_Typeless, ViewDimension = UnorderedAccessViewDimension.Buffer,
-                Buffer = new BufferUnorderedAccessView { NumElements = 4, Flags = BufferUnorderedAccessViewFlags.Raw },
-            }));
-            countView = Own(device.CreateShaderResourceView(count, new ShaderResourceViewDescription
-            {
-                Format = Format.R32_Typeless, ViewDimension = ShaderResourceViewDimension.BufferExtended,
-                BufferEx = new BufferExtendedShaderResourceView { NumElements = 4, Flags = BufferExtendedShaderResourceViewFlags.Raw },
-            }));
+
         }
         catch { Dispose(); throw; }
     }
     T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
+
+    internal void Configure(SceneSizes sizes)
+    {
+        if (lights != null && sizes == AllocatedSizes) return;
+        LightBuffer? nextLights = null;
+        AirlightLookup? nextLookup = null;
+        Target? nextSurface = null, nextDepth = null, nextAir = null;
+        try
+        {
+            if (lights == null || LightCount != sizes.PointLights) nextLights = new(device, sizes.PointLights);
+            if (lookup == null || lookup.Width != sizes.LookupWidth || lookup.Height != sizes.LookupHeight)
+                nextLookup = new(device, context, sizes.LookupWidth, sizes.LookupHeight);
+            if (surface == null || surface.Width != sizes.SurfaceWidth || surface.Height != sizes.SurfaceHeight)
+            {
+                nextSurface = new(device, sizes.SurfaceWidth, sizes.SurfaceHeight);
+                nextDepth = new(device, sizes.SurfaceWidth, sizes.SurfaceHeight, isDepth: true);
+            }
+            if (air == null || air.Width != sizes.AirWidth || air.Height != sizes.AirHeight)
+                nextAir = new(device, sizes.AirWidth, sizes.AirHeight);
+        }
+        catch
+        {
+            nextLights?.Dispose(); nextLookup?.Dispose(); nextSurface?.Dispose(); nextDepth?.Dispose(); nextAir?.Dispose();
+            throw;
+        }
+        context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
+        context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
+        context.CSSetShaderResources(0, ShaderProgram.EmptyViews);
+        if (nextLights != null) { lights?.Dispose(); lights = nextLights; }
+        if (nextLookup != null) { lookup?.Dispose(); lookup = nextLookup; lookupPrograms = null; }
+        if (nextSurface != null) { surface?.Dispose(); depth?.Dispose(); surface = nextSurface; depth = nextDepth; }
+        if (nextAir != null) { air?.Dispose(); air = nextAir; }
+        LightCount = sizes.PointLights;
+        AllocatedSizes = sizes;
+        outputs["PointLightOutput"] = lights!.Output;
+    }
+
+    sealed class LightBuffer : IDisposable
+    {
+        readonly ID3D11Buffer buffer;
+        internal readonly ID3D11ShaderResourceView View;
+        internal readonly ID3D11UnorderedAccessView Output;
+        internal LightBuffer(ID3D11Device device, uint count)
+        {
+            uint capacity = Math.Max(1u, count);
+            buffer = device.CreateBuffer(new BufferDescription
+            {
+                ByteWidth = capacity * 24, StructureByteStride = 24, Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.UnorderedAccess | BindFlags.ShaderResource, MiscFlags = ResourceOptionFlags.BufferStructured,
+            });
+            try
+            {
+                Output = device.CreateUnorderedAccessView(buffer, new UnorderedAccessViewDescription
+                {
+                    ViewDimension = UnorderedAccessViewDimension.Buffer,
+                    Buffer = new BufferUnorderedAccessView { NumElements = capacity },
+                });
+                View = device.CreateShaderResourceView(buffer);
+            }
+            catch { Output?.Dispose(); buffer.Dispose(); throw; }
+        }
+        public void Dispose() { View.Dispose(); Output.Dispose(); buffer.Dispose(); }
+    }
 
     internal void Prepare(Programs program, ShaderParameters? p, int width, int height,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
@@ -96,67 +137,56 @@ internal sealed class RasterLight : IDisposable
         IReadOnlyDictionary<string, ID3D11SamplerState> sceneSamplers)
     {
         passBuffers.Clear(); foreach (var pair in buffers) passBuffers[pair.Key] = pair.Value;
-        if (surface?.Width != width || surface.Height != height)
-        {
-            surface?.Dispose(); surface = null; depth?.Dispose(); depth = null;
-            surface = new(device, width, height); depth = new(device, width, height, isDepth: true);
-        }
-        if (air?.Width != width || air.Height != height)
-        { air?.Dispose(); air = null; air = new(device, width, height); }
-
         textures.Clear(); foreach (var pair in sceneTextures) textures[pair.Key] = pair.Value;
-        textures["PointLights"] = lightsView; textures["PointLightCount"] = countView;
-        textures["RasterAirlightLut"] = lookup.View;
-        textures["RasterLookupState"] = lookup.State;
+        textures["PointLights"] = lights!.View;
+        textures["RasterAirlightLut"] = lookup!.View;
+        textures["RasterLookupState"] = lookup!.State;
         samplers.Clear(); foreach (var pair in sceneSamplers) samplers[pair.Key] = pair.Value;
-        samplers["RasterLutSampler"] = lookup.Sampler;
+        samplers["RasterLutSampler"] = lookup!.Sampler;
         // Previous frame SRVs must be released before compute writes or target binding.
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
         if (!ReferenceEquals(lookupPrograms, program))
         {
-            lookup.Invalidate(context);
+            lookup!.Invalidate(context);
             lookupPrograms = program;
         }
         Mark("Raster lookup", true);
-        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup.StateOutput;
+        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup!.StateOutput;
         program.LookupPrepare.Bind(context, p, passBuffers, textures, samplers, lookupOutputs);
         context.Dispatch(1, 1, 1);
         context.CSSetUnorderedAccessView(0, null);
-        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutput"] = lookup.Output;
+        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutput"] = lookup!.Output;
         program.LookupBuild.Bind(context, p, passBuffers, textures, samplers, lookupOutputs);
-        context.Dispatch((AirlightLookup.Width + 7) / 8, (AirlightLookup.Height + 7) / 8, 1);
+        context.Dispatch((uint)((lookup!.Width + 7) / 8), (uint)((lookup!.Height + 7) / 8), 1);
         context.CSSetUnorderedAccessView(0, null);
         context.CSSetShaderResources(0, ShaderProgram.EmptyViews);
-        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup.StateOutput;
+        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup!.StateOutput;
         program.LookupCommit.Bind(context, p, passBuffers, textures, samplers, lookupOutputs);
         context.Dispatch(1, 1, 1);
         context.CSSetUnorderedAccessView(0, null);
         Mark("Raster lookup", false);
         Mark("Raster lights prepare", true);
         program.Lights.Bind(context, p, passBuffers, textures, samplers, outputs);
-        context.Dispatch((Capacity + 63) / 64, 1, 1);
+        if (LightCount != 0) context.Dispatch((LightCount + 63) / 64, 1, 1);
         context.CSSetUnorderedAccessView(0, null); context.CSSetUnorderedAccessView(1, null);
         context.CSSetShaderResources(0, ShaderProgram.EmptyViews); context.CSSetShader(null);
         Mark("Raster lights prepare", false);
-        Mark("Raster geometry prepare", true);
-        geometry.Prepare(context, program.Geometry, p, passBuffers, textures, samplers);
-        Mark("Raster geometry prepare", false);
         program.Geometry.Vertex.Bind(context, p, passBuffers, textures, samplers);
         program.Surface.Bind(context, p, passBuffers, textures, samplers);
         context.OMSetBlendState(null); context.OMSetDepthStencilState(depthState);
-        context.RSSetViewport(0, 0, width, height);
-        context.ClearRenderTargetView(surface.Color!, new(0, 0, 0, 0));
+        context.RSSetViewport(0, 0, surface!.Width, surface.Height);
+        context.ClearRenderTargetView(surface!.Color!, new(0, 0, 0, 0));
         context.ClearDepthStencilView(depth!.Depth!, DepthStencilClearFlags.Depth, 1, 0);
         context.OMSetRenderTargets(surface.Color!, depth.Depth);
-        Mark("Raster surface", true); geometry.Draw(context); Mark("Raster surface", false);
+        Mark("Raster surface", true); RasterGeometry.Draw(context, AllocatedSizes.Vertices, AllocatedSizes.Instances); Mark("Raster surface", false);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.OMSetDepthStencilState(null);
         textures["RasterDepth"] = depth.View;
         sceneTextures["RasterSurface"] = surface.View; sceneTextures["RasterDepth"] = depth.View;
-        sceneTextures["RasterAirlight"] = air.View; sceneTextures["PointLights"] = lightsView;
-        sceneTextures["PointLightCount"] = countView; sceneTextures["RasterAirlightLut"] = lookup.View; sceneTextures["RasterLookupState"] = lookup.State;
+        sceneTextures["RasterAirlight"] = air!.View; sceneTextures["PointLights"] = lights!.View;
+        sceneTextures["RasterAirlightLut"] = lookup!.View; sceneTextures["RasterLookupState"] = lookup!.State;
     }
     internal void IntegrateAirlight(Programs program, ShaderParameters? p)
     {
@@ -206,7 +236,7 @@ internal sealed class RasterLight : IDisposable
     }
     public void Dispose()
     {
-        surface?.Dispose(); depth?.Dispose(); air?.Dispose();
+        surface?.Dispose(); depth?.Dispose(); air?.Dispose(); lights?.Dispose(); lookup?.Dispose();
         for (int i = owned.Count - 1; i >= 0; i--) owned[i].Dispose(); owned.Clear();
     }
 }

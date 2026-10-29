@@ -1,6 +1,6 @@
 # Fluid scenes in plain HLSL
 
-All six fluid scenes use one host backend, `FluidSimulation`, and the shared
+Fluid scenes use one host backend, `FluidSimulation`, and the shared
 velocity/pressure passes in `Shaders/Common/FluidSimulation.hlsl`. The host does
 not select a solver by scene name, macro or source-text search. No manifest is
 required.
@@ -18,17 +18,18 @@ Declare a struct named `Fluid` inside `cbuffer Parameters`, containing:
 struct FluidSettings
 {
     bool PeriodicBoundary;
-    bool LowQuality;
     float Viscosity;
 };
+struct ResourceSizes { uint2 FluidVelocity; };
 cbuffer Parameters
 {
-    FluidSettings Fluid = { true, false, 0 };
+    ResourceSizes Sizes = { uint2(512,512) };
+    FluidSettings Fluid = { true, 0 };
 };
 #include "../Common/FluidSimulation.hlsl"
 ```
 
-The variable name and these three member names/types are reserved; the struct
+The variable name and these two member names/types are reserved; the struct
 type name is free. Additional members are scene-defined. The host validates and
 binds the required fields during compilation. It uses the final pixel shader's
 parameter buffer, or a fluid pass's reflected buffer when the final shader does
@@ -36,8 +37,9 @@ not use `Parameters`.
 
 - `PeriodicBoundary` selects periodic addressing instead of the existing wall/
   open-material-edge behavior. Changing it preserves simulation state.
-- `LowQuality` selects a 128x128 rather than 512x512 grid. Changing grid size
-  recreates simulation state. Both grids are square, independent of aspect ratio.
+- Sizes.FluidVelocity selects independent power-of-two axes (16..2048).
+  MandelFluid defaults to 512x512. Grid edits recreate simulation state.
+  See [resource sizes](resource-sizes.md).
 - `Viscosity` is normalized; shared HLSL maps it to `0.1 * value^3`. Zero skips
   the two diffusion draws.
 
@@ -135,7 +137,7 @@ fading afterglow. The old camera-flow carrier, distributed turbulence,
 vorticity confinement, material diffusion/dilution, material-cutting sink and
 edge sink are removed. `Flight.HalfLife` controls its shader-defined decay;
 `Flight.Flow` retains its role in procedural projection. Flight defaults to the
-128 grid and can select 512 with the same `Fluid.LowQuality` control.
+128 grid and can select 512 with the Sizes.FluidVelocity controls.
 
 Material lifetime and display illumination are independent. The ring scenes
 retain v4's decay; other payloads can persist and choose their own lighting.
@@ -144,13 +146,13 @@ audio-gated display, without assigning a lifetime rule to its stored channels.
 
 ## Validation
 
-GPU contract tests cover all six scenes, differing material attachment counts,
+GPU contract tests cover retained scenes, differing material attachment counts,
 signed scalar/vector payloads with shader-defined evolution, flow without
 material, and failed layout reloads retaining the working scene. Existing
 regressions cover pressure/curl, boundary wrapping, material attributes, cadence,
 viscosity, extreme input, reload/reset and silence.
 
 The 1280x720 smoke fixture checks shared material/velocity state, projection,
-silence and resize across the ring scenes:
+silence and resize for MandelFluid:
 `dotnet run --project tools/AEther.Smoke -c Release -- . --fluid-only`.
 State hashes and captures go to `tools/AEther.Smoke/artifacts`.

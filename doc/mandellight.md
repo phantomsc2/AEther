@@ -9,9 +9,11 @@ Intensity is linear in the component, with no additional history or ambient floo
 Silence renders black. The rings stay fixed while the camera and cubes can move.
 
 Defaults are 128 cubes, 60 lights per ring, radius 5.7, and shared gain 4x.
-`Lights.Count` maps to 1..96 lights per ring, `Radius` to 0..10 world units,
-and `Gain` to `2^(12*value-6)`. `Enabled` removes all lights. Geometry, atmosphere,
-and camera are shader-defined. Exposure is the shared Graphics
+Sizes.PointLights is the total count, default 180; the shader balances it across
+the three rings. Sizes.Geometry defaults to (36,128). Zero counts disable lights
+or geometry. Lights.Radius maps to 0..10 world units and Lights.Gain to
+2^(12*value-6). Geometry, atmosphere and camera remain shader-defined.
+See [resource sizes](resource-sizes.md). Exposure is the shared Graphics
 setting in stops; the former default -0.6-stop scene gain is a fixed shader constant.
 
 ## Point-light contract

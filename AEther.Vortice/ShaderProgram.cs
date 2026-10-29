@@ -49,9 +49,7 @@ internal sealed class ShaderProgram : IDisposable
                     || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
                 ShaderInputType.UnorderedAccessViewRWTyped => stage == 'c' && binding.Name is "RasterLookupOutput" or "RasterLookupOutputState",
                 ShaderInputType.Structured => binding.Name == "PointLights",
-                ShaderInputType.ByteAddress => binding.Name == "PointLightCount",
                 ShaderInputType.UnorderedAccessViewRWStructured => stage == 'c' && binding.Name == "PointLightOutput",
-                ShaderInputType.UnorderedAccessViewRWByteAddress => stage == 'c' && binding.Name is "GeometryDrawArguments" or "PointLightCountOutput",
                 _ => false,
             };
             if (entry == "PS" && (binding.Name is "FluidConstants" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction" or "ClampFluid" or "PressureSampler"
@@ -164,7 +162,7 @@ public sealed class ShaderScene : IDisposable
     internal bool ProgramReady => program != null;
     internal ShaderProgram Program => program ?? throw new InvalidOperationException($"Scene '{Name}' has not been compiled yet.");
     internal ShaderProgram CreateDefaultProgram() => new(device, source, "PS", Name + ".hlsl");
-    public ShaderParameters? Parameters => program?.Parameters ?? fluid?.Configuration.Values;
+    public ShaderParameters? Parameters { get; private set; }
     internal FluidSimulation.Programs? Fluid => fluid;
 
     internal RasterLight.Programs? Raster => raster;
@@ -190,6 +188,10 @@ public sealed class ShaderScene : IDisposable
                 if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
                 if (nextProgram.UsesFluid)
                     nextFluid = new(device, source, Name + ".hlsl", nextProgram);
+                Parameters = ShaderParameters.Merge(new[] { nextProgram.Parameters }
+                    .Concat(nextRaster?.ParameterLayouts ?? [])
+                    .Concat(nextFluid?.Shaders.Values.Select(p => p.Parameters) ?? []));
+                SceneSizes.Resolve(Parameters, nextRaster != null, nextFluid != null, 1280, 720);
                 program = nextProgram;
                 raster = nextRaster;
                 fluid = nextFluid;
@@ -221,6 +223,7 @@ public sealed class ShaderScene : IDisposable
         program = replacement.program; replacement.program = null;
         fluid = replacement.fluid; replacement.fluid = null;
         raster = replacement.raster; replacement.raster = null;
+        Parameters = replacement.Parameters;
         initialized = true;
     }
     public void Dispose() => DisposePrograms();

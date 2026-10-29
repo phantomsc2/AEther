@@ -2,15 +2,17 @@
 #include "../Common/Projection.hlsl"
 
 // Three fixed spectral point-light rings. Geometry and lighting live in HLSL.
-struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
+struct ShapeSettings { float Seed; float Size; float Spread; float Speed; float3 Albedo; };
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
-struct LightSettings { bool Enabled; float Count; float Radius; float Gain; };
+struct LightSettings { float Radius; float Gain; };
 struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; };
+struct ResourceSizes { uint PointLights; uint2 Geometry; uint2 RasterAirlightLut; };
 cbuffer Parameters : register(b1)
 {
-    ShapeSettings Shape = { true, .03101343, .25, .45, .75, .1, float3(.65,.7,.75) };
+    ResourceSizes Sizes = { 180, uint2(36,128), uint2(513,1025) };
+    ShapeSettings Shape = { .25, .45, .75, .1, float3(.65,.7,.75) };
     AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
-    LightSettings Lights = { true, .62105263, .57, .66666667 };
+    LightSettings Lights = { .57, .66666667 };
     ViewSettings View = { .55, .15, .5 };
 };
 ProjectionCamera SceneCamera()
@@ -29,10 +31,6 @@ ProjectionCamera SceneCamera()
 
 float3 AirScatter() { return .3*Air.Density*Air.Density*Air.Scattering; }
 float3 AirExtinction() { return .3*Air.Density*Air.Density*(Air.Scattering+Air.Absorption); }
-uint2 GeometryCount()
-{
-    return uint2(36,Shape.Enabled ? 1+(uint)round(4095*Shape.Count) : 0);
-}
 GeometryVertex EvaluateGeometry(uint vertex, uint instance)
 {
     int face=vertex/6, corner=vertex%6;
@@ -54,11 +52,14 @@ GeometryVertex EvaluateGeometry(uint vertex, uint instance)
 }
 // Fixed lighting calibration preserves the former default exposure (-0.6 stops).
 static const float SceneLightGain = exp2(-.6);
-uint LightCount() { return Lights.Enabled ? 3*(1+(uint)round(95*Lights.Count)) : 0; }
 PointLight EvaluateLight(uint index)
 {
-    uint count=1+(uint)round(95*Lights.Count), ring=index/count;
-    float angle=2*Pi*(index%count)/count;
+    uint total=Sizes.PointLights;
+    uint first=(total+2)/3, second=(total+1)/3;
+    uint ring=index<first ? 0 : index<first+second ? 1 : 2;
+    uint start=ring==0 ? 0 : ring==1 ? first : first+second;
+    uint count=ring==0 ? first : ring==1 ? second : total-first-second;
+    float angle=2*Pi*(index-start)/max(1,count);
     float2 p=float2(sin(angle),cos(angle));
     float frequency=atan2(abs(p.x),-p.y)/Pi;
     float stereo=.5+.5*p.x*abs(p.x);
@@ -74,9 +75,10 @@ PointLight EvaluateLight(uint index)
 }
 float4 PS(PSin input) : SV_Target
 {
-    int2 pixel=(int2)input.Position.xy;
+    uint w,h; RasterSurface.GetDimensions(w,h);
+    int2 pixel=min(int2(input.UV*float2(w,h)),int2(w-1,h-1));
     float3 origin,direction; float end; bool hit;
     RasterRay(pixel,origin,direction,hit,end);
     float3 surface=hit ? RasterSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
-    return LinearOutput(SceneLightGain*(surface+(any(AirScatter()>0) ? RasterAirlight.Load(int3(pixel,0)).rgb : 0)));
+    return LinearOutput(SceneLightGain*(surface+(any(AirScatter()>0) ? RasterAirlight.SampleLevel(Linear,input.UV,0).rgb : 0)));
 }

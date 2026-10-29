@@ -50,7 +50,7 @@ public partial class ShaderRenderingTests
         PointFeed(renderer, -1); renderer.Render(false);
         Assert.That(PointRecords(renderer).All(x => x.Intensity == Vector3.Zero), Is.True);
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i%4 != 3), Is.All.Zero);
-        PointSet(renderer, "Lights.Enabled", false); PointFeed(renderer, 0); renderer.Render(false);
+        PointSet(renderer, "Sizes.PointLights", 0u); PointFeed(renderer, 0); renderer.Render(false);
         Assert.That(PointRecords(renderer), Is.Empty);
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i%4 != 3), Is.All.Zero);
         Assert.That(passes, Does.Contain("Raster lights prepare"));
@@ -59,15 +59,14 @@ public partial class ShaderRenderingTests
     }
 
     [Test, Category("GPU")]
-    public void PointLightContractOwnsCountsAndPropertiesWithoutReservedLightSettings()
+    public void PointLightSetupOwnsCountAndPropertiesRemainShaderDefined()
     {
         using var shaders = new SceneShaders("MandelLight");
         string file = Path.Combine(shaders.Path, "Scenes", "MandelLight.hlsl");
         string source = File.ReadAllText(file);
-        int begin = source.IndexOf("uint LightCount()", StringComparison.Ordinal);
+        int begin = source.IndexOf("PointLight EvaluateLight(uint index)", StringComparison.Ordinal);
         int end = source.IndexOf("float4 PS(", begin, StringComparison.Ordinal);
         source = source[..begin] + """
-            uint LightCount() { return Lights.Enabled ? (uint)round(700*Lights.Count) : 0; }
             PointLight EvaluateLight(uint index)
             {
                 PointLight light;
@@ -80,17 +79,17 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 64, 36, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLight");
-        PointSet(renderer, "Emitters.Count", 1f); PointFeed(renderer, 0); renderer.Render(false);
+        PointSet(renderer, "Sizes.PointLights", 700u); PointFeed(renderer, 0); renderer.Render(false);
         var records = PointRecords(renderer);
-        Assert.That(records.Length, Is.EqualTo(512));
-        Assert.That(records[^1].Position.X, Is.EqualTo(.511).Within(.00001));
+        Assert.That(records.Length, Is.EqualTo(700));
+        Assert.That(records[^1].Position.X, Is.EqualTo(.699).Within(.00001));
         Assert.That(records[0].Position.Y, Is.EqualTo(5.7).Within(.00001));
-        PointSet(renderer, "Emitters.Count", .01f); PointSet(renderer, "Emitters.Radius", .2f);
+        PointSet(renderer, "Sizes.PointLights", 7u); PointSet(renderer, "Emitters.Radius", .2f);
         PointFeed(renderer, 0); renderer.Render(false);
         records = PointRecords(renderer);
         Assert.That(records.Length, Is.EqualTo(7));
         Assert.That(records.All(x => Math.Abs(x.Position.Y-2)<.00001), Is.True);
-        PointSet(renderer, "Emitters.Enabled", false); renderer.Render(false);
+        PointSet(renderer, "Sizes.PointLights", 0u); renderer.Render(false);
         Assert.That(PointRecords(renderer), Is.Empty);
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i%4 != 3), Is.All.Zero);
     }
@@ -103,10 +102,9 @@ public partial class ShaderRenderingTests
         {
             string file = Path.Combine(shaders.Path, "Scenes", "MandelLight.hlsl");
             string source = File.ReadAllText(file);
-            int begin = source.IndexOf("uint2 GeometryCount()", StringComparison.Ordinal);
+            int begin = source.IndexOf("GeometryVertex EvaluateGeometry", StringComparison.Ordinal);
             int end = source.IndexOf("static const float SceneLightGain", begin, StringComparison.Ordinal);
             source = source[..begin] + """
-                uint2 GeometryCount() { return uint2(6,1); }
                 GeometryVertex EvaluateGeometry(uint vertex, uint instance)
                 {
                     float2 corners[6]={float2(-1,-1),float2(-1,1),float2(1,-1),
@@ -119,15 +117,15 @@ public partial class ShaderRenderingTests
                     return v;
                 }
                 """ + source[end..];
-            File.WriteAllText(file, source);
+            File.WriteAllText(file, source.Replace("uint2(36,128)", "uint2(6,1)"));
         }
         const int width = 64, height = 36;
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, width, height, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLight");
         PointSet(renderer, "View.CameraSpeed", 0f); PointSet(renderer, "View.CameraDistance", .6f);
-        PointSet(renderer, "Lights.Count", 0f); PointSet(renderer, "Lights.Gain", .5f);
-        PointSet(renderer, "Shape.Enabled", false); PointSet(renderer, "Air.Density", .4f);
+        PointSet(renderer, "Sizes.PointLights", 3u); PointSet(renderer, "Lights.Gain", .5f);
+        if (!surfaceClipped) PointSet(renderer, "Sizes.Geometry.y", 0u); PointSet(renderer, "Air.Density", .4f);
         foreach (char axis in "xyz") { PointSet(renderer, "Air.Scattering."+axis, .5f); PointSet(renderer, "Air.Absorption."+axis, 0f); }
         PointRender(renderer, () => PointFeed(renderer, 0, .0225, .0225));
         byte[] pixels = renderer.ReadPixels(false);
@@ -212,15 +210,16 @@ public partial class ShaderRenderingTests
         return result;
     }
     static void PointSet(Renderer renderer, string path, float value) => renderer.ActiveShader!.Parameters!.SetFloat(PointFind(renderer,path),value);
+    static void PointSet(Renderer renderer, string path, uint value) => renderer.ActiveShader!.Parameters!.SetUnsigned(PointFind(renderer,path),value);
     static void PointSet(Renderer renderer, string path, bool value) => renderer.ActiveShader!.Parameters!.SetBoolean(PointFind(renderer,path),value);
     static T PointField<T>(object value, string name) => (T)value.GetType().GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(value)!;
     static (Vector3 Position, Vector3 Intensity)[] PointRecords(Renderer renderer)
     {
         var device=PointField<ID3D11Device>(renderer,"device"); var context=PointField<ID3D11DeviceContext>(renderer,"context");
-        var transport=PointField<object>(renderer,"rasterLight");
+        var transport=PointField<RasterLight>(renderer,"rasterLight");
         byte[] Read(string field)
         {
-            using var resource=PointField<ID3D11ShaderResourceView>(transport,field).Resource;
+            using var resource=transport.LightsView.Resource;
             using var source=resource.QueryInterface<ID3D11Buffer>();
             using var staging=device.CreateBuffer(new BufferDescription {ByteWidth=source.Description.ByteWidth,Usage=ResourceUsage.Staging,CPUAccessFlags=CpuAccessFlags.Read});
             context.CopyResource(staging,source);
@@ -228,7 +227,7 @@ public partial class ShaderRenderingTests
             try { var bytes=new byte[source.Description.ByteWidth]; Marshal.Copy(map.DataPointer,bytes,0,bytes.Length); return bytes; }
             finally { context.Unmap(staging,0); }
         }
-        int count=BitConverter.ToInt32(Read("countView")); byte[] records=Read("lightsView");
+        int count=(int)transport.LightCount; byte[] records=Read("lightsView");
         return Enumerable.Range(0,count).Select(i=>(Vector(i*24),Vector(i*24+12))).ToArray();
         Vector3 Vector(int at) => new(BitConverter.ToSingle(records,at),BitConverter.ToSingle(records,at+4),BitConverter.ToSingle(records,at+8));
     }

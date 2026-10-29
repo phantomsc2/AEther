@@ -31,6 +31,7 @@ internal static partial class Program
         return result;
     }
     static void Set(Renderer renderer, string path, float value) => renderer.ActiveShader!.Parameters!.SetFloat(Find(renderer, path), value);
+    static void SetSize(Renderer renderer, string path, uint value) => renderer.ActiveShader!.Parameters!.SetUnsigned(Find(renderer, path), value);
     static void Set(Renderer renderer, string path, bool value) => renderer.ActiveShader!.Parameters!.SetBoolean(Find(renderer, path), value);
     static void Save(byte[] rgba, int width, int height, string path)
     {

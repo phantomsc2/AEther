@@ -10,6 +10,8 @@ public sealed class ShaderParameter
     public string Name { get; }
     public string Path { get; }
     public bool IsBoolean { get; }
+    public bool IsUnsigned => Kind.Contains(":UInt:", StringComparison.Ordinal);
+    public bool IsSize => Path.StartsWith("Sizes.", StringComparison.Ordinal);
     public IReadOnlyList<ShaderParameter> Children { get; }
     internal int Offset { get; }
     internal string Kind { get; }
@@ -40,7 +42,7 @@ public sealed class ShaderParameters
         Items = items.OrderBy(x => x.Name, StringComparer.Ordinal).ToArray();
         defaults = (byte[])Data.Clone();
         foreach (var item in Leaves(Items))
-            if (!item.IsBoolean && (!float.IsFinite(GetFloat(item)) || GetFloat(item) is < 0 or > 1))
+            if (!item.IsBoolean && !item.IsUnsigned && (!float.IsFinite(GetFloat(item)) || GetFloat(item) is < 0 or > 1))
                 throw new InvalidOperationException($"Parameters.{item.Path}: float defaults must be in [0, 1].");
     }
 
@@ -58,19 +60,82 @@ public sealed class ShaderParameters
                 children.Add(Read(member, memberName, path + "." + memberName, offset + (int)member.Description.Offset));
             }
         }
-        else if (d.Class == ShaderVariableClass.Vector && d.Type == ShaderVariableType.Float)
+        else if (d.Class == ShaderVariableClass.Vector && d.Type is ShaderVariableType.Float or ShaderVariableType.UInt)
         {
             for (int i = 0; i < d.ColumnCount; i++)
-                children.Add(new("xyzw"[i].ToString(), path + "." + "xyzw"[i], offset + 4 * i, false, []));
+                children.Add(new("xyzw"[i].ToString(), path + "." + "xyzw"[i], offset + 4 * i, false, [], $"Scalar:{d.Type}:1"));
         }
-        else if (d.Class != ShaderVariableClass.Scalar || d.Type is not (ShaderVariableType.Float or ShaderVariableType.Bool))
-            throw new InvalidOperationException($"Parameters.{path}: only float, float vectors, bool and structs are supported.");
+        else if (d.Class != ShaderVariableClass.Scalar || d.Type is not (ShaderVariableType.Float or ShaderVariableType.Bool or ShaderVariableType.UInt))
+            throw new InvalidOperationException($"Parameters.{path}: only float, uint, vectors, bool and structs are supported.");
+        if (d.Type == ShaderVariableType.UInt && !path.StartsWith("Sizes.", StringComparison.Ordinal))
+            throw new InvalidOperationException($"Parameters.{path}: uint controls belong in Sizes.");
         return new(name, path, offset, d.Type == ShaderVariableType.Bool,
-            children.OrderBy(x => x.Name, StringComparer.Ordinal).ToList(), $"{d.Class}:{d.Type}:{d.ColumnCount}");
+            children.OrderBy(x => x.Name, StringComparer.Ordinal).ToList(), d.Class == ShaderVariableClass.Struct ? "Struct" : $"{d.Class}:{d.Type}:{d.ColumnCount}");
     }
 
     public float GetFloat(ShaderParameter parameter) { lock (SyncRoot) return BitConverter.ToSingle(Data, parameter.Offset); }
     public bool GetBoolean(ShaderParameter parameter) { lock (SyncRoot) return BitConverter.ToInt32(Data, parameter.Offset) != 0; }
+    public uint GetUnsigned(ShaderParameter parameter)
+    {
+        if (!parameter.IsUnsigned || parameter.Children.Count != 0) throw new ArgumentException("Expected a uint leaf.", nameof(parameter));
+        lock (SyncRoot) return BitConverter.ToUInt32(Data, parameter.Offset);
+    }
+    public void SetUnsigned(ShaderParameter parameter, uint value)
+    {
+        if (!parameter.IsUnsigned || parameter.Children.Count != 0) throw new ArgumentException("Expected a uint leaf.", nameof(parameter));
+        lock (SyncRoot)
+        {
+            if (BitConverter.ToUInt32(Data, parameter.Offset) == value) return;
+            BitConverter.TryWriteBytes(Data.AsSpan(parameter.Offset, 4), value);
+            version++;
+        }
+    }
+    ShaderParameters(ShaderParameters source)
+    {
+        Items = source.Items;
+        defaults = source.defaults;
+        Data = (byte[])source.Data.Clone();
+        version = source.version;
+    }
+    ShaderParameters(IReadOnlyList<ShaderParameter> items, byte[] data)
+    { Items = items; Data = data; defaults = (byte[])data.Clone(); }
+    internal static ShaderParameters? Merge(IEnumerable<ShaderParameters?> layouts)
+    {
+        var sources = layouts.OfType<ShaderParameters>().ToArray();
+        if (sources.Length == 0) return null;
+        var bytes = new List<byte>();
+        var items = MergeItems(sources.SelectMany(s => s.Items.Select(p => (s, p))));
+        return new(items, bytes.ToArray());
+        IReadOnlyList<ShaderParameter> MergeItems(IEnumerable<(ShaderParameters s, ShaderParameter p)> entries) =>
+            entries.GroupBy(e => e.p.Name).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g =>
+            {
+                var first = g.First();
+                if (g.Any(e => e.p.Kind != first.p.Kind))
+                    throw new InvalidOperationException($"Parameters.{first.p.Path}: conflicting types across shader stages.");
+                var offset = bytes.Count;
+                var children = MergeItems(g.SelectMany(e => e.p.Children.Select(p => (e.s, p))));
+                if (children.Count == 0)
+                {
+                    var value = first.s.defaults.AsSpan(first.p.Offset, 4).ToArray();
+                    if (g.Any(e => !e.s.defaults.AsSpan(e.p.Offset, 4).SequenceEqual(value)))
+                        throw new InvalidOperationException($"Parameters.{first.p.Path}: conflicting defaults across shader stages.");
+                    bytes.AddRange(value);
+                }
+                return new ShaderParameter(first.p.Name, first.p.Path, offset, first.p.IsBoolean, children.ToList(), first.p.Kind);
+            }).ToArray();
+    }
+    internal ShaderParameters Snapshot() { lock (SyncRoot) return new(this); }
+    internal void RestoreSizes(ShaderParameters previous)
+    {
+        var old = Leaves(previous.Items).Where(p => p.IsSize).ToDictionary(p => p.Path);
+        lock (SyncRoot)
+        {
+            foreach (var p in Leaves(Items).Where(p => p.IsSize))
+                if (old.TryGetValue(p.Path, out var match) && p.Kind == match.Kind)
+                    previous.Data.AsSpan(match.Offset, 4).CopyTo(Data.AsSpan(p.Offset, 4));
+            version++;
+        }
+    }
     public void SetFloat(ShaderParameter parameter, float value)
     {
         if (!float.IsFinite(value) || value is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(value));

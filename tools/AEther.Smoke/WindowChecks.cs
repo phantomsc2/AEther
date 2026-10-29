@@ -37,6 +37,7 @@ internal static partial class Program
             app.StartChecks = () =>
             {
                 CheckEventSummary();
+                CheckResourceSizeEditors();
                 var started = 0;
                 var host = new MainWindow(() => new SyntheticSource(() => started++), shaders);
                 T Field<T>(string name) => (T)typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
@@ -291,8 +292,8 @@ internal static partial class Program
                                     throw new Exception("Audio edit replaced the graphics session.");
                                 if (canvasWindow.AppWindow.Position != canvasPosition || canvasWindow.Title != "")
                                     throw new Exception("Audio edit moved or labeled the canvas.");
-                                var retained = current.Renderer.ActiveShader!.Parameters!;
-                                if (current.Renderer.SceneName != "Spectrum" || retained.GetBoolean(Find(retained, "ShowS")))
+                                var retained = current.Renderer.GetSceneParameters("Spectrum")!;
+                                if (current.Renderer.SceneName != null || retained.GetBoolean(Find(retained, "ShowS")))
                                     throw new Exception("Audio edit lost shader state.");
                                 var closedPicker = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
                                 if (closedPicker.SelectedItem != null || canvasWindow.IsVisible || shadersVisible())
@@ -404,6 +405,40 @@ internal static partial class Program
             yield return child;
             foreach (var descendant in Descendants(child)) yield return descendant;
         }
+    }
+
+    static void CheckResourceSizeEditors()
+    {
+        var code = AEther.Vortice.ShaderSource.Compile("""
+            struct ResourceSizes { uint2 FluidVelocity; uint PointLights; };
+            cbuffer Parameters { ResourceSizes Sizes = { uint2(512,512), 180 }; };
+            float4 PS() : SV_Target { return Sizes.PointLights; }
+            """, "PS", "SizeEditors.hlsl", "ps_5_0");
+        using var reflection = Vortice.D3DCompiler.Compiler.Reflect<Vortice.Direct3D11.Shader.ID3D11ShaderReflection>(code.Span);
+        var values = new AEther.Vortice.ShaderParameters(reflection.GetConstantBufferByName("Parameters"));
+        void Check(string path, double numberValue, double sliderValue, uint expected)
+        {
+            var parameter = Find(values, path);
+            var row = (Grid)typeof(ShaderPanel).GetMethod("Editor", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, new object[] { values, parameter })!;
+            var controls = row.Children.OfType<Grid>().Single();
+            var number = controls.Children.OfType<NumberBox>().Single();
+            var slider = controls.Children.OfType<Slider>().Single();
+            number.Value = numberValue;
+            if (values.GetUnsigned(parameter) != expected || slider.Value != sliderValue)
+                throw new Exception($"Size editor did not commit {path} as an integer.");
+            if (path.Contains("FluidVelocity"))
+            {
+                slider.Value = 7;
+                if (values.GetUnsigned(parameter) != 128 || number.Value != 128)
+                    throw new Exception("Fluid slider must select power-of-two dimensions.");
+            }
+            else if (slider.Maximum < numberValue)
+                throw new Exception("Integer numeric entry did not extend its slider range.");
+        }
+        Check("Sizes.FluidVelocity.x", 256, 8, 256);
+        Check("Sizes.FluidVelocity.y", 511, 9, 512);
+        Check("Sizes.PointLights", 2000, 2000, 2000);
     }
 
     static void CheckEventSummary()

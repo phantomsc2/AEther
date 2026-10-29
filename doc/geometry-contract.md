@@ -1,46 +1,27 @@
 # Procedural raster geometry
 
-`RasterGeometry` executes one non-indexed, instanced triangle-list draw. HLSL
-owns both counts and all vertex construction. There is no CPU geometry count,
-vertex buffer, index buffer, count readback, or reserved `Shape` parameter group.
-The consumer is [RasterLight](raster-airlight-contract.md), used by
-[MandelLight](mandellight.md).
+RasterGeometry submits one non-indexed triangle-list DrawInstanced call.
+The scene declares default (vertices per instance, instance count) in
+`uint2 Parameters.Sizes.Geometry`; the backend owns the live counts.
+See [resource sizes](resource-sizes.md).
 
-Include `Common/RasterGeometry.hlsl` and implement:
+Include Common/RasterGeometry.hlsl and implement:
 
 ```hlsl
-uint2 GeometryCount(); // (vertices per instance, instances)
 GeometryVertex EvaluateGeometry(uint vertex, uint instance);
-float4 GeometryProject(float3 world); // homogeneous clip position
+float4 GeometryProject(float3 world);
 ```
 
-RasterLight supplies GeometryProject through the [shader-owned camera](projection-contract.md).
+RasterLight supplies GeometryProject through the shared shader camera.
+GeometryVertex contains float3 World, Normal and Albedo. The vertex wrapper
+projects each vertex and forwards flat normal/albedo values. Positions, normals,
+colors and animation remain shader-defined.
 
-`GeometryVertex` contains `float3 World`, `Normal`, and `Albedo`. Normals are
-world-space unit vectors. The shared vertex wrapper outputs world position and
-flat, noninterpolated normal/albedo for the surface shader. It does not interpret
-object identity or connectivity. A scene may construct unrelated triangles,
-several solids, patches, or repeated objects from the two IDs.
+There is no count preparation dispatch, indirect argument buffer, count readback,
+vertex buffer or index buffer. Zero vertices or instances draw nothing. Supply a
+multiple of three vertices for complete triangles. MandelLight defaults to
+36 vertices per cube and 128 instances.
 
-The include provides two entry points:
-
-- `PrepareGeometry`, a one-thread compute shader, writes all four uints of the
-  16-byte `GeometryDrawArguments` raw UAV at `u0`: vertex count per instance,
-  instance count, start vertex (zero), start instance (zero).
-- `RasterGeometryVS` evaluates each vertex and projects it through the consumer's
-  `GeometryProject` callback.
-
-The host dispatches `(1,1,1)` once per frame, unbinds the UAV, and calls
-`DrawInstancedIndirect` for the camera view using the same argument buffer.
-Zero instances or zero vertices draw nothing. For triangle lists, supply a
-multiple of three vertices. All instances in this draw have the same vertex
-count; scenes can flatten variable geometry into one instance when appropriate.
-No mesh storage or arbitrary working-buffer allocation is introduced by this contract.
-
-Each compute, vertex, and pixel entry point has its own reflected parameter and
-resource bindings. Geometry callbacks may use `Parameters`, `FrameConstants`,
-and the existing spectrum/history textures and samplers. Counts can depend on
-frame or audio inputs just like positions. Geometry and camera callbacks define world-space construction and projection.
-
-MandelLight implements 36 vertices per cube and shader-defined instance counts.
-RasterLight supplies camera projection, surface lighting and camera depth targets.
+Each stage binds resources independently through reflection. Parameter layouts
+merge by path across stages; conflicting types/defaults are errors. Counts are
+user-controlled setup values; vertex behavior can still use frame/audio inputs.

@@ -37,6 +37,12 @@ public sealed partial class Renderer : IDisposable
 
     RasterLight? rasterLight;
 
+    ShaderParameters? snapshotSource, frameParameters, workingParameters;
+    string? workingScene;
+    long snapshotVersion = -1;
+    string? sizeError;
+    SceneSizes? requestedSizes;
+    int requestedWidth, requestedHeight;
     string? previousScene;
     internal FluidSimulation Fluid => fluid!;
     internal FluidSimulation.Programs FluidPrograms => scenes[SceneName!].Fluid!;
@@ -343,7 +349,8 @@ public sealed partial class Renderer : IDisposable
                 else nextScenes.Add(name, new ShaderScene(device, name, source, compileImmediately: false));
             }
             var selected = SceneName == null ? null : nextScenes.GetValueOrDefault(SceneName);
-            if (selected?.Parameters != null && savedParameters.TryGetValue(selected.Name, out var saved)) selected.Parameters.Restore(saved);
+            if (selected?.Parameters != null && scenes.GetValueOrDefault(selected.Name)?.Parameters == null
+                && savedParameters.TryGetValue(selected.Name, out var saved)) selected.Parameters.Restore(saved);
             foreach (var scene in scenes.Values)
             {
                 if (scene.Parameters != null) savedParameters[scene.Name] = scene.Parameters;
@@ -383,8 +390,7 @@ public sealed partial class Renderer : IDisposable
         if (newWidth < 1 || newHeight < 1 || newWidth == width && newHeight == height) return;
         output.Resize(newWidth, newHeight);
         width = newWidth; height = newHeight;
-        // Resizing changes the physical domain. Recreate lazily on next fluid frame.
-        fluid?.Dispose(); fluid = null;
+        // Scene resources are replaced transactionally on the next frame.
     }
 
     public void Render(bool present = true, uint syncInterval = 1, long? presentationTimestamp = null,
@@ -488,27 +494,71 @@ public sealed partial class Renderer : IDisposable
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
         // Compatibility names refer to the core evidence, including in geometry stages.
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
+        var source = active.Parameters;
+        bool parametersChanged = !ReferenceEquals(snapshotSource, source) || snapshotVersion != (source?.Version ?? 0);
+        if (parametersChanged)
+        {
+            requestedSizes = null;
+            snapshotSource = source;
+            frameParameters = source?.Snapshot();
+            snapshotVersion = frameParameters?.Version ?? 0;
+        }
+        var p = frameParameters;
+        SceneSizes sizes;
+        try
+        {
+            if (requestedWidth != width || requestedHeight != height) requestedSizes = null;
+            sizes = requestedSizes ?? SceneSizes.Resolve(p, active.Raster != null, active.Fluid != null, width, height);
+            requestedSizes = sizes; requestedWidth = width; requestedHeight = height;
+            if (active.Raster != null)
+            {
+                rasterLight ??= new(device, context);
+                rasterLight.Configure(sizes);
+            }
+            if (active.Fluid != null && (fluid == null || !fluid.CompatibleWith(active.Fluid, sizes) || fluid.Aspect != width / (float)height))
+            {
+                var nextFluid = new FluidSimulation(device, context, width, height, active.Fluid, sizes);
+                fluid?.Dispose(); fluid = nextFluid;
+            }
+            workingParameters = p; workingScene = active.Name;
+            if (parametersChanged)
+            {
+                if (sizeError != null && ShaderError == sizeError)
+                { ShaderError = null; ShadersChanged?.Invoke(this, EventArgs.Empty); }
+                sizeError = null;
+            }
+        }
+        catch (Exception error)
+        {
+            sizeError = ShaderError = error.Message;
+            ShaderFailed(error);
+            if (workingScene != active.Name || workingParameters == null) throw;
+            requestedSizes = null;
+            source!.RestoreSizes(workingParameters);
+            frameParameters = p = source.Snapshot();
+            snapshotVersion = p.Version;
+            sizes = SceneSizes.Resolve(p, active.Raster != null, active.Fluid != null, width, height);
+            ShadersChanged?.Invoke(this, EventArgs.Empty);
+        }
         if (active.Raster != null)
         {
             rasterLight ??= new(device, context);
             namedSamplers["RasterLutSampler"] = rasterLight.LookupSampler;
-            var p = active.Parameters;
             rasterLight.PassMarker = GpuMarker;
             rasterLight.Prepare(active.Raster, p, width, height, namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
             rasterLight.IntegrateAirlight(active.Raster, p);
+            context.RSSetViewport(0, 0, width, height);
         }
         if (active.Fluid != null)
         {
-            if (fluid != null && !fluid.CompatibleWith(active.Fluid))
-            { fluid.Dispose(); fluid = null; }
-            fluid ??= new(device, context, width, height, active.Fluid);
-            fluid.PassMarker = GpuMarker;
+
+            fluid!.PassMarker = GpuMarker;
             fluid.DrawMarker = gpu.Annotate;
             if (previousScene != SceneName || dt > .5) fluid.Clear();
             GpuMarker("Fluid", true);
             fluid.Advance(dt, Audio.TimeScale / Audio.Seconds, active.Fluid,
-                active.Parameters, namedBuffers, namedTextures, namedSamplers, !FixedFluidMaterialCadence);
+                p, namedBuffers, namedTextures, namedSamplers, !FixedFluidMaterialCadence);
             GpuMarker("Fluid", false);
             fluid.Publish(namedTextures);
             namedSamplers["FluidSampler"] = fluid.Sampler;
@@ -517,7 +567,7 @@ public sealed partial class Renderer : IDisposable
         previousScene = SceneName;
         context.OMSetRenderTargets(output.SceneTarget!);
         GpuMarker("Scene", true);
-        active.Program.Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
+        active.Program.Bind(context, p, namedBuffers, namedTextures, namedSamplers);
         if (active.Raster != null) GpuMarker("Raster composite", true);
 
         context.Draw(3, 0);

@@ -11,8 +11,10 @@ public partial class ShaderRenderingTests
     const string RasterProbe = """
         #include "../Common/Projection.hlsl"
         struct MediumSettings { float Density; float3 Scattering; float3 Absorption; };
+        struct ResourceSizes { uint PointLights; uint2 Geometry; uint2 RasterAirlightLut; };
         cbuffer Parameters
         {
+            ResourceSizes Sizes = { 1, uint2(6,1), uint2(513,1025) };
             MediumSettings Medium = { 0, float3(1,1,1), float3(0,0,0) };
         };
         ProjectionCamera SceneCamera()
@@ -21,13 +23,11 @@ public partial class ShaderRenderingTests
         #include "../Common/RasterLight.hlsl"
         float3 AirScatter() { return .3*Medium.Density*Medium.Density*Medium.Scattering; }
         float3 AirExtinction() { return .3*Medium.Density*Medium.Density*(Medium.Scattering+Medium.Absorption); }
-        uint2 GeometryCount() { return uint2(6,1); }
         GeometryVertex EvaluateGeometry(uint vertex, uint instance)
         {
             float2 c[6]={float2(-1,-1),float2(-1,1),float2(1,-1),float2(1,-1),float2(-1,1),float2(1,1)};
             GeometryVertex v; v.World=float3(100*c[vertex],8); v.Normal=float3(0,0,-1); v.Albedo=.5; return v;
         }
-        uint LightCount() { return 1; }
         PointLight EvaluateLight(uint index)
         { PointLight l; l.Position=0; l.Intensity=100; return l; }
         float4 PS(PSin input) : SV_Target
@@ -61,11 +61,13 @@ public partial class ShaderRenderingTests
         {
             File.WriteAllText(file,RasterProbe.Replace("uint2(6,1)",counts));
             Assert.That(renderer.ReloadShaders(),Is.True,renderer.ShaderError);
+            renderer.ActiveShader!.Parameters!.Reset();
             renderer.Render(false);
             Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero);
         }
         File.WriteAllText(file,RasterProbe);
         Assert.That(renderer.ReloadShaders(),Is.True,renderer.ShaderError);
+        renderer.ActiveShader!.Parameters!.Reset();
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(pixels));
         File.WriteAllText(file,RasterProbe.Replace("return .3*Medium.Density*Medium.Density*(Medium.Scattering+Medium.Absorption);","return MissingMedium;"));
@@ -73,14 +75,14 @@ public partial class ShaderRenderingTests
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(pixels));
 
-        // Medium callbacks can be constant: no reserved fields or even Parameters are required.
+        // Medium callbacks can be constant; only the Sizes contract is required.
         string constant=System.Text.RegularExpressions.Regex.Replace(RasterProbe,
-            @"struct MediumSettings[\s\S]*?(?=ProjectionCamera SceneCamera)", "");
+            @"struct MediumSettings[^\n]*\n| +MediumSettings Medium[^\n]*\n", "");
         constant=constant.Replace("return .3*Medium.Density*Medium.Density*Medium.Scattering;","return 0;")
             .Replace("return .3*Medium.Density*Medium.Density*(Medium.Scattering+Medium.Absorption);","return 0;");
         File.WriteAllText(file,constant);
         Assert.That(renderer.ReloadShaders(),Is.True,renderer.ShaderError);
-        Assert.That(renderer.ActiveShader!.Parameters,Is.Null);
+        Assert.That(renderer.ActiveShader!.Parameters!.Items.Select(p => p.Name), Is.EqualTo(new[] { "Sizes" }));
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(pixels));
     }

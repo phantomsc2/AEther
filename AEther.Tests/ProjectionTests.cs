@@ -102,9 +102,8 @@ public partial class ShaderRenderingTests
     {
         using var shaders=new SceneShaders("MandelLight");
         string file=Path.Combine(shaders.Path,"Scenes","MandelLight.hlsl"),source=File.ReadAllText(file);
-        int begin=source.IndexOf("uint2 GeometryCount()",StringComparison.Ordinal),end=source.IndexOf("static const float SceneLightGain",begin,StringComparison.Ordinal);
+        int begin=source.IndexOf("GeometryVertex EvaluateGeometry",StringComparison.Ordinal),end=source.IndexOf("static const float SceneLightGain",begin,StringComparison.Ordinal);
         source=source[..begin]+"""
-            uint2 GeometryCount() { return uint2(6,1); }
             GeometryVertex EvaluateGeometry(uint vertex, uint instance)
             {
                 float2 corners[6]={float2(-1,-1),float2(-1,1),float2(1,-1),float2(1,-1),float2(-1,1),float2(1,1)};
@@ -125,7 +124,7 @@ public partial class ShaderRenderingTests
                 return float4((depth>=1 || error>.003).xxx+RasterSurface.Load(int3(pixel,0)).rgb,1);
             }
             """;
-        File.WriteAllText(file,source);
+        File.WriteAllText(file,source.Replace("uint2(36,128)", "uint2(6,1)"));
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,width,height,32,60,shaderDirectory:shaders.Path,initialScene:"MandelLight");
         renderer.Render(false);
@@ -138,7 +137,7 @@ public partial class ShaderRenderingTests
         using var shaders=new SceneShaders(scene);
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,96,54,32,60,shaderDirectory:shaders.Path,timeProvider:new PointClock(),initialScene:scene);
-        PointSet(renderer,"Shape.Enabled",false);
+        PointSet(renderer,"Sizes.Geometry.y",0u);
         PointRender(renderer,()=>PointFeed(renderer,0));
         byte[] original=renderer.ReadPixels(false);
         Assert.That(original.Where((_,i)=>i%4!=3).Any(x=>x>0),Is.True);

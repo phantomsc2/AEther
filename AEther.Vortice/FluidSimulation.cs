@@ -22,8 +22,7 @@ internal sealed class FluidSimulation : IDisposable
     internal sealed class Settings
     {
         internal readonly ShaderParameters Values;
-        readonly ShaderParameter periodic, lowQuality, viscosity;
-        internal int GridSize => Values.GetBoolean(lowQuality) ? 128 : 512;
+        readonly ShaderParameter periodic, viscosity;
         internal bool Periodic => Values.GetBoolean(periodic);
         internal bool Viscous => Values.GetFloat(viscosity) > 0;
         internal Settings(ShaderParameters? values)
@@ -38,7 +37,6 @@ internal sealed class FluidSimulation : IDisposable
                 return field;
             }
             periodic = Require("PeriodicBoundary", true);
-            lowQuality = Require("LowQuality", true);
             viscosity = Require("Viscosity", false);
         }
     }
@@ -148,7 +146,7 @@ internal sealed class FluidSimulation : IDisposable
     public const double TimeStep = 1.0 / 60;
     public int Width => velocity.Width;
     public int Height => velocity.Height;
-    public int GridLimit { get; }
+
     public float Aspect { get; }
     public int MaterialCount => material.Length;
     public bool PeriodicBoundary { get; private set; }
@@ -166,16 +164,16 @@ internal sealed class FluidSimulation : IDisposable
 
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
     Surface Create(int w, int h, Format format) => Own(new Surface(device, w, h, format));
-    internal bool CompatibleWith(Programs next) => GridLimit == next.Configuration.GridSize
+    internal bool CompatibleWith(Programs next, SceneSizes sizes) => Width == sizes.FluidWidth && Height == sizes.FluidHeight
         && materialFormats.SequenceEqual(next.MaterialFormats);
 
-    internal FluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, Programs programs)
+    internal FluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, Programs programs, SceneSizes sizes)
     {
         this.device = device; this.context = context; this.programs = programs;
         Aspect = width / (float)height;
-        GridLimit = programs.Configuration.GridSize;
+
         materialFormats = programs.MaterialFormats;
-        int w = GridLimit, h = GridLimit;
+        int w = sizes.FluidWidth, h = sizes.FluidHeight;
         try
         {
             constants = Own(device.CreateBuffer(48, BindFlags.ConstantBuffer));
@@ -208,7 +206,7 @@ internal sealed class FluidSimulation : IDisposable
             {
                 levels.Add(new(Create(w, h, Format.R32_Float), Create(w, h, Format.R32_Float),
                     Create(w, h, Format.R32_Float), Create(w, h, Format.R32_Float)));
-                if (Math.Min(w, h) <= 4) break;
+                if (Math.Min(w, h) <= 4 || (w & 1) != 0 || (h & 1) != 0) break;
                 w /= 2; h /= 2;
             }
             Clear();
@@ -233,6 +231,7 @@ internal sealed class FluidSimulation : IDisposable
         programs = shaders;
         LastSteps = LastDraws = LastMaterialSteps = 0;
         this.sceneParameters = sceneParameters;
+        if (sceneParameters != null) programs.Configuration.Values.Restore(sceneParameters);
         PeriodicBoundary = programs.Configuration.Periodic;
         foreach (var pair in buffers) namedBuffers[pair.Key] = pair.Value;
         foreach (var pair in textures) namedTextures[pair.Key] = pair.Value;

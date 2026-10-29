@@ -37,7 +37,8 @@ internal static partial class Program
             using var renderer = new Renderer(window.Handle, width, height, 97, 1000, shaderDirectory: tree,
                 timeProvider: clock);
             renderer.SelectScene("MandelFluid");
-            Set(renderer, "Fluid.LowQuality", item.Low);
+            SetSize(renderer, "Sizes.FluidVelocity.x", item.Low ? 128u : 512u);
+            SetSize(renderer, "Sizes.FluidVelocity.y", item.Low ? 128u : 512u);
             Set(renderer, "Fluid.PeriodicBoundary", item.Periodic);
             Set(renderer, "Fluid.Viscosity", item.Viscosity);
             if (args.Contains("--filaments"))

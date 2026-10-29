@@ -6,15 +6,17 @@ namespace AEther.Vortice;
 // GPU resources only; the shader owns coefficients, validity and numerical work.
 internal sealed class AirlightLookup : IDisposable
 {
-    internal const int Width = 513, Height = 1025;
+    internal int Width { get; }
+    internal int Height { get; }
     readonly List<IDisposable> owned = [];
     internal ID3D11ShaderResourceView View { get; }
     internal ID3D11ShaderResourceView State { get; }
     internal ID3D11UnorderedAccessView Output { get; }
     internal ID3D11UnorderedAccessView StateOutput { get; }
     internal ID3D11SamplerState Sampler { get; }
-    internal AirlightLookup(ID3D11Device device, ID3D11DeviceContext context)
+    internal AirlightLookup(ID3D11Device device, ID3D11DeviceContext context, int width, int height)
     {
+        Width = width; Height = height;
         try
         {
             ID3D11Texture2D Texture(int width, int height) => Own(device.CreateTexture2D(new Texture2DDescription

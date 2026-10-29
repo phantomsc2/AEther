@@ -58,7 +58,11 @@ public sealed class ShaderPanel : UserControl
         RefreshScene();
     }
 
-    void ShadersChanged(object? sender, EventArgs e) => RefreshScene();
+    void ShadersChanged(object? sender, EventArgs e)
+    {
+        if (DispatcherQueue.HasThreadAccess) RefreshScene();
+        else DispatcherQueue.TryEnqueue(RefreshScene);
+    }
 
     public void Reload()
     {
@@ -98,6 +102,59 @@ public sealed class ShaderPanel : UserControl
         foreach (var parameter in values.Items) parameters.Children.Add(Editor(values, parameter));
     }
 
+    static UIElement SizeEditor(ShaderParameters values, ShaderParameter parameter)
+    {
+        bool fluid = parameter.Path.StartsWith("Sizes.FluidVelocity.", StringComparison.Ordinal);
+        double maximum = parameter.Path == "Sizes.PointLights" ? 64u * 65535
+            : parameter.Path.StartsWith("Sizes.Geometry.", StringComparison.Ordinal) ? uint.MaxValue
+            : fluid ? 2048 : 16384;
+        double minimum = fluid ? 16 : parameter.Path is "Sizes.PointLights" || parameter.Path.StartsWith("Sizes.Geometry.", StringComparison.Ordinal) ? 0
+            : parameter.Path.StartsWith("Sizes.RasterAirlightLut.", StringComparison.Ordinal) ? 2 : 1;
+        double initial = values.GetUnsigned(parameter);
+        double Encode(double n) => fluid ? Math.Log2(Math.Max(16, n)) : n;
+        double Decode(double n) => fluid ? Math.Pow(2, Math.Round(n)) : Math.Round(n);
+        var number = new NumberBox
+        {
+            Minimum = minimum, Maximum = maximum, Value = initial,
+            SmallChange = fluid ? initial / 2 : 1, LargeChange = fluid ? initial : 10,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            NumberFormatter = new DecimalFormatter { FractionDigits = 0 },
+        };
+        var slider = new Slider
+        {
+            Minimum = Encode(minimum), Maximum = Encode(fluid ? maximum : Math.Min(maximum, Math.Max(16, initial * 4))),
+            StepFrequency = 1, Value = Encode(initial),
+        };
+        bool updating = false;
+        void Display(double value)
+        {
+            if (updating) return;
+            updating = true;
+            try
+            {
+                number.Value = value;
+                slider.Maximum = Math.Max(slider.Maximum, Encode(value));
+                slider.Value = Encode(value);
+            }
+            finally { updating = false; }
+        }
+        SliderCommit.Bind(slider, n => Display(Decode(n)), n =>
+        {
+            if (!updating) values.SetUnsigned(parameter, (uint)Decode(n));
+        });
+        number.ValueChanged += (_, e) =>
+        {
+            if (updating || !double.IsFinite(e.NewValue)) return;
+            double n = Math.Clamp(Math.Round(e.NewValue), minimum, maximum);
+            if (fluid) n = Decode(Encode(n));
+            Display(n);
+            values.SetUnsigned(parameter, (uint)n);
+        };
+        var row = NumericEditor.Create(parameter.Name, number, slider);
+        row.Tag = parameter.Path;
+        return row;
+    }
+
     static UIElement Editor(ShaderParameters values, ShaderParameter parameter)
     {
         if (parameter.Children.Count != 0)
@@ -110,6 +167,7 @@ public sealed class ShaderPanel : UserControl
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
         }
+        if (parameter.IsUnsigned) return SizeEditor(values, parameter);
         if (parameter.IsBoolean)
         {
             var checkbox = new CheckBox { Content = parameter.Name, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
