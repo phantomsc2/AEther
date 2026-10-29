@@ -126,6 +126,7 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, width, height, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
         PointSet(renderer, "View.CameraSpeed", 0f); PointSet(renderer, "View.CameraDistance", .6f);
+        PointSet(renderer, "Lights.SampleAirlight", false);
         PointSet(renderer, "Lights.Count", 0f); PointSet(renderer, "Lights.Gain", .5f);
         PointSet(renderer, "Shape.Enabled", false); PointSet(renderer, "Air.Density", .4f);
         foreach (char axis in "xyz") { PointSet(renderer, "Air.Scattering."+axis, .5f); PointSet(renderer, "Air.Absorption."+axis, 0f); }

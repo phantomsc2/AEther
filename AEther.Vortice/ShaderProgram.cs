@@ -47,9 +47,9 @@ internal sealed class ShaderProgram : IDisposable
                     or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut"
                     or "PointSurface" or "PointDepth" or "PointAirlight"
                     || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
-                ShaderInputType.Structured => binding.Name == "PointLights",
+                ShaderInputType.Structured => binding.Name is "PointLights" or "PointLightSuggestions" or "PointLightBaselines" or "PointBaseline",
                 ShaderInputType.ByteAddress => binding.Name == "PointLightCount",
-                ShaderInputType.UnorderedAccessViewRWStructured => stage == 'c' && binding.Name == "PointLightOutput",
+                ShaderInputType.UnorderedAccessViewRWStructured => stage == 'c' && binding.Name is "PointLightOutput" or "PointLightSuggestionOutput" or "PointLightBaselineOutput" or "PointBaselineOutput",
                 ShaderInputType.UnorderedAccessViewRWByteAddress => stage == 'c' && binding.Name is "GeometryDrawArguments" or "PointLightCountOutput",
                 _ => false,
             };
