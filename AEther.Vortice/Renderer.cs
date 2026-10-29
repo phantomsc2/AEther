@@ -2,7 +2,6 @@ using System.Numerics;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -117,7 +116,6 @@ public sealed partial class Renderer : IDisposable
     internal float[] ReadPresentedPixels() { lock (graphicsGate) return output.ReadPresentedPixels(); }
     // Optional GPU timestamp markers used by the transport profiling tool.
     internal Action<string, bool>? TransportPassMarker { get; set; }
-    internal bool UnshadowedAirlightReady => atmosphereLookup?.Ready == true;
 
     T Own<T>(T value) where T : IDisposable { resources.Add(value); return value; }
 
@@ -300,8 +298,8 @@ public sealed partial class Renderer : IDisposable
 
     bool ReloadSceneCore(string name, ShaderScene scene)
     {
-        var common = ShaderSource.Read(shaderDirectory, "Common/Inputs.hlsl");
-        var source = common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
+        var common = ShaderSource.IncludeFile(shaderDirectory, "Common/Inputs.hlsl");
+        var source = common + ShaderSource.IncludeFile(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
         var replacement = new ShaderScene(device, name, source, compileImmediately: false);
         if (StringComparer.Ordinal.Equals(SceneName, name))
         {
@@ -328,13 +326,13 @@ public sealed partial class Renderer : IDisposable
         var nextScenes = new Dictionary<string, ShaderScene>(StringComparer.Ordinal);
         try
         {
-            var common = ShaderSource.Read(shaderDirectory, "Common/Inputs.hlsl");
-            nextVertex = device.CreateVertexShader(Compiler.Compile(common, "VS", "Inputs.hlsl", "vs_5_0").Span);
-            nextOutput = device.CreatePixelShader(Compiler.Compile(common + ShaderSource.Read(shaderDirectory, "Common/Present.hlsl"), "PS", "Present.hlsl", "ps_5_0").Span);
+            var common = ShaderSource.IncludeFile(shaderDirectory, "Common/Inputs.hlsl");
+            nextVertex = device.CreateVertexShader(ShaderSource.Compile(common, "VS", "Inputs.hlsl", "vs_5_0").Span);
+            nextOutput = device.CreatePixelShader(ShaderSource.Compile(common + ShaderSource.IncludeFile(shaderDirectory, "Common/Present.hlsl"), "PS", "Present.hlsl", "ps_5_0").Span);
             foreach (var path in Directory.EnumerateFiles(Path.Combine(shaderDirectory, "Scenes"), "*.hlsl").Order(StringComparer.Ordinal))
             {
                 var name = Path.GetFileNameWithoutExtension(path);
-                var source = common + ShaderSource.Read(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
+                var source = common + ShaderSource.IncludeFile(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
                 if (name == SceneName)
                 {
                     var scene = new ShaderScene(device, name, source, compileImmediately: false);
@@ -495,9 +493,8 @@ public sealed partial class Renderer : IDisposable
         {
             atmosphereLookup ??= new(device, context);
             rasterTransport ??= new(device, context, atmosphereLookup);
-            namedBuffers["RasterAirlightConstants"] = rasterTransport.AirlightBuffer;
             namedSamplers["RasterLutSampler"] = rasterTransport.LookupSampler;
-            var p = active.Parameters!;
+            var p = active.Parameters;
             rasterTransport.PassMarker = GpuMarker;
             rasterTransport.Prepare(active.Raster, p, width, height, namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);

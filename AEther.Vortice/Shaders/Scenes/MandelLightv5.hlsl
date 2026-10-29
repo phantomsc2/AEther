@@ -5,13 +5,13 @@
 struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
 struct LightSettings { bool Enabled; float Count; float Radius; float Gain; };
-struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; bool ShowDepth; };
+struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; };
 cbuffer Parameters : register(b1)
 {
     ShapeSettings Shape = { true, .03101343, .25, .45, .75, .1, float3(.65,.7,.75) };
     AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
     LightSettings Lights = { true, .62105263, .57, .66666667 };
-    ViewSettings View = { .55, .15, .5, false };
+    ViewSettings View = { .55, .15, .5 };
 };
 ProjectionCamera SceneCamera()
 {
@@ -27,6 +27,8 @@ ProjectionCamera SceneCamera()
 
 #include "../Common/RasterLight.hlsl"
 
+float3 AirScatter() { return .3*Air.Density*Air.Density*Air.Scattering; }
+float3 AirExtinction() { return .3*Air.Density*Air.Density*(Air.Scattering+Air.Absorption); }
 uint2 GeometryCount()
 {
     return uint2(36,Shape.Enabled ? 1+(uint)round(4095*Shape.Count) : 0);
@@ -75,7 +77,6 @@ float4 PS(PSin input) : SV_Target
     int2 pixel=(int2)input.Position.xy;
     float3 origin,direction; float end; bool hit;
     RasterRay(pixel,origin,direction,hit,end);
-    if (View.ShowDepth) return DisplayOutput((hit ? exp(-.04*end) : 0).xxx);
     float3 surface=hit ? RasterSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
     return LinearOutput(SceneLightGain*(surface+(any(AirScatter()>0) ? RasterAirlight.Load(int3(pixel,0)).rgb : 0)));
 }

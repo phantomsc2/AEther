@@ -23,9 +23,6 @@ void PreparePointLights(uint3 id : SV_DispatchThreadID)
 Texture2D<float4> RasterSurface;
 Texture2D<float> RasterDepth;
 Texture2D<float4> RasterAirlight;
-Texture2D<float4> RasterAirlightLut;
-SamplerState RasterLutSampler;
-cbuffer RasterAirlightConstants : register(b5) { float4 RasterLookupInfo; };
 static const float Pi=3.14159265359;
 // Numerical denominator guards only, far below world-coordinate precision.
 // No world-space source radius or smoothing is applied to either light kernel.
@@ -35,8 +32,9 @@ float3 SingularRadiance(float3 intensity)
 {
     return float3(intensity.x>0,intensity.y>0,intensity.z>0)*HdrMaximum;
 }
-float3 AirScatter() { return .3*Air.Density*Air.Density*Air.Scattering; }
-float3 AirExtinction() { return .3*Air.Density*Air.Density*(Air.Scattering+Air.Absorption); }
+float3 AirScatter();
+float3 AirExtinction();
+#include "AirlightLookup.hlsl"
 #include "PointAirlightIntegral.hlsl"
 
 float4 GeometryProject(float3 world)

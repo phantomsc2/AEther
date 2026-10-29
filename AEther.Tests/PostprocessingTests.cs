@@ -6,7 +6,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using AEther.Vortice;
 using NUnit.Framework;
-using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -88,25 +87,6 @@ public partial class ShaderRenderingTests
             "A shared postprocessing edit must take effect without rebuilding the app.");
     }
 
-    [TestCase("MandelLightv5", "ShowDepth"), Category("GPU")]
-    public void InlineDiagnosticsIgnoreGlobalExposure(string scene, string view)
-    {
-        using var shaders = new SceneShaders(scene);
-        using var window = new HiddenWindow();
-        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: new RenderClock(), initialScene: scene);
-        var p = renderer.ActiveShader!.Parameters!;
-        p.SetBoolean(p.Items.Single(x => x.Name == "View").Children.Single(x => x.Name == view), true);
-        renderer.Render(false);
-        byte[] original = renderer.ReadPixels(false);
-        foreach (double exposure in new[] { -12.0, 12.0 })
-        {
-            renderer.SetGraphicsOptions(renderer.Options with { Exposure = exposure });
-            renderer.Render(false);
-            Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
-        }
-    }
-
     [Test, Category("GPU")]
     public void AllVisualizationScenesCompileWithoutExposureParameters()
     {
@@ -133,9 +113,9 @@ public partial class ShaderRenderingTests
         using (device)
         using (context)
         {
-            string common = ShaderSource.Read(ShaderDirectory, "Common/Inputs.hlsl");
-            using var vertex = device.CreateVertexShader(Compiler.Compile(common, "VS", "Inputs.hlsl", "vs_5_0").Span);
-            using var pixel = device.CreatePixelShader(Compiler.Compile(common + ShaderSource.Read(ShaderDirectory, "Common/Present.hlsl"),
+            string common = ShaderSource.IncludeFile(ShaderDirectory, "Common/Inputs.hlsl");
+            using var vertex = device.CreateVertexShader(ShaderSource.Compile(common, "VS", "Inputs.hlsl", "vs_5_0").Span);
+            using var pixel = device.CreatePixelShader(ShaderSource.Compile(common + ShaderSource.IncludeFile(ShaderDirectory, "Common/Present.hlsl"),
                 "PS", "Present.hlsl", "ps_5_0").Span);
             var description = new Texture2DDescription
             {

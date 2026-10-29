@@ -2,7 +2,7 @@
 
 Run point-light profiles with `dotnet run --project tools/AEther.MandelLightProfile -- --point-lights`.
 The profile uses 1280x720, GPU-generated STB light rings, a stationary camera and
-128 cubes. It waits for the shared medium LUT and measures GPU passes after
+128 cubes. The GPU builds the shared medium LUT before shading; the profile measures passes after
 warmup. Captures and timing JSON go to artifacts/mandellight-v5.
 
 `--projection` captures the current perspective scenes in landscape, portrait and

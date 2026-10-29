@@ -1,4 +1,3 @@
-using System.Numerics;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -12,31 +11,21 @@ internal sealed class RasterLight : IDisposable
     internal sealed class Programs : IDisposable
     {
         readonly List<IDisposable> owned = [];
-        internal readonly ShaderProgram Lights, Surface, Airlight;
+        internal readonly ShaderProgram Lights, Surface, Airlight, LookupPrepare, LookupBuild, LookupCommit;
         internal readonly RasterGeometry.Programs Geometry;
-        internal readonly ShaderParameter Density, Scattering, Absorption, ShowDepth;
-        internal Programs(ID3D11Device device, string source, string file, ShaderParameters? values)
+        internal Programs(ID3D11Device device, string source, string file)
         {
             try
             {
-                if (values == null) throw new InvalidOperationException("RasterLight requires Parameters with Air and View settings.");
-                Density = Require(values, "Air", "Density", "Scalar:Float:1");
-                Scattering = Require(values, "Air", "Scattering", "Vector:Float:3");
-                Absorption = Require(values, "Air", "Absorption", "Vector:Float:3");
-                ShowDepth = Require(values, "View", "ShowDepth", "Scalar:Bool:1");
+                LookupPrepare = Own(new ShaderProgram(device, source, "PrepareAirlightLookup", file, "cs_5_0"));
+                LookupBuild = Own(new ShaderProgram(device, source, "BuildAirlightLookup", file, "cs_5_0"));
+                LookupCommit = Own(new ShaderProgram(device, source, "CommitAirlightLookup", file, "cs_5_0"));
                 Lights = Own(new ShaderProgram(device, source, "PreparePointLights", file, "cs_5_0"));
                 Surface = Own(new ShaderProgram(device, source, "RasterSurfacePS", file));
                 Airlight = Own(new ShaderProgram(device, source, "RasterAirlightPS", file));
                 Geometry = Own(new RasterGeometry.Programs(device, source, file));
             }
             catch { Dispose(); throw; }
-        }
-        static ShaderParameter Require(ShaderParameters values, string group, string name, string kind)
-        {
-            var item = values.Items.SingleOrDefault(x => x.Name == group)?.Children.SingleOrDefault(x => x.Name == name);
-            if (item == null || item.Kind != kind)
-                throw new InvalidOperationException($"RasterLight requires Parameters.{group}.{name} ({kind}).");
-            return item;
         }
         T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
         public void Dispose() { for (int i = owned.Count - 1; i >= 0; i--) owned[i].Dispose(); owned.Clear(); }
@@ -48,15 +37,14 @@ internal sealed class RasterLight : IDisposable
     readonly List<IDisposable> owned = [];
     readonly RasterGeometry geometry;
     readonly ID3D11DepthStencilState depthState;
-    readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
+    readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [], lookupOutputs = [];
     readonly Dictionary<string, ID3D11ShaderResourceView> textures = [];
     readonly Dictionary<string, ID3D11SamplerState> samplers = [];
     readonly ID3D11ShaderResourceView lightsView, countView;
-    readonly ID3D11Buffer airlightConstants;
     readonly Dictionary<string, ID3D11Buffer> passBuffers = [];
     Target? surface, depth, air;
+    Programs? lookupPrograms;
     internal Action<string, bool>? PassMarker { get; set; }
-    internal ID3D11Buffer AirlightBuffer => airlightConstants;
     internal ID3D11SamplerState LookupSampler => lookup.Sampler;
 
     internal RasterLight(ID3D11Device device, ID3D11DeviceContext context, UnshadowedAirlightLookup lookup)
@@ -64,7 +52,6 @@ internal sealed class RasterLight : IDisposable
         this.device = device; this.context = context; this.lookup = lookup;
         try
         {
-            airlightConstants = Own(device.CreateBuffer(16, BindFlags.ConstantBuffer));
             geometry = Own(new RasterGeometry(device));
             depthState = Own(device.CreateDepthStencilState(new DepthStencilDescription
             {
@@ -102,24 +89,12 @@ internal sealed class RasterLight : IDisposable
     }
     T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
 
-    internal void Prepare(Programs program, ShaderParameters p, int width, int height,
+    internal void Prepare(Programs program, ShaderParameters? p, int width, int height,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
         IDictionary<string, ID3D11ShaderResourceView> sceneTextures,
         IReadOnlyDictionary<string, ID3D11SamplerState> sceneSamplers)
     {
-        float density = p.GetFloat(program.Density);
-        Vector3 ReadVector(ShaderParameter field)
-        {
-            var v = field.Children;
-            return new(p.GetFloat(v.Single(x => x.Name == "x")),
-                p.GetFloat(v.Single(x => x.Name == "y")), p.GetFloat(v.Single(x => x.Name == "z")));
-        }
-        var scatter = .3f * density * density * ReadVector(program.Scattering);
-        var extinction = scatter + .3f * density * density * ReadVector(program.Absorption);
-        lookup.Prepare(extinction, scatter.X > 0 || scatter.Y > 0 || scatter.Z > 0);
-        context.UpdateSubresource(lookup.Info, airlightConstants);
         passBuffers.Clear(); foreach (var pair in buffers) passBuffers[pair.Key] = pair.Value;
-        passBuffers["RasterAirlightConstants"] = airlightConstants;
         if (surface?.Width != width || surface.Height != height)
         {
             surface?.Dispose(); surface = null; depth?.Dispose(); depth = null;
@@ -131,12 +106,30 @@ internal sealed class RasterLight : IDisposable
         textures.Clear(); foreach (var pair in sceneTextures) textures[pair.Key] = pair.Value;
         textures["PointLights"] = lightsView; textures["PointLightCount"] = countView;
         textures["RasterAirlightLut"] = lookup.View;
+        textures["RasterLookupState"] = lookup.State;
         samplers.Clear(); foreach (var pair in sceneSamplers) samplers[pair.Key] = pair.Value;
         samplers["RasterLutSampler"] = lookup.Sampler;
         // Previous frame SRVs must be released before compute writes or target binding.
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
+        if (!ReferenceEquals(lookupPrograms,program))
+        {
+            lookup.Invalidate(context);
+            lookupPrograms=program;
+        }
+        Mark("Raster lookup", true);
+        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup.StateOutput;
+        program.LookupPrepare.Bind(context,p,passBuffers,textures,samplers,lookupOutputs);
+        context.Dispatch(1,1,1); context.CSSetUnorderedAccessView(0,null);
+        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutput"] = lookup.Output;
+        program.LookupBuild.Bind(context,p,passBuffers,textures,samplers,lookupOutputs);
+        context.Dispatch((UnshadowedAirlightLookup.Width+7)/8,(UnshadowedAirlightLookup.Height+7)/8,1);
+        context.CSSetUnorderedAccessView(0,null); context.CSSetShaderResources(0,ShaderProgram.EmptyViews);
+        lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup.StateOutput;
+        program.LookupCommit.Bind(context,p,passBuffers,textures,samplers,lookupOutputs);
+        context.Dispatch(1,1,1); context.CSSetUnorderedAccessView(0,null);
+        Mark("Raster lookup", false);
         Mark("Raster lights prepare", true);
         program.Lights.Bind(context, p, passBuffers, textures, samplers, outputs);
         context.Dispatch((Capacity + 63) / 64, 1, 1);
@@ -159,11 +152,10 @@ internal sealed class RasterLight : IDisposable
         textures["RasterDepth"] = depth.View;
         sceneTextures["RasterSurface"] = surface.View; sceneTextures["RasterDepth"] = depth.View;
         sceneTextures["RasterAirlight"] = air.View; sceneTextures["PointLights"] = lightsView;
-        sceneTextures["PointLightCount"] = countView; sceneTextures["RasterAirlightLut"] = lookup.View;
+        sceneTextures["PointLightCount"] = countView; sceneTextures["RasterAirlightLut"] = lookup.View; sceneTextures["RasterLookupState"] = lookup.State;
     }
-    internal void IntegrateAirlight(Programs program, ShaderParameters p)
+    internal void IntegrateAirlight(Programs program, ShaderParameters? p)
     {
-        if (p.GetBoolean(program.ShowDepth)) return;
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(air!.Color!);
         context.RSSetViewport(0, 0, air.Width, air.Height);

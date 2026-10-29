@@ -139,7 +139,7 @@ public partial class ShaderRenderingTests
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,96,54,32,60,shaderDirectory:shaders.Path,timeProvider:new PointClock(),initialScene:scene);
         PointSet(renderer,"Shape.Enabled",false);
-        PointWait(renderer,()=>PointFeed(renderer,0));
+        PointRender(renderer,()=>PointFeed(renderer,0));
         byte[] original=renderer.ReadPixels(false);
         Assert.That(original.Where((_,i)=>i%4!=3).Any(x=>x>0),Is.True);
         string file=Path.Combine(shaders.Path,"Scenes",scene+".hlsl");

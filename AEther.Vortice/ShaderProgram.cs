@@ -29,7 +29,7 @@ internal sealed class ShaderProgram : IDisposable
     public ShaderProgram(ID3D11Device device, string source, string entry, string file, string profile = "ps_5_0")
     {
         stage = profile[0];
-        var code = Compiler.Compile(source, entry, file, profile);
+        var code = ShaderSource.Compile(source, entry, file, profile);
         using var reflection = Compiler.Reflect<ID3D11ShaderReflection>(code.Span);
         for (uint i = 0; i < reflection.Description.OutputParameters; i++)
             Outputs.Add(reflection.GetOutputParameterDescription(i));
@@ -39,14 +39,15 @@ internal sealed class ShaderProgram : IDisposable
             if (binding.BindCount != 1) throw new InvalidOperationException($"{file}: resource arrays are not supported ({binding.Name}).");
             var supported = binding.Type switch
             {
-                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "RasterAirlightConstants",
+                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants",
                 ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "RasterLutSampler",
                 ShaderInputType.Texture => binding.Name is "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1"
                     or "FluidVelocity" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction"
-                    or "RasterAirlightLut"
+                    or "RasterAirlightLut" or "RasterLookupState"
                     or "RasterSurface" or "RasterDepth" or "RasterAirlight"
                     || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
+                ShaderInputType.UnorderedAccessViewRWTyped => stage == 'c' && binding.Name is "RasterLookupOutput" or "RasterLookupOutputState",
                 ShaderInputType.Structured => binding.Name == "PointLights",
                 ShaderInputType.ByteAddress => binding.Name == "PointLightCount",
                 ShaderInputType.UnorderedAccessViewRWStructured => stage == 'c' && binding.Name == "PointLightOutput",
@@ -125,7 +126,7 @@ internal sealed class ShaderProgram : IDisposable
                 else if (stage == 'c') context.CSSetSampler(slot, sampler);
                 else context.PSSetSampler(slot, sampler);
             }
-            else if (binding.Type is ShaderInputType.UnorderedAccessViewRWByteAddress or ShaderInputType.UnorderedAccessViewRWStructured)
+            else if (binding.Type is ShaderInputType.UnorderedAccessViewRWTyped or ShaderInputType.UnorderedAccessViewRWByteAddress or ShaderInputType.UnorderedAccessViewRWStructured)
                 context.CSSetUnorderedAccessView(slot, outputs![name]);
             else
             {
@@ -186,7 +187,7 @@ public sealed class ShaderScene : IDisposable
             FluidSimulation.Programs? nextFluid = null;
             try
             {
-                if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl", nextProgram.Parameters);
+                if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
                 if (nextProgram.UsesFluid)
                     nextFluid = new(device, source, Name + ".hlsl", nextProgram);
                 program = nextProgram;

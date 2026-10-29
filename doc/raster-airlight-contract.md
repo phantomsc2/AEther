@@ -21,24 +21,18 @@ and a count; the host dispatches eight groups of 64 with no count readback.
 Geometry uses `PrepareGeometry` and `RasterGeometryVS`; camera surface and
 integration entry points are `RasterSurfacePS` and `RasterAirlightPS`.
 
-## Medium and diagnostics
+## Medium
 
-Declare these fields inside `cbuffer Parameters` (struct type names are free):
+Implement two callbacks in scene HLSL:
 
 ```hlsl
-struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
-struct ViewSettings { bool ShowDepth; };
+float3 AirScatter();    // Homogeneous scattering coefficients, nonnegative.
+float3 AirExtinction(); // Scattering + absorption coefficients, nonnegative.
 ```
 
-Name the corresponding variables `Air` and `View`. Additional members are free.
-RasterLight validates these names and types at compilation and binds their
-locations once. `View.ShowDepth` skips the integration pass; the scene PS renders
-its diagnostic using `DisplayOutput`. Medium coefficients are:
-
-```text
-s = 0.3 * Air.Density^2 * Air.Scattering
-e = s + 0.3 * Air.Density^2 * Air.Absorption
-```
+The callbacks can use arbitrary reflected parameters, frame/audio inputs or
+constants. C# has no reserved medium parameter names and does not read coefficients.
+MandelLightv5 keeps its own Air controls and density mapping inside its callbacks.
 
 ## Rendering and resources
 
@@ -55,19 +49,25 @@ camera ray using the same extinction and depth distance.
 | `RasterAirlight` | RGBA32F homogeneous single-scattering radiance |
 | `PointLights`, `PointLightCount` | GPU point records and raw count |
 | `RasterAirlightLut`, `RasterLutSampler` | Shared RGB integral table and sampler |
-| `RasterAirlightConstants` | Table readiness and coordinate mapping |
+| `RasterLookupState` | GPU coefficient key and rebuild flag |
 
 Surface lighting is Lambertian: albedo/pi times cosine, inverse-square point
 intensity and medium transmission from light to surface. There is no ambient
 floor, shadow-map allocation, spot/filament lighting or reconstruction filter.
 
-`UnshadowedAirlightLookup` builds a 513x1025 RGB tail table on the CPU, keyed by
-extinction, with four cached tables. Upload remains on the render thread.
-`PointAirlightIntegral.hlsl` evaluates finite/infinite ray intervals from it,
-with collinear handling and quadrature while a matching table is unavailable or
-outside its range. The atmosphere extends to infinity for missing geometry;
-camera near/far clipping does not truncate it. This is one shared integral/LUT
-implementation. Other volume prototypes retain their own heterogeneous sampling.
+`AirlightLookup.hlsl` builds a 513x1025 FP32 RGB tail table on the GPU.
+A one-thread preparation pass compares requested extinction with the completed
+table's key. An 8x8-thread compute pass integrates each texel independently using
+64 panels of four-point Gauss quadrature, then a one-thread pass commits the key.
+Unchanged coefficients skip texel integration. Construction completes before
+shading in the same command stream; no CPU task, readback, cache or upload is
+needed. Shader reload invalidates the key.
+
+`PointAirlightIntegral.hlsl` shares coordinate definitions with the builder and
+evaluates finite/infinite intervals, with collinear handling and direct quadrature
+outside the table domain. The atmosphere extends to infinity for missing geometry;
+camera clipping does not truncate it. Other volume prototypes retain their own
+heterogeneous sampling.
 
 Resources bind by per-stage reflection, not fixed scene slots. Unknown resources
 fail compilation. Shader reload preserves working programs on failure. Settings

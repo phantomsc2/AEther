@@ -129,7 +129,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer, "Lights.Count", 0f); PointSet(renderer, "Lights.Gain", .5f);
         PointSet(renderer, "Shape.Enabled", false); PointSet(renderer, "Air.Density", .4f);
         foreach (char axis in "xyz") { PointSet(renderer, "Air.Scattering."+axis, .5f); PointSet(renderer, "Air.Absorption."+axis, 0f); }
-        PointWait(renderer, () => PointFeed(renderer, 0, .0225, .0225));
+        PointRender(renderer, () => PointFeed(renderer, 0, .0225, .0225));
         byte[] pixels = renderer.ReadPixels(false);
         Vector3 forward = Vector3.Normalize(new(-9,-6,13.5f)), origin = -24*forward;
         Vector3 right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY)), up = Vector3.Cross(right,forward);
@@ -167,22 +167,20 @@ public partial class ShaderRenderingTests
     }
 
     [Test, Category("GPU")]
-    public void ProceduralPointPassSharesLookupAndSurvivesEditsResizeReloadAndSceneSwitches()
+    public void ProceduralPointPassRebuildsLookupAndSurvivesEditsResizeReloadAndSceneSwitches()
     {
         using var shaders = new SceneShaders("MandelLightv5");
         File.Copy(Path.Combine(ShaderDirectory,"Scenes","Spectrum.hlsl"),Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl"));
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 81, 47, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
-        PointWait(renderer, () => PointFeed(renderer, 0));
+        PointRender(renderer, () => PointFeed(renderer, 0));
         var lookup = PointField<object>(renderer,"atmosphereLookup");
         byte[] original = renderer.ReadPixels(false);
         PointSet(renderer,"Air.Density",.4f); PointFeed(renderer,0); renderer.Render(false);
-        Assert.That(renderer.UnshadowedAirlightReady, Is.False);
-        Assert.That(renderer.ReadPixels(false).Where((_, i) => i%4!=3).Any(x=>x>0), Is.True, "Pending builds must use quadrature.");
-        PointWait(renderer, () => PointFeed(renderer,0));
+        Assert.That(renderer.ReadPixels(false), Is.Not.EqualTo(original), "Coefficient edits must rebuild before shading.");
+        PointRender(renderer, () => PointFeed(renderer,0));
         PointSet(renderer,"Air.Density",.65f); PointFeed(renderer,0); renderer.Render(false);
-        Assert.That(renderer.UnshadowedAirlightReady, Is.True);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
         renderer.Resize(97,55); PointFeed(renderer,0); renderer.Render(false);
         renderer.Resize(81,47); PointFeed(renderer,0); renderer.Render(false);
@@ -191,7 +189,6 @@ public partial class ShaderRenderingTests
         PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
         renderer.SelectScene("Spectrum"); PointFeed(renderer,0); renderer.Render(false);
-        Assert.That(renderer.UnshadowedAirlightReady, Is.True);
         Assert.That(PointField<object>(renderer,"atmosphereLookup"), Is.SameAs(lookup));
         renderer.SelectScene("MandelLightv5"); PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
@@ -204,15 +201,9 @@ public partial class ShaderRenderingTests
         if (component>=0) for (int c=0;c<2;c++) for (int i=0;i<bands;i++) spectrum[4*(c*bands+i)+component]=c==0 ? left : right;
         renderer.PostAudio(new(spectrum,4*bands,DateTime.UnixEpoch) {AnalysisRow=Interlocked.Increment(ref pointRow)},2);
     }
-    static void PointWait(Renderer renderer, Action feed)
+    static void PointRender(Renderer renderer, Action feed)
     {
-        var watch=Stopwatch.StartNew();
-        do
-        {
-            feed(); renderer.Render(false);
-            if (watch.Elapsed.TotalSeconds>20) Assert.Fail("Point atmosphere LUT timed out.");
-            if (!renderer.UnshadowedAirlightReady) Thread.Sleep(1);
-        } while (!renderer.UnshadowedAirlightReady);
+        feed(); renderer.Render(false);
     }
     static ShaderParameter PointFind(Renderer renderer, string path)
     {

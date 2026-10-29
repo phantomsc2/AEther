@@ -401,8 +401,8 @@ Compatible fluid state survives reloads; scene changes and resize reset it.
 
 Compilation currently runs on the window thread and rebuilds all discovered scenes,
 so saving can briefly pause drawing. Capture and analysis continue independently.
-Includes are expanded from quoted include directives, rather than implementing a
-full preprocessor-aware include resolver; avoid missing includes in inactive branches.
+The HLSL compiler processes includes, conditionals and include guards. The host
+only opens requested files relative to their including file.
 
 ## Verification
 

@@ -49,11 +49,9 @@ internal static partial class Program
                 renderer.PostAudio(new(spectrum, 4*bands, DateTime.UnixEpoch) { AnalysisRow = ++rasterAudioRow }, 2);
                 clock.Advance(); renderer.Render(false);
             }
-            var wait = Stopwatch.StartNew();
-            for (int i = 0; i < 16 || !renderer.UnshadowedAirlightReady; i++)
+            for (int i = 0; i < 16; i++)
             {
                 Render(); renderer.ReadPixels(false);
-                if (wait.Elapsed.TotalSeconds > 20) throw new TimeoutException("Atmosphere LUT warmup timed out.");
             }
             var frames = new List<Dictionary<string, double>>();
             using var timer = new Timestamps(device, context);
@@ -72,7 +70,7 @@ internal static partial class Program
         File.WriteAllText(Path.Combine(output, "timings.json"), JsonSerializer.Serialize(new
         {
             adapter = renderer.AdapterDescription,
-            note = "720p, 128 fixed cubes, stationary camera, full-resolution airlight, shared atmosphere LUT ready. 41 frames after warmup; two untimed renders before each measurement. Uses 3x60 GPU-generated point lights. Total includes output, excluding readback, compilation and LUT generation.",
+            note = "720p, 128 fixed cubes, stationary camera, full-resolution airlight, GPU atmosphere LUT built. 41 frames after warmup; two untimed renders before each measurement. Uses 3x60 GPU-generated point lights. Total includes output, excluding readback, compilation and LUT generation.",
             results,
         }, new JsonSerializerOptions { WriteIndented = true }));
     }

@@ -19,7 +19,7 @@ internal static partial class Program
         {
             renderer.SelectScene(scene); renderer.Resize(size.Width,size.Height);
             var wait=Stopwatch.StartNew();
-            for (int frame=0;frame<8 || (scene is "MandelLightv5" && !renderer.UnshadowedAirlightReady);frame++)
+            for (int frame=0;frame<8;frame++)
             {
                 int bands=renderer.Audio.Bands; var spectrum=new double[8*bands];
                 for (int c=0;c<2;c++) for (int band=0;band<bands;band++)

@@ -1,7 +1,7 @@
 #ifndef AETHER_POINT_AIRLIGHT_INTEGRAL
 #define AETHER_POINT_AIRLIGHT_INTEGRAL
-// Homogeneous point-light scattering using the CPU-generated RGB tail table.
-// Consumer supplies RasterLookupInfo/Lut/Sampler and numeric constants.
+// Homogeneous point-light scattering using the GPU-generated RGB tail table.
+// Shares table coordinates and resources with AirlightLookup.hlsl.
 static const float4 PointNodes=float4(.1834346425,.5255324099,.7966664774,.9602898565);
 static const float4 PointWeights=float4(.3626837834,.3137066459,.2223810345,.1012285363);
 float3 TonalTail(float c, float b2, float height, float t, float q, float4 layout, float3 extinction)
@@ -47,15 +47,15 @@ float3 PointIntegral(float c, float b2, float begin, float stop, float3 extincti
     float3 integral=0;
     [branch] if (b==0 || (c<begin && b<1e-5*(begin-c)) || (stop<1e30 && c>stop && b<1e-5*(c-stop)))
         integral=CollinearPointIntegral(c,begin,stop,extinction);
-    else if (RasterLookupInfo.x>0 && b<=RasterLookupInfo.y)
+    else if (b<=LookupMaximumDistance)
     {
-        float q=log(1+b/RasterLookupInfo.w)/RasterLookupInfo.z;
+        float q=log(1+b/LookupDistanceScale)/LookupWarp;
         integral=TonalTail(c,b2,H,begin,q,layout,extinction);
         if (stop<1e30) integral=max(0,integral-TonalTail(c,b2,H,stop,q,layout,extinction));
     }
     else
     {
-        // Pending coefficient edits never sample a stale table.
+        // Outside the table domain, use direct angular quadrature.
         float a=atan((begin-c)/H),span=(stop<1e30 ? atan((stop-c)/H) : .5*Pi)-a;
         [loop] for (int j=0;j<16;++j)
         {

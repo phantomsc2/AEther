@@ -42,7 +42,7 @@ internal sealed class RasterGeometry : IDisposable
         outputs = new() { ["GeometryDrawArguments"] = output };
     }
 
-    internal void Prepare(ID3D11DeviceContext context, Programs program, ShaderParameters p,
+    internal void Prepare(ID3D11DeviceContext context, Programs program, ShaderParameters? p,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
         IReadOnlyDictionary<string, ID3D11ShaderResourceView> textures,
         IReadOnlyDictionary<string, ID3D11SamplerState> samplers)

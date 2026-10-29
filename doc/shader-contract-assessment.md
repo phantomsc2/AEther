@@ -10,7 +10,7 @@ half-resolution reconstruction and specialized profiling paths have been removed
 | Fluid | One solver; shader boundary and reflected material outputs | One instance, fixed grid/timestep/multigrid policy |
 | Geometry | GPU counts, indirect instanced triangles, stage reflection | One procedural draw, no mesh asset loader |
 | Projection | Shader camera, rays, depth and reconstruction | Shared conventions must be used consistently |
-| RasterLight | GPU point lights, camera surface/depth, Lambertian BRDF, integral LUT | 512-light limit; validated host-visible Air and depth-diagnostic settings |
+| RasterLight | GPU point lights, camera surface/depth, Lambertian BRDF, integral LUT | 512-light limit; shader-defined medium callbacks |
 | Output | Linear/display tags, shared exposure/tone curve/export | Fixed FP16 intermediate and presentation contract |
 
 The fluid extraction (6500394), procedural geometry extraction (83673dd),
@@ -26,9 +26,9 @@ Resource management and pass scheduling remain host responsibilities.
 Next boundaries worth addressing are parameter schemas across shader stages
 and capability
 composition when a concrete scene requires dependencies beyond the fixed raster,
-fluid, final-PS and presentation order. Medium/LUT setup now lives in RasterLight;
-Renderer no longer reads Air fields. CPU/GPU coefficient mapping remains an
-explicit shared contract because CPU-built lookup tables need coefficient keys.
+fluid, final-PS and presentation order. Medium coefficients, LUT construction and invalidation are shader-owned. C# only
+allocates resources and dispatches the preparation/build/commit passes; no Air
+parameter names or duplicated optical coefficient mappings remain.
 
 See [raster contract](raster-airlight-contract.md), [geometry](geometry-contract.md),
 [fluid](fluid-contract.md), [projection](projection-contract.md) and
