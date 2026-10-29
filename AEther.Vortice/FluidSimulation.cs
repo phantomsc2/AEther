@@ -225,7 +225,7 @@ internal sealed class FluidSimulation : IDisposable
         velocityWarmupPending = true;
     }
 
-    public void Advance(double dt, AudioHistory audio, Programs shaders, ShaderParameters? sceneParameters,
+    public void Advance(double dt, double sourceAgeRate, Programs shaders, ShaderParameters? sceneParameters,
         IReadOnlyDictionary<string, ID3D11Buffer> buffers,
         IReadOnlyDictionary<string, ID3D11ShaderResourceView> textures,
         IReadOnlyDictionary<string, ID3D11SamplerState> samplers, bool displayMaterial = true)
@@ -242,7 +242,7 @@ internal sealed class FluidSimulation : IDisposable
             B = new((float)TimeStep, 0, 0, 0),
             C = new((float)Math.Max(0, dt - .05), 0, 0, 0),
         };
-        if (velocityWarmupPending && audio.Energy > 0)
+        if (velocityWarmupPending)
         {
             for (int i = 0; i < InitialVelocitySteps; i++) StepVelocity();
             velocityWarmupPending = false;
@@ -251,7 +251,7 @@ internal sealed class FluidSimulation : IDisposable
         while (accumulator + 1e-7 >= TimeStep)
         {
             accumulator -= TimeStep;
-            parameters.B.Y = (float)(Math.Max(0, accumulator) / audio.Seconds) * audio.TimeScale;
+            parameters.B.Y = (float)(Math.Max(0, accumulator) * sourceAgeRate);
             StepVelocity();
             if (!displayMaterial) { StepMaterial(); parameters.C.X = 0; }
         }

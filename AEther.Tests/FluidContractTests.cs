@@ -113,6 +113,9 @@ public partial class ShaderRenderingTests
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        renderer.Render(false);
+        Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(2), "Initialize shader-defined flow without waiting for audio.");
+        Assert.That(renderer.Fluid.ReadVelocity().Where((_, i) => i % 2 == 0), Is.All.EqualTo(.5f));
         for (int frame = 0; frame < 3; frame++) { clock.Advance(); renderer.Render(false); }
         Assert.That(renderer.Fluid.MaterialCount, Is.Zero);
         Assert.That(renderer.Fluid.LastMaterialSteps, Is.Zero);

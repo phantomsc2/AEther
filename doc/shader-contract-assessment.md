@@ -23,8 +23,8 @@ Concrete scenes can define geometry, camera, point-light counts/properties,
 fluid payloads and final composition in HLSL without rebuilding the host.
 Resource management and pass scheduling remain host responsibilities.
 
-Next boundaries worth addressing are parameter schemas across shader stages,
-artistic motion clocks that still depend on fluid capability, and capability
+Next boundaries worth addressing are parameter schemas across shader stages
+and capability
 composition when a concrete scene requires dependencies beyond the fixed raster,
 fluid, final-PS and presentation order. Medium/LUT setup now lives in RasterLight;
 Renderer no longer reads Air fields. CPU/GPU coefficient mapping remains an

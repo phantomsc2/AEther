@@ -302,6 +302,8 @@ flight scenes use one material attachment and their own half-life rule.
 `FrameConstants` supplies wall time `T`, frame delta `DT`, musical time `S`,
 `Resolution`, `AspectRatio`, history coordinates, the existing audio feature values
 and the unscaled musical movement clock `MusicalMovementTime`.
+This clock advances identically for fluid and non-fluid scenes; subsystem
+selection does not gate its speed. Scene-specific motion belongs in HLSL.
 `Spectrum0/1` and `Histogram0/1` supply [positive S, positive T, background B,
 splitter input amplitude] in RGBA, in linear amplitude units. The splitter input
 is the selected Kalman smoother's output. `Linear` is the shared sampler.

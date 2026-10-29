@@ -434,9 +434,7 @@ public sealed partial class Renderer : IDisposable
         var distortionResponse = 1 - Math.Exp(-Math.Clamp(dt, 0, .05)
             / (distortionTarget > distortionMomentum ? .85 : 3.2));
         distortionMomentum += (distortionTarget - distortionMomentum) * distortionResponse;
-        var activity = Math.Clamp((Audio.Components.Z + .2f * Audio.Components.Y - .02f) / .53f, 0, 1);
-        var mobility = ActiveShader?.Fluid != null ? activity * activity * (3 - 2 * activity) : 1;
-        movementTime += (Audio.MusicalTime - previousMusicalTime) * mobility;
+        movementTime += Audio.MusicalTime - previousMusicalTime;
         previousMusicalTime = Audio.MusicalTime;
         previousTime = now;
         GpuMarker("Audio upload", true);
@@ -514,7 +512,7 @@ public sealed partial class Renderer : IDisposable
             fluid.DrawMarker = gpu.Annotate;
             if (previousScene != SceneName || dt > .5) fluid.Clear();
             GpuMarker("Fluid", true);
-            fluid.Advance(dt, Audio, active.Fluid,
+            fluid.Advance(dt, Audio.TimeScale / Audio.Seconds, active.Fluid,
                 active.Parameters, namedBuffers, namedTextures, namedSamplers, !FixedFluidMaterialCadence);
             GpuMarker("Fluid", false);
             fluid.Publish(namedTextures);

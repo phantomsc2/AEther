@@ -42,8 +42,8 @@ not use `Parameters`.
   the two diffusion draws.
 
 Velocity and pressure advance at 60 Hz with three multigrid V-cycles and 16
-coarsest-grid iterations. Two initial velocity steps establish flow when live
-audio first becomes active. Catchup is bounded to 50 ms; material normally
+coarsest-grid iterations. Two initial velocity steps establish flow on the first
+advance after initialization or clearing, independently of audio. Catchup is bounded to 50 ms; material normally
 updates once per displayed frame. These are the existing v4 policies, now shared
 by every fluid scene.
 
