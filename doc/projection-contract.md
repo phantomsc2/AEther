@@ -73,10 +73,9 @@ surface; callers test for a hit before reconstructing it.
 For integer pixel coordinates, use `(pixel+.5)/Resolution`. `ProjectionViewClip`
 takes an explicit XY scale and near/far pair.
 
-## Migrated scenes
+## Scenes
 
 - MandelLight v2/v5 and MandelVolume use the shared camera, ray, and depth math.
-
 - FilamentFlight and FoldFlight intersect world-Z cohort planes with camera rays.
   Steering rotates the camera; bends and twists remain world geometry.
 - SpectrumRoad uses one camera for the road plane and roadside cohort planes.
@@ -103,6 +102,6 @@ primitives, and fluid-hit alignment. V5 tests that changing camera
 near/far leaves the infinite background integral unchanged; independent quadrature
 tests retain infinite and surface-clipped cases.
 
-`tools/AEther.MandelLightProfile --projection` captures all eight migrated scenes
+`tools/AEther.MandelLightProfile --projection` captures the eight perspective scenes
 at 1280x720, 720x1280, and 720x720 into `artifacts/shared-projection`. These are
 visual smoke captures, not performance measurements.

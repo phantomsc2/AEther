@@ -416,5 +416,5 @@ The focused smoke check renders all discovered scenes with synthetic audio, chec
 struct/vector/bool defaults and uploads, changes slots and declaration order, exercises
 add/remove/reset and failed-reload rollback, and verifies watcher discovery and shader
 window controls without restarting capture. PNGs go to the ignored smoke artifacts folder.
-Historical specialized smoke modes still contain fixtures for the previous shader
-layout and require migration before use with this authoring system.
+Use `--output-only` for presentation/export checks and `--fluid-only` for the
+shared fluid solver/material checks. Retired scene-specific smoke modes are removed.

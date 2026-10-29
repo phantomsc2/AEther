@@ -4,7 +4,7 @@
 // Shares table coordinates and resources with AirlightLookup.hlsl.
 static const float4 PointNodes=float4(.1834346425,.5255324099,.7966664774,.9602898565);
 static const float4 PointWeights=float4(.3626837834,.3137066459,.2223810345,.1012285363);
-float3 TonalTail(float c, float b2, float height, float t, float q, float4 layout, float3 extinction)
+float3 PointTail(float c, float b2, float height, float t, float q, float4 layout, float3 extinction)
 {
     float x=t-c;
     // atan2(b,abs(x)) computes the angular distance from an endpoint without
@@ -50,8 +50,8 @@ float3 PointIntegral(float c, float b2, float begin, float stop, float3 extincti
     else if (b<=LookupMaximumDistance)
     {
         float q=log(1+b/LookupDistanceScale)/LookupWarp;
-        integral=TonalTail(c,b2,H,begin,q,layout,extinction);
-        if (stop<1e30) integral=max(0,integral-TonalTail(c,b2,H,stop,q,layout,extinction));
+        integral=PointTail(c,b2,H,begin,q,layout,extinction);
+        if (stop<1e30) integral=max(0,integral-PointTail(c,b2,H,stop,q,layout,extinction));
     }
     else
     {

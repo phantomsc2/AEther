@@ -3,8 +3,8 @@
 `RasterGeometry` executes one non-indexed, instanced triangle-list draw. HLSL
 owns both counts and all vertex construction. There is no CPU geometry count,
 vertex buffer, index buffer, count readback, or reserved `Shape` parameter group.
-Consumers are the shared [raster airlight transport](raster-airlight-contract.md)
-used by [MandelLightv5](mandellight-v5.md).
+The consumer is [RasterLight](raster-airlight-contract.md), used by
+[MandelLightv5](mandellight-v5.md).
 
 Include `Common/RasterGeometry.hlsl` and implement:
 
@@ -14,7 +14,7 @@ GeometryVertex EvaluateGeometry(uint vertex, uint instance);
 float4 GeometryProject(float3 world); // homogeneous clip position
 ```
 
-Both airlight consumers project through the [shared shader-owned camera](projection-contract.md).
+RasterLight supplies GeometryProject through the [shader-owned camera](projection-contract.md).
 
 `GeometryVertex` contains `float3 World`, `Normal`, and `Albedo`. Normals are
 world-space unit vectors. The shared vertex wrapper outputs world position and
@@ -31,7 +31,7 @@ The include provides two entry points:
   `GeometryProject` callback.
 
 The host dispatches `(1,1,1)` once per frame, unbinds the UAV, and calls
-`DrawInstancedIndirect` for each requested view using the same argument buffer.
+`DrawInstancedIndirect` for the camera view using the same argument buffer.
 Zero instances or zero vertices draw nothing. For triangle lists, supply a
 multiple of three vertices. All instances in this draw have the same vertex
 count; scenes can flatten variable geometry into one instance when appropriate.
@@ -40,8 +40,7 @@ No mesh storage or arbitrary working-buffer allocation is introduced by this con
 Each compute, vertex, and pixel entry point has its own reflected parameter and
 resource bindings. Geometry callbacks may use `Parameters`, `FrameConstants`,
 and the existing spectrum/history textures and samplers. Counts can depend on
-frame or audio inputs just like positions. All views in a frame must evaluate
-the same world geometry; projection is the view-dependent operation.
+frame or audio inputs just like positions. Geometry and camera callbacks define world-space construction and projection.
 
 MandelLightv5 implements 36 vertices per cube and shader-defined instance counts.
 RasterLight supplies camera projection, surface lighting and camera depth targets.

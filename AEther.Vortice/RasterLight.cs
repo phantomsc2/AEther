@@ -33,7 +33,7 @@ internal sealed class RasterLight : IDisposable
 
     readonly ID3D11Device device;
     readonly ID3D11DeviceContext context;
-    readonly UnshadowedAirlightLookup lookup;
+    readonly AirlightLookup lookup;
     readonly List<IDisposable> owned = [];
     readonly RasterGeometry geometry;
     readonly ID3D11DepthStencilState depthState;
@@ -47,11 +47,12 @@ internal sealed class RasterLight : IDisposable
     internal Action<string, bool>? PassMarker { get; set; }
     internal ID3D11SamplerState LookupSampler => lookup.Sampler;
 
-    internal RasterLight(ID3D11Device device, ID3D11DeviceContext context, UnshadowedAirlightLookup lookup)
+    internal RasterLight(ID3D11Device device, ID3D11DeviceContext context)
     {
-        this.device = device; this.context = context; this.lookup = lookup;
+        this.device = device; this.context = context;
         try
         {
+            lookup = Own(new AirlightLookup(device, context));
             geometry = Own(new RasterGeometry(device));
             depthState = Own(device.CreateDepthStencilState(new DepthStencilDescription
             {
@@ -113,22 +114,25 @@ internal sealed class RasterLight : IDisposable
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
-        if (!ReferenceEquals(lookupPrograms,program))
+        if (!ReferenceEquals(lookupPrograms, program))
         {
             lookup.Invalidate(context);
-            lookupPrograms=program;
+            lookupPrograms = program;
         }
         Mark("Raster lookup", true);
         lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup.StateOutput;
-        program.LookupPrepare.Bind(context,p,passBuffers,textures,samplers,lookupOutputs);
-        context.Dispatch(1,1,1); context.CSSetUnorderedAccessView(0,null);
+        program.LookupPrepare.Bind(context, p, passBuffers, textures, samplers, lookupOutputs);
+        context.Dispatch(1, 1, 1);
+        context.CSSetUnorderedAccessView(0, null);
         lookupOutputs.Clear(); lookupOutputs["RasterLookupOutput"] = lookup.Output;
-        program.LookupBuild.Bind(context,p,passBuffers,textures,samplers,lookupOutputs);
-        context.Dispatch((UnshadowedAirlightLookup.Width+7)/8,(UnshadowedAirlightLookup.Height+7)/8,1);
-        context.CSSetUnorderedAccessView(0,null); context.CSSetShaderResources(0,ShaderProgram.EmptyViews);
+        program.LookupBuild.Bind(context, p, passBuffers, textures, samplers, lookupOutputs);
+        context.Dispatch((AirlightLookup.Width + 7) / 8, (AirlightLookup.Height + 7) / 8, 1);
+        context.CSSetUnorderedAccessView(0, null);
+        context.CSSetShaderResources(0, ShaderProgram.EmptyViews);
         lookupOutputs.Clear(); lookupOutputs["RasterLookupOutputState"] = lookup.StateOutput;
-        program.LookupCommit.Bind(context,p,passBuffers,textures,samplers,lookupOutputs);
-        context.Dispatch(1,1,1); context.CSSetUnorderedAccessView(0,null);
+        program.LookupCommit.Bind(context, p, passBuffers, textures, samplers, lookupOutputs);
+        context.Dispatch(1, 1, 1);
+        context.CSSetUnorderedAccessView(0, null);
         Mark("Raster lookup", false);
         Mark("Raster lights prepare", true);
         program.Lights.Bind(context, p, passBuffers, textures, samplers, outputs);
@@ -166,7 +170,7 @@ internal sealed class RasterLight : IDisposable
     }
     void Mark(string name, bool begin) => PassMarker?.Invoke(name, begin);
 
-    // A camera render target or depth buffer; no shadow resources exist in this pass.
+    // Camera surface/depth and airlight targets.
     sealed class Target : IDisposable
     {
         readonly ID3D11Texture2D texture;

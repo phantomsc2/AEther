@@ -44,8 +44,7 @@ not use `Parameters`.
 Velocity and pressure advance at 60 Hz with three multigrid V-cycles and 16
 coarsest-grid iterations. Two initial velocity steps establish flow on the first
 advance after initialization or clearing, independently of audio. Catchup is bounded to 50 ms; material normally
-updates once per displayed frame. These are the existing v4 policies, now shared
-by every fluid scene.
+updates once per displayed frame. These policies are shared by every fluid scene.
 
 ## Scene-defined velocity boundary
 
@@ -151,15 +150,7 @@ material, and failed layout reloads retaining the working scene. Existing
 regressions cover pressure/curl, boundary wrapping, material attributes, cadence,
 viscosity, extreme input, reload/reset and silence.
 
-The 1280x720 deterministic smoke fixture produced identical v4 pigment,
-birth/frequency and velocity hashes and an identical PNG before and after the
-extraction. Baseline artifacts are under `artifacts/fluid-unification-baseline`;
-`dotnet run --project tools/AEther.Smoke -c Release -- . --fluid-only` produces
-fresh state hashes and captures under `tools/AEther.Smoke/artifacts`.
-
-Before the concurrent test-fixture cleanup, the full Release shader fixture
-completed with 169/171 passing checks. Its two
-high-gain active-fixture failures in the non-fluid FilamentFlight and FoldFlight
-scenes reproduce in the original code and are intentionally left unchanged.
-All fluid silence/numerical/contract checks passed; the final focused run also
-passed all 18 checks. Results are under `artifacts/fluid-unification-tests`.
+The 1280x720 smoke fixture checks shared material/velocity state, projection,
+silence and resize across the ring scenes:
+`dotnet run --project tools/AEther.Smoke -c Release -- . --fluid-only`.
+State hashes and captures go to `tools/AEther.Smoke/artifacts`.

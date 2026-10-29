@@ -35,8 +35,7 @@ public sealed partial class Renderer : IDisposable
 
     FluidSimulation? fluid;
 
-    RasterLight? rasterTransport;
-    UnshadowedAirlightLookup? atmosphereLookup;
+    RasterLight? rasterLight;
 
     string? previousScene;
     internal FluidSimulation Fluid => fluid!;
@@ -491,14 +490,13 @@ public sealed partial class Renderer : IDisposable
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
         if (active.Raster != null)
         {
-            atmosphereLookup ??= new(device, context);
-            rasterTransport ??= new(device, context, atmosphereLookup);
-            namedSamplers["RasterLutSampler"] = rasterTransport.LookupSampler;
+            rasterLight ??= new(device, context);
+            namedSamplers["RasterLutSampler"] = rasterLight.LookupSampler;
             var p = active.Parameters;
-            rasterTransport.PassMarker = GpuMarker;
-            rasterTransport.Prepare(active.Raster, p, width, height, namedBuffers, namedTextures, namedSamplers);
+            rasterLight.PassMarker = GpuMarker;
+            rasterLight.Prepare(active.Raster, p, width, height, namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
-            rasterTransport.IntegrateAirlight(active.Raster, p);
+            rasterLight.IntegrateAirlight(active.Raster, p);
         }
         if (active.Fluid != null)
         {
@@ -555,8 +553,7 @@ public sealed partial class Renderer : IDisposable
         vertex?.Dispose(); outputPixel?.Dispose();
 
         fluid?.Dispose();
-        rasterTransport?.Dispose();
-        atmosphereLookup?.Dispose();
+        rasterLight?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }

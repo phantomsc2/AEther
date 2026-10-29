@@ -18,7 +18,6 @@ internal static partial class Program
         foreach (var size in new[] {(Width:1280,Height:720),(Width:720,Height:1280),(Width:720,Height:720)})
         {
             renderer.SelectScene(scene); renderer.Resize(size.Width,size.Height);
-            var wait=Stopwatch.StartNew();
             for (int frame=0;frame<8;frame++)
             {
                 int bands=renderer.Audio.Bands; var spectrum=new double[8*bands];
@@ -30,7 +29,6 @@ internal static partial class Program
                 }
                 renderer.PostAudio(new(spectrum,4*bands,DateTime.UnixEpoch){AnalysisRow=++rasterAudioRow},2);
                 clock.Advance(); renderer.Render(false); renderer.ReadPixels(false);
-                if (wait.Elapsed.TotalSeconds>60) throw new TimeoutException("Projection capture warmup timed out: "+scene);
             }
             byte[] pixels=renderer.ReadPixels(false);
             if (!pixels.Where((_,i)=>i%4!=3).Any(x=>x>0)) throw new InvalidOperationException("Empty projection capture: "+scene);
@@ -42,7 +40,7 @@ internal static partial class Program
         File.WriteAllText(Path.Combine(output,"captures.json"),JsonSerializer.Serialize(new
         {
             renderer.AdapterDescription,
-            note="Visual smoke captures only, no performance measurements. Live synthetic STB, default scene controls, eight frames per viewport plus atmosphere LUT readiness.",
+            note="Visual smoke captures only, no performance measurements. Live synthetic STB, default scene controls, eight frames per viewport; GPU LUT construction is part of rendering.",
             results,
         },new JsonSerializerOptions{WriteIndented=true}));
     }

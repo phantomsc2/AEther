@@ -17,8 +17,9 @@ internal static partial class Program
         if (args.Contains("--projection")) { RunProjectionCapture(args); return; }
         if (args.Contains("--point-lights")) { RunPointLightProfile(args); return; }
         if (args.Contains("--fluid-v4")) { RunFluidV4Profile(args); return; }
-        string source = Path.GetFullPath(args.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
-        string output = Path.GetFullPath(args.ElementAtOrDefault(1) ?? "artifacts/mandellight-profile/current");
+        var positional = args.Where(arg => !arg.StartsWith("--", StringComparison.Ordinal)).ToArray();
+        string source = Path.GetFullPath(positional.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
+        string output = Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/mandellight-profile/current");
         Directory.CreateDirectory(output);
         string tree = Path.Combine(output, "Shaders-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(tree, "Scenes"));
@@ -30,7 +31,7 @@ internal static partial class Program
         }
         string scene = "MandelLightv2";
         File.Copy(Path.Combine(source, "Scenes/"+scene+".hlsl"), Path.Combine(tree, "Scenes/"+scene+".hlsl"), true);
-        if (scene=="MandelLightv2" && args.Contains("--reference"))
+        if (args.Contains("--reference"))
         {
             string file=Path.Combine(tree,"Scenes/"+scene+".hlsl");
             // Keep the loop bound uniform-driven: a literal 256 makes FXC spend
@@ -50,11 +51,7 @@ internal static partial class Program
         using var dxgiDevice = device.QueryInterface<IDXGIDevice>();
         using var adapter = dxgiDevice.GetAdapter();
         Console.WriteLine(adapter.Description.Description);
-        if (scene=="MandelLightv2")
-        {
-            MeasureV2(renderer,device,context,clock,output,args.Contains("--quick") || args.Contains("--reference"),args.Contains("--reference"));
-            return;
-        }
+        MeasureV2(renderer,device,context,clock,output,args.Contains("--quick") || args.Contains("--reference"),args.Contains("--reference"));
     }
 
     static void MeasureV2(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool quick, bool reference)

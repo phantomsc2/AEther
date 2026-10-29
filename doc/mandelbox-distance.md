@@ -42,18 +42,12 @@ older tails broaden further. Front age is multiplied by a smooth 1.14-to-.88
 bass-to-treble ramp, letting treble lead slightly. Color follows that same smooth
 spectral coordinate. The immediate core uses the corresponding current spectrum.
 The existing fractal history warp still shapes the fronts; no fractal derivative
-or audio-analysis changes are involved. `--transient-only` checks isolated
-bass/mid/treble impulses in each channel and saves their GPU previews. The HEAD
-mapping fixture now uses noise illumination to isolate the underlying geometry
-and history mapping from both tone and transient shading changes.
+or audio-analysis changes are involved.
 
 `MandelboxDistanceTests` checks the expansion bound against independent finite
 differences across individual/default/maximum controls, musical poses and signed
-scales. The GPU smoke runner supports `--variation-only` for isolated control
-comparisons, five frozen musical poses and maximum settings. Captures are saved
-as `tools/AEther.Smoke/artifacts/variation-*.png`. The full smoke run also checks
-the original geometry against HEAD with all three controls disabled, AA, depth
-continuity, stereo, history expiry and live settings across session restarts.
+scales. Rendering regressions cover stereo/history mapping, spatial sampling,
+reload and settings behavior.
 
 Iteration depth follows smoothed musical velocity directly: `depth=3+7*clamp(velocity/1.5,0,1)`. The same fast attack and slow decay govern movement and detail, with no separate depth envelope. The shader captures distance estimates at floor/ceil depth in one orbit and smoothstep-blends their log distances. The coarse reference remains fixed at four iterations. This is a visual field interpolation, not a guaranteed geometric distance bound.
 

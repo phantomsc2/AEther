@@ -175,7 +175,7 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, 81, 47, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
         PointRender(renderer, () => PointFeed(renderer, 0));
-        var lookup = PointField<object>(renderer,"atmosphereLookup");
+        var lookup = PointField<object>(PointField<object>(renderer,"rasterLight"),"lookup");
         byte[] original = renderer.ReadPixels(false);
         PointSet(renderer,"Air.Density",.4f); PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.Not.EqualTo(original), "Coefficient edits must rebuild before shading.");
@@ -189,7 +189,7 @@ public partial class ShaderRenderingTests
         PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
         renderer.SelectScene("Spectrum"); PointFeed(renderer,0); renderer.Render(false);
-        Assert.That(PointField<object>(renderer,"atmosphereLookup"), Is.SameAs(lookup));
+        Assert.That(PointField<object>(PointField<object>(renderer,"rasterLight"),"lookup"), Is.SameAs(lookup));
         renderer.SelectScene("MandelLightv5"); PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
     }
@@ -217,7 +217,7 @@ public partial class ShaderRenderingTests
     static (Vector3 Position, Vector3 Intensity)[] PointRecords(Renderer renderer)
     {
         var device=PointField<ID3D11Device>(renderer,"device"); var context=PointField<ID3D11DeviceContext>(renderer,"context");
-        var transport=PointField<object>(renderer,"rasterTransport");
+        var transport=PointField<object>(renderer,"rasterLight");
         byte[] Read(string field)
         {
             using var resource=PointField<ID3D11ShaderResourceView>(transport,field).Resource;
