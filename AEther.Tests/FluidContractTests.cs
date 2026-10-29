@@ -16,7 +16,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         var values = renderer.ActiveShader!.Parameters!;
         values.SetBoolean(values.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "LowQuality"), true);
         clock.Advance(); renderer.Render(false);
@@ -78,7 +78,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         for (int frame = 0; frame < 8; frame++) { clock.Advance(); renderer.Render(false); }
         var fluid = renderer.Fluid;
         Assert.That(fluid.MaterialCount, Is.EqualTo(3));
@@ -112,7 +112,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         for (int frame = 0; frame < 3; frame++) { clock.Advance(); renderer.Render(false); }
         Assert.That(renderer.Fluid.MaterialCount, Is.Zero);
         Assert.That(renderer.Fluid.LastMaterialSteps, Is.Zero);
@@ -129,7 +129,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Advance(); renderer.Render(false);
         var fluid = renderer.Fluid;
         var before = fluid.ReadMaterial(0);

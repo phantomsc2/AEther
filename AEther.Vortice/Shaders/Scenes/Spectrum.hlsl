@@ -28,7 +28,7 @@ float4 PS(PSin input) : SV_Target
         return float4(max(color * (x < amplitude ? 1 : 0), marker.xxx), 1);
     }
     bool raw = !(ShowS || ShowT || ShowB || ShowR);
-    // Magnitude of the signed residual, computed before clamping the fitted effects.
+    // Residual RMS, aggregated over the same display interval as STB.
     float r = abs(input.UV.x < .5 ? Spectrum0.Load(int3(bin, 1, 0)).r : Spectrum1.Load(int3(bin, 1, 0)).r);
     if (raw || ShowSum)
     {

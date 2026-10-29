@@ -24,8 +24,8 @@ ProjectionCamera SceneCamera()
     return MakeProjectionCamera(origin,forward,right,up);
 }
 #include "../Common/RasterGeometry.hlsl"
-#include "../Common/PointLights.hlsl"
-#include "../Common/PointRasterAirlight.hlsl"
+
+#include "../Common/RasterLight.hlsl"
 
 uint2 GeometryCount()
 {
@@ -74,8 +74,8 @@ float4 PS(PSin input) : SV_Target
 {
     int2 pixel=(int2)input.Position.xy;
     float3 origin,direction; float end; bool hit;
-    PointRay(pixel,origin,direction,hit,end);
+    RasterRay(pixel,origin,direction,hit,end);
     if (View.ShowDepth) return DisplayOutput((hit ? exp(-.04*end) : 0).xxx);
-    float3 surface=hit ? PointSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
-    return LinearOutput(SceneLightGain*(surface+(any(AirScatter()>0) ? PointAirlight.Load(int3(pixel,0)).rgb : 0)));
+    float3 surface=hit ? RasterSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
+    return LinearOutput(SceneLightGain*(surface+(any(AirScatter()>0) ? RasterAirlight.Load(int3(pixel,0)).rgb : 0)));
 }

@@ -13,14 +13,10 @@ for shader edits, parameter changes or scene discovery.
 
 Procedural triangle scenes can use the [geometry contract](geometry-contract.md):
 HLSL supplies vertex/instance counts and evaluates vertices, and the host executes
-one indirect instanced draw per view. The separate
-[raster airlight contract](raster-airlight-contract.md) supplies shared surface,
-shadow, and homogeneous single-scattering transport, currently with the spectral
-light-ring adapter.
-
-For a smaller GPU-defined point-light path, see [MandelLight v5](mandellight-v5.md).
-It shares the geometry contract and atmosphere LUT, with a separate full-resolution
-surface/airlight backend and shader-emitted position/intensity records.
+one indirect instanced draw. The [RasterLight contract](raster-airlight-contract.md)
+supplies point-light surfaces and precalculated homogeneous single-scattering
+airlight, with shader-emitted position/intensity records. MandelLightv5 uses this
+single raster backend.
 
 Perspective scenes share the [HLSL projection contract](projection-contract.md)
 for shader-owned cameras, vertical field of view, near/far depth mapping, rays,
@@ -47,8 +43,8 @@ gain, peak hold, additional frequency smoothing, or age fading.
 
 History integrates piecewise-constant observations over each pixel's time
 footprint, preserving smooth subpixel scrolling without inventing intermediate
-observations. Missing rows remain black. Live bars use the newest block consumed
-this display frame and are black when no new block became due, matching `Spectrum`.
+observations. Missing rows remain black. Live bars use the same display-interval
+aggregate as every scene, retaining it until stale-data expiry.
 The main hub embeds this view below Gain in its left column, exposing the
 audio-to-scene dataflow beside the scene controls in the equal-width right column.
 Debug contains the separate timing and status text. The Audio settings stay aligned
@@ -62,7 +58,9 @@ and its parameters stay unchanged. The graph continues updating when the canvas 
 hidden, while a hidden or minimized hub performs no analysis-view drawing.
 Both outputs use their own resolution, DPI, and monitor white level. Resize,
 shader reloads, and session restarts reconnect the view automatically. The
-Debug scene remains available in the scene picker, with shared shader parameters.
+Debug scene remains available in the scene picker. The analysis preview compiles
+a private Debug program using source defaults; preview parameters have no UI or
+persistence and do not share canvas scene edits.
 With stopped or silent audio, all scene RGB eventually turns
 black as history scrolls out. Residual and smoother comparisons remain in `Spectrum`.
 
@@ -254,59 +252,12 @@ survive hot reload; use Reset defaults to load the complete new reference preset
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
 sample counts show grain; raising quality costs GPU time.
 
-## MandelLightv4 prototype
+## MandelLightv5
 
-`MandelLightv4` rasterizes opaque instanced cubes into camera color/depth and
-optional scalar shadow maps. Cone lights use one axis-aligned perspective view
-with a 5..60 degree half-angle; omnidirectional lights use six cube faces. Both
-pack into one depth-array resource and share surface/airlight visibility code.
-`Lights.Shadows` and `TonalLights.Shadows`
-independently enable shadows, both defaulting off. Unshadowed lights use the
-shared LUT path; shadowed lights share the visibility sampler, with capacity for
-both rings (192 lights). Full-size shadow arrays are omitted when neither group
-needs them. A fullscreen pass integrates single scattering through
-infinite homogeneous air, combining equiangular and optical-depth proposals with
-balance-heuristic MIS. Material edges are hard; shadow queries default to hardware
-2x2 PCF on 512-pixel faces with rendered guard pixels. Sampling jitter supplies
-the integration noise. A fixed world-space ring defaults to 60 lights (1..96),
-using the RingEmitter polar frequency/stereo mapping. Current `Spectrum0/1.g`
-transient amplitude supplies linear light intensity, with a strobe gain and no
-history, smoothing or ambient floor. The host uploads sampled light data once per
-frame; zero-intensity lights are skipped.
-A second ring uses live `Spectrum0/1.r` structure, shares the count/radius/palette
-and stereo coordinates, and lies horizontally in XZ. Its default intensity is
-75% of the strobe intensity for equal S/T. All unshadowed lights are batched into
-the same surface and airlight draws. A shared scaled RGB tail LUT integrates
-their airlight with no visibility queries. Extinction changes rebuild the
-table in the background; deterministic angular quadrature supplies the correct
-current coefficients until upload. `TonalLights.Enabled/Gain` control this ring
-independently of `Lights.Enabled/Gain`, which control only the transient strobes.
-Strobes default to hard 30-degree inward cones. Their optical and equiangular
-proposals are conditioned on each ray/cone interval, with matching normalized
-PDFs, per-light distance stratification, and ray-local light selection.
-An independent circular filament at the origin has one `RingLight.Intensity`
-control, default 0.5. Live mean tonal S supplies its energy, preserving silence.
-It matches the point-light rings' radius and is orthogonal to both planes.
-It uses local-line `pi/r` falloff, nearest-point Lambert/phase shading,
-and deterministic hyperbolic camera-ray quadrature without shadows or a LUT.
-Analytic slope breakpoints bracket the ring-distance extrema; safeguarded root
-solving splits the ray into monotonic-distance intervals, each with transformed
-Gauss quadrature. The source directions and extinction use the nearest ring point
-rather than integration around the emitter. Quadrature has a 20-optical-depth
-numerical tail limit. The ring shares the existing surface and airlight draws.
-Point lights use `1/r^2` and the filament uses `pi/r`, with no source radii or spatial
-regularization. The point LUT stores `b*tail` and factors out `1/b` during lookup.
-Only floating-point denominator/degeneracy safeguards remain; exact singularities
-use finite float32 saturation. Both surface and airlight targets are RGBA32F.
-The dense default preset enables one-light-per-distance sampling and half-resolution
-airlight with depth-aware reconstruction and full-resolution fallback at unmatched
-depth boundaries. Scattering defaults to (1,1,1) and density to 0.65.
-When half-resolution airlight is disabled, an optional depth-aware 3x3 filter
-denoises HDR airlight before surface composition. Surface shading and analytical
-transmission retain their original pixel values.
-Its lights intentionally use only S/T.
-Restart after building the host changes.
-See [MandelLightv4](mandellight-v4.md) for controls, sampling and measurements.
+The scene uses GPU-generated point lights in three perpendicular STB rings,
+procedural cube geometry, Lambertian surfaces and the shared airlight LUT.
+See the [scene controls](mandellight-v5.md) and
+[RasterGeometry/RasterLight contract](raster-airlight-contract.md).
 
 ## MandelLightv2 prototype
 
@@ -366,7 +317,8 @@ The preprocessing stage compares log-amplitude and complex-resonator Kalman
 models with explicit acceleration-noise intensities and fixed Cartesian noise
 RMS. Both return linear magnitudes; neither exports velocity or phase. The
 original splitter neighborhood settings are active. Spectrum's `CompareSmoothers` view uses diagnostic row 1:
-[signed momentary residual, raw magnitude, mode A magnitude, mode B magnitude].
+[residual RMS, raw magnitude, mode A magnitude, mode B magnitude], aggregated
+over the same display interval using the same Mean/RMS/Max setting.
 It displays A left/red and B right/cyan using the same stereo average and linear
 scale. `FilteredHistogram0/1` remain aliases for `Histogram0/1`.
 
@@ -441,8 +393,8 @@ the empty picker while the canvas is dismissed. Minimizing a window keeps its se
 Monitor-specific white level and DPI follow the canvas window automatically.
 
 A reload builds a complete candidate set before swapping programs, parameter layouts,
-bindings and UI. Failure preserves the previous set. Removing the active scene selects
-the alphabetically first remaining scene; removing every scene rejects the reload.
+bindings and UI. Failure preserves the previous set. Removing the active scene clears selection; an empty scene directory is supported.
+Startup and reload never choose a scene implicitly.
 Compatible fluid state survives reloads; scene changes and resize reset it.
 
 Compilation currently runs on the window thread and rebuilds all discovered scenes,

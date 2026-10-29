@@ -1,5 +1,19 @@
 #ifndef AETHER_RASTER_GEOMETRY
 #define AETHER_RASTER_GEOMETRY
+uint RasterHash(uint v) { v^=v>>16; v*=0x7feb352d; v^=v>>15; v*=0x846ca68b; return v^(v>>16); }
+float Random(uint v) { return ((RasterHash(v)>>9)+.5)/8388608.0; }
+float3 CubeDirection(int face, float2 uv)
+{
+    float2 q=2*uv-1;
+    if (face==0) return float3(1,-q.y,-q.x);
+    if (face==1) return float3(-1,-q.y,q.x);
+    if (face==2) return float3(q.x,1,q.y);
+    if (face==3) return float3(q.x,-1,-q.y);
+    if (face==4) return float3(q.x,-q.y,1);
+    return float3(-q.x,-q.y,-1);
+}
+
+
 
 // Scene callbacks: counts are (vertices per instance, instances).
 // Positions and normals are in world space. Projection is supplied by the consumer.

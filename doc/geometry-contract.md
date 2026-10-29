@@ -4,7 +4,7 @@
 owns both counts and all vertex construction. There is no CPU geometry count,
 vertex buffer, index buffer, count readback, or reserved `Shape` parameter group.
 Consumers are the shared [raster airlight transport](raster-airlight-contract.md)
-and the separate [procedural point-light pass](mandellight-v5.md).
+used by [MandelLightv5](mandellight-v5.md).
 
 Include `Common/RasterGeometry.hlsl` and implement:
 
@@ -43,11 +43,5 @@ and the existing spectrum/history textures and samplers. Counts can depend on
 frame or audio inputs just like positions. All views in a frame must evaluate
 the same world geometry; projection is the view-dependent operation.
 
-MandelLight v4 implements `(36, 1 + round(4095 * Shape.Count))`, or zero
-instances when disabled. Its seed, cube topology, transforms and material
-variation are entirely scene HLSL. Changing to three tetrahedrons per instance,
-or changing the vertex count, requires only editing the scene shader.
-
-The airlight consumer supplies camera/light projection, surface shading, depth
-targets, and shadow views. Its enabled shadow maps refresh each frame; it does
-not infer static geometry or cache validity from scene parameter names.
+MandelLightv5 implements 36 vertices per cube and shader-defined instance counts.
+RasterLight supplies camera projection, surface lighting and camera depth targets.

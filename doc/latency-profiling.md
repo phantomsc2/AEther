@@ -65,19 +65,17 @@ Max includes every row with positive overlap. Normalizing each component by its
 maximum before exponentiation prevents overflow as the parameter approaches 1.
 Individual historical rows retain their original values.
 
-The Spectrum scene displays the latest new analysis block consumed in each display frame,
-including faint solid bars for the absolute momentary residual, without averaging blocks
-or holding the previous frame. S/T/B/R visibility controls fall back to raw amplitude
+The Spectrum scene displays the display-interval aggregate, including faint solid
+bars for aggregated residual RMS. S/T/B/R visibility controls fall back to raw amplitude
 when all four layers are disabled.
 ShowSum replaces intensity display with one white bar whose length is the sum of
 the selected layer amplitudes, including the full absolute residual amplitude.
 With no selected layers it continues to show raw amplitude. The I shortcut toggles ShowSum.
-No newly consumed block means black. When multiple blocks arrive before one refresh, Spectrum
-shows the newest eligible block and Histogram retains each at its original position; they
-are never played back across later refreshes to catch up. Blocks older than the existing
-50 ms live-envelope freshness limit remain available only in history.
+When multiple blocks arrive before one refresh, Spectrum aggregates their overlapping
+intervals and Histogram retains each at its original position. Rows are never replayed
+across later refreshes to catch up. Stale rows remain available only in history.
 
-For the other scenes, no new packet does not mean a silent frame. The last aggregate can survive up to 50 ms of source
+For every scene and the analysis preview, no new packet does not mean a silent frame. The last aggregate can survive up to 50 ms of source
 age, then live values clear and history continues aging. A discontinuity cancels retention.
 The live handoff holds at most 100 ms of rows plus any explicitly requested presentation reserve;
 shader history duration is independent. After stalls only the latest 50 ms can excite current

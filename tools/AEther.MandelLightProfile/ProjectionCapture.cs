@@ -14,12 +14,12 @@ internal static partial class Program
         var clock=new Clock();
         using var renderer=new Renderer(window.Handle,1280,720,32,60,shaderDirectory:source,timeProvider:clock,initialScene:"FilamentFlight");
         var results=new List<object>();
-        foreach (string scene in new[] {"FilamentFlight","FoldFlight","SpectrumRoad","FluidFlight","PlaneFlight","MandelLightv2","MandelLightv4","MandelLightv5","MandelVolume"})
+        foreach (string scene in new[] {"FilamentFlight","FoldFlight","SpectrumRoad","FluidFlight","PlaneFlight","MandelLightv2","MandelLightv5","MandelVolume"})
         foreach (var size in new[] {(Width:1280,Height:720),(Width:720,Height:1280),(Width:720,Height:720)})
         {
             renderer.SelectScene(scene); renderer.Resize(size.Width,size.Height);
             var wait=Stopwatch.StartNew();
-            for (int frame=0;frame<8 || (scene is "MandelLightv4" or "MandelLightv5" && !renderer.UnshadowedAirlightReady);frame++)
+            for (int frame=0;frame<8 || (scene is "MandelLightv5" && !renderer.UnshadowedAirlightReady);frame++)
             {
                 int bands=renderer.Audio.Bands; var spectrum=new double[8*bands];
                 for (int c=0;c<2;c++) for (int band=0;band<bands;band++)
@@ -28,7 +28,7 @@ internal static partial class Program
                     int at=4*(c*bands+band);
                     spectrum[at]=.025*shape; spectrum[at+1]=.015*shape; spectrum[at+2]=.02*shape; spectrum[at+3]=.04*shape;
                 }
-                renderer.PostAudio(new(spectrum,4*bands,DateTime.UnixEpoch){AnalysisRow=++v4AudioRow},2);
+                renderer.PostAudio(new(spectrum,4*bands,DateTime.UnixEpoch){AnalysisRow=++rasterAudioRow},2);
                 clock.Advance(); renderer.Render(false); renderer.ReadPixels(false);
                 if (wait.Elapsed.TotalSeconds>60) throw new TimeoutException("Projection capture warmup timed out: "+scene);
             }

@@ -35,13 +35,13 @@ public sealed partial class Renderer : IDisposable
     ID3D11PixelShader outputPixel = null!;
 
     FluidSimulation? fluid;
-    RasterLightTransport? rasterTransport;
-    ProceduralPointLightTransport? pointTransport;
+
+    RasterLight? rasterTransport;
     UnshadowedAirlightLookup? atmosphereLookup;
-    ID3D11Buffer? pointAirlightConstants;
+
     string? previousScene;
     internal FluidSimulation Fluid => fluid!;
-    internal FluidSimulation.Programs FluidPrograms => scenes[SceneName].Fluid!;
+    internal FluidSimulation.Programs FluidPrograms => scenes[SceneName!].Fluid!;
     ID3D11Buffer frameBuffer = null!;
     readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
     readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
@@ -61,9 +61,9 @@ public sealed partial class Renderer : IDisposable
     public AudioHistory Audio { get; private set; }
     public AnalysisOutput? Input { get; private set; }
     public GraphicsOptions Options { get; private set; }
-    public string SceneName { get; private set; } = "Mandelbox";
+    public string? SceneName { get; private set; }
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
-    public ShaderScene? ActiveShader { get { lock (graphicsGate) return scenes.GetValueOrDefault(SceneName); } }
+    public ShaderScene? ActiveShader { get { lock (graphicsGate) return SceneName == null ? null : scenes.GetValueOrDefault(SceneName); } }
     public event EventHandler? ShadersChanged;
     public ShaderParameters? GetSceneParameters(string name)
     {
@@ -81,10 +81,11 @@ public sealed partial class Renderer : IDisposable
         }
     }
 
-    public void SelectScene(string name)
+    public void SelectScene(string? name)
     {
         lock (graphicsGate)
         {
+            if (name == null) { SceneName = null; previousScene = null; return; }
             if (!scenes.TryGetValue(name, out var scene)) throw new ArgumentException("Unknown scene.", nameof(name));
             bool firstCompilation = !scene.ProgramReady;
             scene.EnsureCompiled();
@@ -266,7 +267,7 @@ public sealed partial class Renderer : IDisposable
         }
     }
 
-    public bool CompileActiveScene() => CompileScene(SceneName);
+    public bool CompileActiveScene() => SceneName is { } name && CompileScene(name);
 
     public bool ReloadScene(string name)
     {
@@ -291,7 +292,7 @@ public sealed partial class Renderer : IDisposable
         lock (graphicsGate)
         {
             var name = SceneName;
-            if (!scenes.TryGetValue(name, out var scene)) return false;
+            if (name == null || !scenes.TryGetValue(name, out var scene)) return false;
             try { return ReloadSceneCore(name, scene); }
             catch (Exception error) { ShaderError = error.Message; ShaderFailed(error); return false; }
         }
@@ -344,17 +345,15 @@ public sealed partial class Renderer : IDisposable
                 }
                 else nextScenes.Add(name, new ShaderScene(device, name, source, compileImmediately: false));
             }
-            if (nextScenes.Count == 0) throw new InvalidOperationException("Shaders/Scenes must contain at least one .hlsl scene.");
-            var selected = nextScenes.GetValueOrDefault(SceneName) ?? nextScenes.Values.First();
-            if (!selected.ProgramReady) selected.EnsureCompiled();
-            if (selected.Parameters != null && savedParameters.TryGetValue(selected.Name, out var saved)) selected.Parameters.Restore(saved);
+            var selected = SceneName == null ? null : nextScenes.GetValueOrDefault(SceneName);
+            if (selected?.Parameters != null && savedParameters.TryGetValue(selected.Name, out var saved)) selected.Parameters.Restore(saved);
             foreach (var scene in scenes.Values)
             {
                 if (scene.Parameters != null) savedParameters[scene.Name] = scene.Parameters;
                 scene.Dispose();
             }
             scenes = nextScenes;
-            SceneName = selected.Name;
+            SceneName = selected?.Name;
             vertex?.Dispose(); vertex = nextVertex; nextVertex = null;
             outputPixel?.Dispose(); outputPixel = nextOutput; nextOutput = null;
             ShaderError = null;
@@ -400,6 +399,7 @@ public sealed partial class Renderer : IDisposable
 
     unsafe void RenderCore(bool present, uint syncInterval, long? presentationTimestamp, bool renderCanvas, bool renderDebug)
     {
+        renderCanvas &= ActiveShader != null;
         PollCanvasProgress();
         if (output.SceneTarget == null || (!renderCanvas && !renderDebug)) return;
         var frameStart = Stopwatch.GetTimestamp();
@@ -497,41 +497,13 @@ public sealed partial class Renderer : IDisposable
         {
             atmosphereLookup ??= new(device, context);
             rasterTransport ??= new(device, context, atmosphereLookup);
-            namedSamplers["RasterShadowSampler"] = rasterTransport.ShadowSampler;
-            namedBuffers["RasterLightConstants"] = rasterTransport.LightBuffer;
             namedBuffers["RasterAirlightConstants"] = rasterTransport.AirlightBuffer;
             namedSamplers["RasterLutSampler"] = rasterTransport.LookupSampler;
-            rasterTransport.PassMarker = GpuMarker;
-            rasterTransport.Prepare(active.Raster, active.Parameters!, Audio, width, height,
-                namedBuffers, namedTextures, namedSamplers);
-            context.VSSetShader(vertex);
-            context.RSSetViewport(0, 0, width, height);
-            rasterTransport.IntegrateAirlight(active.Raster, active.Parameters!, namedBuffers);
-        }
-        else if (active.Points != null)
-        {
-            atmosphereLookup ??= new(device, context);
-            pointAirlightConstants ??= Own(device.CreateBuffer(16, BindFlags.ConstantBuffer));
-            pointTransport ??= new(device, context, atmosphereLookup);
             var p = active.Parameters!;
-            var air = p.Items.Single(x => x.Name == "Air").Children;
-            float density = p.GetFloat(air.Single(x => x.Name == "Density"));
-            Vector3 ReadVector(string name)
-            {
-                var v = air.Single(x => x.Name == name).Children;
-                return new(p.GetFloat(v.Single(x => x.Name == "x")),
-                    p.GetFloat(v.Single(x => x.Name == "y")), p.GetFloat(v.Single(x => x.Name == "z")));
-            }
-            var scatter = .3f * density * density * ReadVector("Scattering");
-            var extinction = scatter + .3f * density * density * ReadVector("Absorption");
-            atmosphereLookup.Prepare(extinction, scatter.X > 0 || scatter.Y > 0 || scatter.Z > 0);
-            context.UpdateSubresource(atmosphereLookup.Info, pointAirlightConstants);
-            namedBuffers["RasterAirlightConstants"] = pointAirlightConstants;
-            namedSamplers["RasterLutSampler"] = atmosphereLookup.Sampler;
-            pointTransport.PassMarker = GpuMarker;
-            pointTransport.Prepare(active.Points, p, width, height, namedBuffers, namedTextures, namedSamplers);
+            rasterTransport.PassMarker = GpuMarker;
+            rasterTransport.Prepare(active.Raster, p, width, height, namedBuffers, namedTextures, namedSamplers);
             context.VSSetShader(vertex);
-            pointTransport.IntegrateAirlight(active.Points, p, namedBuffers);
+            rasterTransport.IntegrateAirlight(active.Raster, p);
         }
         if (active.Fluid != null)
         {
@@ -554,10 +526,10 @@ public sealed partial class Renderer : IDisposable
         GpuMarker("Scene", true);
         active.Program.Bind(context, active.Parameters, namedBuffers, namedTextures, namedSamplers);
         if (active.Raster != null) GpuMarker("Raster composite", true);
-        if (active.Points != null) GpuMarker("Point composite", true);
+
         context.Draw(3, 0);
         if (active.Raster != null) GpuMarker("Raster composite", false);
-        if (active.Points != null) GpuMarker("Point composite", false);
+
         GpuMarker("Scene", false);
         GpuMarker("Output", true);
         output.Draw(outputPixel, now, Options.Exposure);
@@ -589,7 +561,6 @@ public sealed partial class Renderer : IDisposable
 
         fluid?.Dispose();
         rasterTransport?.Dispose();
-        pointTransport?.Dispose();
         atmosphereLookup?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();

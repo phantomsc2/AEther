@@ -87,8 +87,8 @@ internal static partial class Program
         parameters = renderer.ActiveShader!.Parameters!; parameters.Reset();
         if (parameters.GetFloat(Find(parameters, "Controls.Gain")) != .25f) throw new Exception("Reset did not use source defaults.");
         File.Delete(path);
-        if (!renderer.ReloadShaders() || renderer.Scenes.Any(s => s.Name == "AuthoringProbe") || renderer.ActiveShader == null)
-            throw new Exception("Deleting the active scene failed to select a fallback.");
+        if (!renderer.ReloadShaders() || renderer.Scenes.Any(s => s.Name == "AuthoringProbe") || renderer.ActiveShader != null)
+            throw new Exception("Deleting the active scene failed to clear selection.");
         Console.WriteLine("Shader authoring: scene discovery, GPU output, nested defaults, vectors, bools, nonstandard slots, reordered layout, reload rollback, reset, add/remove and resize passed.");
     }
 

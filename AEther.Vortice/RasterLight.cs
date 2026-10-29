@@ -1,11 +1,12 @@
+using System.Numerics;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 
 namespace AEther.Vortice;
 
-// Independent point-only pass. CPU work is resource scheduling and medium/LUT setup.
-internal sealed class ProceduralPointLightTransport : IDisposable
+// Point-lit procedural geometry and homogeneous single scattering.
+internal sealed class RasterLight : IDisposable
 {
     internal const int Capacity = 512;
     internal sealed class Programs : IDisposable
@@ -13,16 +14,29 @@ internal sealed class ProceduralPointLightTransport : IDisposable
         readonly List<IDisposable> owned = [];
         internal readonly ShaderProgram Lights, Surface, Airlight;
         internal readonly RasterGeometry.Programs Geometry;
-        internal Programs(ID3D11Device device, string source, string file)
+        internal readonly ShaderParameter Density, Scattering, Absorption, ShowDepth;
+        internal Programs(ID3D11Device device, string source, string file, ShaderParameters? values)
         {
             try
             {
+                if (values == null) throw new InvalidOperationException("RasterLight requires Parameters with Air and View settings.");
+                Density = Require(values, "Air", "Density", "Scalar:Float:1");
+                Scattering = Require(values, "Air", "Scattering", "Vector:Float:3");
+                Absorption = Require(values, "Air", "Absorption", "Vector:Float:3");
+                ShowDepth = Require(values, "View", "ShowDepth", "Scalar:Bool:1");
                 Lights = Own(new ShaderProgram(device, source, "PreparePointLights", file, "cs_5_0"));
-                Surface = Own(new ShaderProgram(device, source, "PointSurfacePS", file));
-                Airlight = Own(new ShaderProgram(device, source, "PointAirlightPS", file));
+                Surface = Own(new ShaderProgram(device, source, "RasterSurfacePS", file));
+                Airlight = Own(new ShaderProgram(device, source, "RasterAirlightPS", file));
                 Geometry = Own(new RasterGeometry.Programs(device, source, file));
             }
             catch { Dispose(); throw; }
+        }
+        static ShaderParameter Require(ShaderParameters values, string group, string name, string kind)
+        {
+            var item = values.Items.SingleOrDefault(x => x.Name == group)?.Children.SingleOrDefault(x => x.Name == name);
+            if (item == null || item.Kind != kind)
+                throw new InvalidOperationException($"RasterLight requires Parameters.{group}.{name} ({kind}).");
+            return item;
         }
         T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
         public void Dispose() { for (int i = owned.Count - 1; i >= 0; i--) owned[i].Dispose(); owned.Clear(); }
@@ -38,14 +52,19 @@ internal sealed class ProceduralPointLightTransport : IDisposable
     readonly Dictionary<string, ID3D11ShaderResourceView> textures = [];
     readonly Dictionary<string, ID3D11SamplerState> samplers = [];
     readonly ID3D11ShaderResourceView lightsView, countView;
+    readonly ID3D11Buffer airlightConstants;
+    readonly Dictionary<string, ID3D11Buffer> passBuffers = [];
     Target? surface, depth, air;
     internal Action<string, bool>? PassMarker { get; set; }
+    internal ID3D11Buffer AirlightBuffer => airlightConstants;
+    internal ID3D11SamplerState LookupSampler => lookup.Sampler;
 
-    internal ProceduralPointLightTransport(ID3D11Device device, ID3D11DeviceContext context, UnshadowedAirlightLookup lookup)
+    internal RasterLight(ID3D11Device device, ID3D11DeviceContext context, UnshadowedAirlightLookup lookup)
     {
         this.device = device; this.context = context; this.lookup = lookup;
         try
         {
+            airlightConstants = Own(device.CreateBuffer(16, BindFlags.ConstantBuffer));
             geometry = Own(new RasterGeometry(device));
             depthState = Own(device.CreateDepthStencilState(new DepthStencilDescription
             {
@@ -88,6 +107,19 @@ internal sealed class ProceduralPointLightTransport : IDisposable
         IDictionary<string, ID3D11ShaderResourceView> sceneTextures,
         IReadOnlyDictionary<string, ID3D11SamplerState> sceneSamplers)
     {
+        float density = p.GetFloat(program.Density);
+        Vector3 ReadVector(ShaderParameter field)
+        {
+            var v = field.Children;
+            return new(p.GetFloat(v.Single(x => x.Name == "x")),
+                p.GetFloat(v.Single(x => x.Name == "y")), p.GetFloat(v.Single(x => x.Name == "z")));
+        }
+        var scatter = .3f * density * density * ReadVector(program.Scattering);
+        var extinction = scatter + .3f * density * density * ReadVector(program.Absorption);
+        lookup.Prepare(extinction, scatter.X > 0 || scatter.Y > 0 || scatter.Z > 0);
+        context.UpdateSubresource(lookup.Info, airlightConstants);
+        passBuffers.Clear(); foreach (var pair in buffers) passBuffers[pair.Key] = pair.Value;
+        passBuffers["RasterAirlightConstants"] = airlightConstants;
         if (surface?.Width != width || surface.Height != height)
         {
             surface?.Dispose(); surface = null; depth?.Dispose(); depth = null;
@@ -105,44 +137,42 @@ internal sealed class ProceduralPointLightTransport : IDisposable
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
-        Mark("Point lights prepare", true);
-        program.Lights.Bind(context, p, buffers, textures, samplers, outputs);
+        Mark("Raster lights prepare", true);
+        program.Lights.Bind(context, p, passBuffers, textures, samplers, outputs);
         context.Dispatch((Capacity + 63) / 64, 1, 1);
         context.CSSetUnorderedAccessView(0, null); context.CSSetUnorderedAccessView(1, null);
         context.CSSetShaderResources(0, ShaderProgram.EmptyViews); context.CSSetShader(null);
-        Mark("Point lights prepare", false);
-        Mark("Point geometry prepare", true);
-        geometry.Prepare(context, program.Geometry, p, buffers, textures, samplers);
-        Mark("Point geometry prepare", false);
-        program.Geometry.Vertex.Bind(context, p, buffers, textures, samplers);
-        program.Surface.Bind(context, p, buffers, textures, samplers);
+        Mark("Raster lights prepare", false);
+        Mark("Raster geometry prepare", true);
+        geometry.Prepare(context, program.Geometry, p, passBuffers, textures, samplers);
+        Mark("Raster geometry prepare", false);
+        program.Geometry.Vertex.Bind(context, p, passBuffers, textures, samplers);
+        program.Surface.Bind(context, p, passBuffers, textures, samplers);
         context.OMSetBlendState(null); context.OMSetDepthStencilState(depthState);
         context.RSSetViewport(0, 0, width, height);
         context.ClearRenderTargetView(surface.Color!, new(0, 0, 0, 0));
         context.ClearDepthStencilView(depth!.Depth!, DepthStencilClearFlags.Depth, 1, 0);
         context.OMSetRenderTargets(surface.Color!, depth.Depth);
-        Mark("Point surface", true); geometry.Draw(context); Mark("Point surface", false);
+        Mark("Raster surface", true); geometry.Draw(context); Mark("Raster surface", false);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.OMSetDepthStencilState(null);
-        textures["PointDepth"] = depth.View;
-        sceneTextures["PointSurface"] = surface.View; sceneTextures["PointDepth"] = depth.View;
-        sceneTextures["PointAirlight"] = air.View; sceneTextures["PointLights"] = lightsView;
+        textures["RasterDepth"] = depth.View;
+        sceneTextures["RasterSurface"] = surface.View; sceneTextures["RasterDepth"] = depth.View;
+        sceneTextures["RasterAirlight"] = air.View; sceneTextures["PointLights"] = lightsView;
         sceneTextures["PointLightCount"] = countView; sceneTextures["RasterAirlightLut"] = lookup.View;
     }
-    internal void IntegrateAirlight(Programs program, ShaderParameters p, IReadOnlyDictionary<string, ID3D11Buffer> buffers)
+    internal void IntegrateAirlight(Programs program, ShaderParameters p)
     {
-        if (p.GetBoolean(Find(p, "View", "ShowDepth"))) return;
+        if (p.GetBoolean(program.ShowDepth)) return;
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(air!.Color!);
         context.RSSetViewport(0, 0, air.Width, air.Height);
-        program.Airlight.Bind(context, p, buffers, textures, samplers);
-        Mark("Point airlight", true); context.Draw(3, 0); Mark("Point airlight", false);
+        program.Airlight.Bind(context, p, passBuffers, textures, samplers);
+        Mark("Raster airlight", true); context.Draw(3, 0); Mark("Raster airlight", false);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.RSSetViewport(0, 0, surface!.Width, surface.Height);
     }
     void Mark(string name, bool begin) => PassMarker?.Invoke(name, begin);
-    static ShaderParameter Find(ShaderParameters p, string group, string name) =>
-        p.Items.Single(x => x.Name == group).Children.Single(x => x.Name == name);
 
     // A camera render target or depth buffer; no shadow resources exist in this pass.
     sealed class Target : IDisposable

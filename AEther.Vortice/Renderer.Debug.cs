@@ -5,6 +5,8 @@ namespace AEther.Vortice;
 public sealed partial class Renderer
 {
     ColorOutput? debugOutput;
+    ShaderScene? debugSource;
+    ShaderProgram? debugProgram;
     int debugWidth, debugHeight;
     bool debugCapacity;
     string? debugOutputError;
@@ -53,6 +55,7 @@ public sealed partial class Renderer
         lock (graphicsGate)
         {
             debugOutput?.Dispose(); debugOutput = null;
+            debugProgram?.Dispose(); debugProgram = null; debugSource = null;
             debugCapacity = false; debugOutputError = null;
         }
     }
@@ -68,10 +71,10 @@ public sealed partial class Renderer
             // output must never make the primary wait for a slower/occluded window.
             if (present && renderCanvas && !debugCapacity && !debugOutput.FrameReady.WaitOne(0)) return false;
             if (!scenes.TryGetValue("Debug", out var shader)) throw new InvalidOperationException("Debug.hlsl is unavailable.");
-            if (!shader.ProgramReady)
+            if (!ReferenceEquals(debugSource, shader))
             {
-                shader.EnsureCompiled();
-                if (shader.Parameters != null && savedParameters.TryGetValue("Debug", out var saved)) shader.Parameters.Restore(saved);
+                var candidate = shader.CreateDefaultProgram();
+                debugProgram?.Dispose(); debugProgram = candidate; debugSource = shader;
             }
             frame.A.W = debugWidth / (float)debugHeight;
             frame.F.X = debugWidth; frame.F.Y = debugHeight;
@@ -82,7 +85,7 @@ public sealed partial class Renderer
             context.OMSetDepthStencilState(null);
             context.OMSetBlendState(null);
             context.OMSetRenderTargets(debugOutput.SceneTarget!);
-            shader.Program.Bind(context, shader.Parameters, namedBuffers, namedTextures, namedSamplers);
+            debugProgram!.Bind(context, null, namedBuffers, namedTextures, namedSamplers);
             context.Draw(3, 0);
             debugOutput.Draw(outputPixel, now);
             DebugDrawCount++;

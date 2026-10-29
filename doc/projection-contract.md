@@ -62,7 +62,7 @@ surface; callers test for a hit before reconstructing it.
 | `ProjectionScreen` / `ProjectionUV` | Aspect-correct screen coordinates and inverse |
 | `ProjectionDirection` | Normalized world ray through a UV coordinate |
 | `ProjectionView` / `ProjectionClip` | World to camera coordinates / homogeneous clip position |
-| `ProjectionViewClip` | Perspective projection of an existing view position, including shadow aperture/guard scaling |
+| `ProjectionViewClip` | Perspective projection of an existing view position, with explicit XY scaling |
 | `ProjectionClipDepth` / `ProjectionDepth` | Clip Z / divided depth from forward distance |
 | `ProjectionLinearDepth` | Forward distance from divided depth |
 | `ProjectionRayDistance` / `ProjectionDepthDistance` | Ray distance from forward / divided depth |
@@ -71,13 +71,12 @@ surface; callers test for a hit before reconstructing it.
 | `ProjectionPlane` | Frustum-clipped ray-plane intersection; negative means no hit |
 
 For integer pixel coordinates, use `(pixel+.5)/Resolution`. `ProjectionViewClip`
-takes an explicit XY scale and near/far pair: square spot/cube shadow views use
-their existing aperture and guard scale rather than the screen aspect ratio.
+takes an explicit XY scale and near/far pair.
 
 ## Migrated scenes
 
-- MandelLight v2/v4/v5 and MandelVolume use the shared camera, ray, and depth math.
-  V4's spot/cube shadow maps retain their existing projection scales and near/far.
+- MandelLight v2/v5 and MandelVolume use the shared camera, ray, and depth math.
+
 - FilamentFlight and FoldFlight intersect world-Z cohort planes with camera rays.
   Steering rotates the camera; bends and twists remain world geometry.
 - SpectrumRoad uses one camera for the road plane and roadside cohort planes.
@@ -93,17 +92,17 @@ Sampling a slice of a 3D field does not itself require a perspective camera.
 ## Clipping and infinite airlight
 
 Finite primary geometry and volume intervals obey near/far clipping. Shadow
-transmission rays do not inherit the camera frustum. Homogeneous v4/v5 airlight
+transmission rays do not inherit the camera frustum. Homogeneous v5 airlight
 integrates from the camera to an opaque surface, or to infinity when no surface
 is present. Neither near nor far truncates that physical integral. The atmosphere
 LUT's coordinate range is also independent of the camera far plane.
 
 GPU tests check depth and position round trips, independent vertical-FOV rays,
-off-axis distances, plane clipping, raster depth reconstruction, shadow projection
-primitives, and fluid-hit alignment. Both v4 and v5 test that changing camera
+off-axis distances, plane clipping, raster depth reconstruction, projection
+primitives, and fluid-hit alignment. V5 tests that changing camera
 near/far leaves the infinite background integral unchanged; independent quadrature
 tests retain infinite and surface-clipped cases.
 
-`tools/AEther.MandelLightProfile --projection` captures all nine migrated scenes
+`tools/AEther.MandelLightProfile --projection` captures all eight migrated scenes
 at 1280x720, 720x1280, and 720x720 into `artifacts/shared-projection`. These are
 visual smoke captures, not performance measurements.

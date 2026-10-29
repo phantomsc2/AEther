@@ -29,7 +29,7 @@ public partial class ShaderRenderingTests
             """);
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 32, 18, 8, 60,
-            shaderDirectory: shaders.Path, timeProvider: new RenderClock(), highPrecisionOutput: highPrecision);
+            shaderDirectory: shaders.Path, timeProvider: new RenderClock(), highPrecisionOutput: highPrecision, initialScene: shaders.Scene);
         var passes = new List<string>();
         renderer.TransportPassMarker = (name, begin) => { if (begin) passes.Add(name); };
         renderer.Render(false);
@@ -73,10 +73,22 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReloadShaders(), Is.True, renderer.ShaderError);
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false)[0], Is.EqualTo(original[0]));
+
+        // Shared include edits participate in transactional reload just like scene edits.
+        string path = Path.Combine(shaders.Path, "Common", "Postprocessing.hlsl");
+        string source = File.ReadAllText(path);
+        File.WriteAllText(path, source + "\nINVALID POSTPROCESSING\n");
+        Assert.That(renderer.ReloadShaders(), Is.False);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false)[0], Is.EqualTo(original[0]));
+        File.WriteAllText(path, source.Replace("return headroom * mapped;", "return 0;"));
+        Assert.That(renderer.ReloadShaders(), Is.True, renderer.ShaderError);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false).Take(3), Is.All.Zero,
+            "A shared postprocessing edit must take effect without rebuilding the app.");
     }
 
-    [TestCase("MandelLightv4", "ShowDepth"), TestCase("MandelLightv4", "ShowShadows"),
-     TestCase("MandelLightv5", "ShowDepth"), Category("GPU")]
+    [TestCase("MandelLightv5", "ShowDepth"), Category("GPU")]
     public void InlineDiagnosticsIgnoreGlobalExposure(string scene, string view)
     {
         using var shaders = new SceneShaders(scene);

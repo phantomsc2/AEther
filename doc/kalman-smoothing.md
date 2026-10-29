@@ -130,7 +130,7 @@ view and raw fallback (the splitter input, now smoothed).
 
 `SampleEvent` exposes callback-lifetime linear arrays `ObservedAmplitude`,
 `LogSmoothedAmplitude`, and `ComplexSmoothedAmplitude`. Renderer diagnostic row 1
-contains `[signed residual, observed, A, B]`. Production row 0 remains
+contains `[residual RMS, observed, A, B]`, aggregated with the same display-interval Mean/RMS/Max setting. Production row 0 remains
 `[positive S, positive T, background B, splitter input amplitude]`.
 
 Tests compare mode B with an independent dense four-real-state Kalman filter,

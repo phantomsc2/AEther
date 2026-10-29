@@ -315,7 +315,7 @@ public class HistoryUploadTests
                 """);
         }
         public Renderer Renderer(int bands, double rate, double seconds) => new(window, 1280, 720, bands, rate,
-            seconds, root, timeProvider: Clock);
+            seconds, root, timeProvider: Clock, initialScene: "Spectrum");
         public void Dispose()
         {
             DestroyWindow(window);

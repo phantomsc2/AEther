@@ -113,6 +113,7 @@ public sealed class MainWindow : Window
         {
             if (closing) return;
             canvasDismissed = true;
+            shaders.SelectScene(null);
             UpdateRendering();
             RefreshScenePicker();
         };

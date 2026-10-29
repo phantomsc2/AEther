@@ -42,12 +42,12 @@ public partial class ShaderRenderingTests
                 bool position=length(reconstructed-world)<.001*max(1,length(world-camera.Origin));
                 float t=ProjectionRayDistance(camera,direction,z);
                 bool rayDistance=abs(length(world-camera.Origin)-t)<.001*max(1,t);
-                // Shadow views use the same primitive with aperture/guard scaling.
-                float4 shadow=ProjectionViewClip(float3(.3,-.4,2),float2(1.7,1.7),camera.Near,camera.Far);
-                bool shadowXY=all(abs(shadow.xy/shadow.w-float2(.255,-.34))<1e-6);
-                bool shadowZ=abs(ProjectionLinearDepth(shadow.z/shadow.w,camera.Near,camera.Far)-2)<.001;
+                // The view-space primitive supports an explicit XY projection scale.
+                float4 scaledClip=ProjectionViewClip(float3(.3,-.4,2),float2(1.7,1.7),camera.Near,camera.Far);
+                bool scaledXY=all(abs(scaledClip.xy/scaledClip.w-float2(.255,-.34))<1e-6);
+                bool scaledZ=abs(ProjectionLinearDepth(scaledClip.z/scaledClip.w,camera.Near,camera.Far)-2)<.001;
                 return float4(!endpoints || relativeDepth>.001,
-                    any(abs(uv-input.UV)>.0001),!position || !rayDistance || !shadowXY || !shadowZ,1);
+                    any(abs(uv-input.UV)>.0001),!position || !rayDistance || !scaledXY || !scaledZ,1);
             }
             """);
         using var window=new HiddenWindow();
@@ -118,11 +118,11 @@ public partial class ShaderRenderingTests
             float4 PS(PSin input) : SV_Target
             {
                 int2 pixel=(int2)input.Position.xy;
-                float depth=PointDepth.Load(int3(pixel,0));
+                float depth=RasterDepth.Load(int3(pixel,0));
                 ProjectionCamera c=SceneCamera();
                 float3 world=ProjectionReconstruct(c,input.UV,depth);
                 float error=abs(ProjectionView(c,world).z-8);
-                return float4((depth>=1 || error>.003).xxx+PointSurface.Load(int3(pixel,0)).rgb,1);
+                return float4((depth>=1 || error>.003).xxx+RasterSurface.Load(int3(pixel,0)).rgb,1);
             }
             """;
         File.WriteAllText(file,source);
@@ -132,7 +132,7 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero);
     }
 
-    [TestCase("MandelLightv4"), TestCase("MandelLightv5"), Category("GPU")]
+    [TestCase("MandelLightv5"), Category("GPU")]
     public void ProjectionFarPlaneDoesNotTruncateInfiniteAirlight(string scene)
     {
         using var shaders=new SceneShaders(scene);

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using AEther.Vortice;
 using NUnit.Framework;
 
@@ -6,6 +7,28 @@ namespace AEther.Tests;
 
 public class AudioHistoryTests
 {
+    [TestCase(0), TestCase(.5), TestCase(1)]
+    public void DiagnosticChannelsFollowSpectrumAggregationAndExpiry(double aggregation)
+    {
+        var clock = new HistoryClock();
+        var history = new AudioHistory(1,100,timeProvider:clock) { SpectrumAggregation=aggregation };
+        foreach (int row in new[] { 0,1 })
+        {
+            double value=row==0 ? .2 : .8;
+            history.Post(new(new[] {value,value,value,value},4,DateTime.UnixEpoch) {
+                AnalysisRow=row, ResidualRms=new[] {value}, ObservedAmplitude=new[] {value},
+                LogSmoothedAmplitude=new[] {value}, ComplexSmoothedAmplitude=new[] {value}
+            },1);
+        }
+        history.Advance(.02);
+        double expected=aggregation==1 ? .8 : aggregation==.5 ? Math.Sqrt(.34) : .5;
+        Assert.That(history.DiagnosticSpectrum[0],Is.All.EqualTo(expected).Within(1e-6));
+        Assert.That(history.DiagnosticSpectrum[0],Is.EqualTo(history.Spectrum[0]));
+        history.SpectrumAggregation=0; history.Advance(0);
+        Assert.That(history.DiagnosticSpectrum[0],Is.All.EqualTo(.5f));
+        clock.Milliseconds=100; history.Advance(.1);
+        Assert.That(history.DiagnosticSpectrum.SelectMany(x=>x),Is.All.Zero);
+    }
     [Test]
     public void ObservedAmplitudeComparisonIsCopiedWithItsAnalysisRowAndMirroredForMono()
     {
@@ -14,11 +37,11 @@ public class AudioHistoryTests
         var residual = new[] { .4 };
         var a = new[] { .25 }; var b = new[] { .75 };
         history.Post(new(new[] { .25, .5, .5, .4 }, 4, DateTime.UnixEpoch)
-            { ObservedAmplitude = observed, MomentaryResidual = residual, LogSmoothedAmplitude = a, ComplexSmoothedAmplitude = b }, 1);
+            { ObservedAmplitude = observed, ResidualRms = residual, LogSmoothedAmplitude = a, ComplexSmoothedAmplitude = b }, 1);
         observed[0] = 0; residual[0] = 0; a[0] = 0; b[0] = 0;
         history.Advance(.01);
-        Assert.That(history.BlockMomentaryResidual[0], Is.EqualTo(new[] { .4f, 1f, .25f, .75f }));
-        Assert.That(history.BlockMomentaryResidual[1], Is.EqualTo(history.BlockMomentaryResidual[0]));
+        Assert.That(history.DiagnosticSpectrum[0], Is.EqualTo(new[] { .4f, 1f, .25f, .75f }));
+        Assert.That(history.DiagnosticSpectrum[1], Is.EqualTo(history.DiagnosticSpectrum[0]));
     }
 
     [Test]

@@ -53,8 +53,8 @@ public partial class ShaderRenderingTests
         PointSet(renderer, "Lights.Enabled", false); PointFeed(renderer, 0); renderer.Render(false);
         Assert.That(PointRecords(renderer), Is.Empty);
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i%4 != 3), Is.All.Zero);
-        Assert.That(passes, Does.Contain("Point lights prepare"));
-        Assert.That(passes.Any(x => x.StartsWith("Raster")), Is.False, "V5 must never activate the legacy backend.");
+        Assert.That(passes, Does.Contain("Raster lights prepare"));
+        Assert.That(passes, Does.Contain("Raster surface"));
         Assert.That(renderer.ActiveShader!.Parameters!.Items.Any(x => x.Name == "Quality"), Is.False);
     }
 
@@ -170,7 +170,7 @@ public partial class ShaderRenderingTests
     public void ProceduralPointPassSharesLookupAndSurvivesEditsResizeReloadAndSceneSwitches()
     {
         using var shaders = new SceneShaders("MandelLightv5");
-        File.Copy(Path.Combine(ShaderDirectory,"Scenes","MandelLightv4.hlsl"),Path.Combine(shaders.Path,"Scenes","MandelLightv4.hlsl"));
+        File.Copy(Path.Combine(ShaderDirectory,"Scenes","Spectrum.hlsl"),Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl"));
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 81, 47, 32, 60,
             shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
@@ -190,7 +190,7 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReloadShaders(), Is.True, renderer.ShaderError);
         PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
-        renderer.SelectScene("MandelLightv4"); PointFeed(renderer,0); renderer.Render(false);
+        renderer.SelectScene("Spectrum"); PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.UnshadowedAirlightReady, Is.True);
         Assert.That(PointField<object>(renderer,"atmosphereLookup"), Is.SameAs(lookup));
         renderer.SelectScene("MandelLightv5"); PointFeed(renderer,0); renderer.Render(false);
@@ -226,7 +226,7 @@ public partial class ShaderRenderingTests
     static (Vector3 Position, Vector3 Intensity)[] PointRecords(Renderer renderer)
     {
         var device=PointField<ID3D11Device>(renderer,"device"); var context=PointField<ID3D11DeviceContext>(renderer,"context");
-        var transport=PointField<object>(renderer,"pointTransport");
+        var transport=PointField<object>(renderer,"rasterTransport");
         byte[] Read(string field)
         {
             using var resource=PointField<ID3D11ShaderResourceView>(transport,field).Resource;

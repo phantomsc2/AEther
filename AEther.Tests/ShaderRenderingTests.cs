@@ -64,9 +64,10 @@ public partial class ShaderRenderingTests
             else Assert.That(renderer.ReadPixels(false), Is.EqualTo(canvasReference.ReadPixels(false)), "Debug must not alter canvas rendering.");
             if (frame == 20)
             {
-                // Reload the inactive Debug scene and preserve the shared checkbox.
-                foreach (var target in new[] { renderer, reference })
+                // Canvas Debug edits and reloads must not affect preview defaults.
+                foreach (var target in new[] { renderer })
                 {
+                    target.CompileScene("Debug");
                     var parameters = target.Scenes.Single(s => s.Name == "Debug").Parameters!;
                     parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), true);
                 }
@@ -189,7 +190,7 @@ public partial class ShaderRenderingTests
         var clock = new RenderClock();
         var profile = new PipelineProfile();
         using var renderer = new Renderer(window.Handle, 1280, 720, 128, 60, 2,
-            shaderDirectory: shaders.Path, timeProvider: clock, profile: profile);
+            shaderDirectory: shaders.Path, timeProvider: clock, profile: profile, initialScene: shaders.Scene);
         var samples = new double[128 * 8];
         for (int frame = 0; frame < 360; frame++)
         {
@@ -230,7 +231,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, width, height, Bands, 100,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         renderer.SelectScene("Spectrum");
         var parameters = renderer.ActiveShader!.Parameters!;
         parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CompareSmoothers"), true);
@@ -262,7 +263,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         renderer.SelectScene("Spectrum");
         var parameters = renderer.ActiveShader!.Parameters!;
         string[] names = ["ShowS", "ShowT", "ShowB", "ShowR"];
@@ -319,8 +320,10 @@ public partial class ShaderRenderingTests
     {
         readonly string temporaryRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
         public string Path { get; }
+        public string Scene { get; }
         public SceneShaders(string scene)
         {
+            Scene = scene;
             Path = System.IO.Path.Combine(temporaryRoot, "AEther-silence-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
             var common = System.IO.Path.Combine(ShaderDirectory, "Common");
@@ -383,9 +386,9 @@ public partial class ShaderRenderingTests
         using var referenceWindow = new HiddenWindow();
         var clock = new FluidClock(165);
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         using var reference = new Renderer(referenceWindow.Handle, 160, 90, Bands, 60,
-            shaderDirectory: referenceShaders.Path, timeProvider: clock);
+            shaderDirectory: referenceShaders.Path, timeProvider: clock, initialScene: referenceShaders.Scene);
         foreach (var target in new[] { renderer, reference })
         {
             var parameters = target.ActiveShader!.Parameters!;
@@ -423,7 +426,7 @@ public partial class ShaderRenderingTests
         {
             var clock = new RenderClock();
             using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-                shaderDirectory: shaders.Path, timeProvider: clock);
+                shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
             var parameters = renderer.ActiveShader!.Parameters!;
             parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "LowQuality"), true);
             var data = new double[Bands * 8];
@@ -447,7 +450,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new FluidClock(120);
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Frame = 1; renderer.Render(false);
         var fluid = renderer.Fluid;
         fluid.SeedFilamentsForCheck(speed: 2);
@@ -472,7 +475,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         var parameters = renderer.ActiveShader!.Parameters!;
         parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
             .Single(p => p.Name == "PeriodicBoundary"), periodic);
@@ -491,7 +494,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new FluidClock(rate);
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         renderer.Audio.Profile = new PipelineProfile();
         var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
         for (int frame = 1; frame <= 60; frame++)
@@ -515,7 +518,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new FluidClock(1000) { Frame = 1000 };
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, analysisRate,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
         long row = analysisRate - 1;
         // Timestamped live rows end 8 ms behind presentation, like loopback audio
@@ -564,7 +567,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new FluidClock(rate);
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 1000,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Frame = 1; renderer.Render(false);
         renderer.Fluid.SeedFilamentsForCheck(speed: 10);
         var previous = renderer.Fluid.ReadDye();
@@ -593,7 +596,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         var parameters = renderer.ActiveShader!.Parameters!;
         var fluid = parameters.Items.Single(p => p.Name == "Fluid");
         var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
@@ -620,7 +623,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         var parameters = renderer.ActiveShader!.Parameters!;
         foreach (var path in new[] { "Fluid.EmissionVelocity", "Fluid.VelocityGain", "Fluid.Curl",
             "Fluid.Viscosity", "Emitter.Rate", "Emitter.MaterialGain", "Emitter.Capacity" })
@@ -653,7 +656,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Advance(); renderer.Render(false);
         renderer.Fluid.SeedFilamentsForCheck();
         for (int frame = 0; frame < 60; frame++) { clock.Advance(); renderer.Render(false); }
@@ -907,7 +910,7 @@ public partial class ShaderRenderingTests
             using var window = new HiddenWindow();
             var clock = new RenderClock();
             using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: shaders, timeProvider: clock);
+                shaderDirectory: shaders, timeProvider: clock, initialScene: "CutoutPulseProbe");
             // Hold the ongoing tumble still to isolate the deformation, and
             // settle the tonal/noise material at a useful fractal depth.
             var parameters = renderer.ActiveShader!.Parameters!;

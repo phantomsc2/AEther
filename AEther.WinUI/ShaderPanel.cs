@@ -13,8 +13,8 @@ public sealed class ShaderPanel : UserControl
     readonly Dictionary<string, ShaderParameters> saved = new(StringComparer.Ordinal);
     Renderer? renderer;
     // Allows restarting a preview after renderer changes without losing its scene.
-    public string SelectedScene { get; private set; } = Environment.GetCommandLineArgs()
-        .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..] ?? "Mandelbox";
+    public string? SelectedScene { get; private set; } = Environment.GetCommandLineArgs()
+        .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..];
     public event EventHandler? SceneChanged;
 
     public ShaderPanel()
@@ -46,9 +46,11 @@ public sealed class ShaderPanel : UserControl
         RefreshScene();
     }
 
-    public void SelectScene(string name)
+    public void SelectScene(string? name)
     {
+        SelectedScene = name;
         if (renderer == null) return;
+        if (name == null) { renderer.SelectScene(null); RefreshScene(); return; }
         bool firstCompilation = renderer.Scenes.Single(scene => scene.Name == name).Parameters == null;
         renderer.SelectScene(name);
         if (firstCompilation && saved.TryGetValue(name, out var previous))
@@ -77,7 +79,7 @@ public sealed class ShaderPanel : UserControl
         {
             SelectedScene = renderer.SceneName;
             // Retain visited scenes even when a reload leaves them uncompiled.
-            if (renderer.ActiveShader?.Parameters is { } values) saved[SelectedScene] = values;
+            if (SelectedScene != null && renderer.ActiveShader?.Parameters is { } values) saved[SelectedScene] = values;
             SetStatus(renderer.ShaderError ?? "");
         }
         else SetStatus("No active rendering session.");
@@ -100,9 +102,6 @@ public sealed class ShaderPanel : UserControl
     {
         if (parameter.Children.Count != 0)
         {
-            if (parameter.Name == "Display" && parameter.Children.Count == 1
-                && parameter.Children[0] is { Name: "Exposure", Children.Count: 0 } exposure)
-                return Editor(values, exposure);
             var children = new StackPanel { Spacing = 8 };
             foreach (var child in parameter.Children) children.Children.Add(Editor(values, child));
             return new Expander

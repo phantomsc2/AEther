@@ -326,11 +326,11 @@ public class AudioTimingTests
         analyzer.PostSampleSpan(Audio(80), new(Ms(990), 0, AudioTimestampQuality.Device));
         await first.Task.WaitAsync(TimeSpan.FromSeconds(5));
         history.Advance(0);
-        Assert.That(history.BlockSpectrum[0].Max(), Is.GreaterThan(0));
+        Assert.That(history.Spectrum[0].Max(), Is.GreaterThan(0));
 
         clock.Milliseconds = 4000;
         history.Advance(3);
-        Assert.That(history.BlockSpectrum[0], Is.All.Zero);
+        Assert.That(history.Spectrum[0], Is.All.Zero);
         analyzer.PostSampleSpan(Audio(80), timestampError
             ? new(0, 99999, AudioTimestampQuality.Device, AudioPacketFlags.TimestampError)
             : new(Ms(3990), 80, AudioTimestampQuality.Device));
@@ -345,7 +345,7 @@ public class AudioTimingTests
         Assert.That(rows[1].SampleStartTimestamp, Is.EqualTo(Ms(3990)));
         Assert.That(rows[2].SampleEndTimestamp, Is.EqualTo(Ms(4010)));
         Assert.That(rows[1].DiscontinuityGeneration, Is.EqualTo(1));
-        Assert.That(history.BlockSpectrum[0].Max(), Is.GreaterThan(0));
+        Assert.That(history.Spectrum[0].Max(), Is.GreaterThan(0));
         Assert.That(history.Spectrum[0].Max(), Is.GreaterThan(0));
         Assert.That(history.NewestAge, Is.Zero.Within(1e-6));
     }
@@ -412,10 +412,8 @@ public class AudioTimingTests
         history.Advance(.02);
         double expected = Math.Pow(.75, 1 - a);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(expected).Within(1e-7));
-        Assert.That(history.BlockSpectrum[0], Is.All.EqualTo(1f), "Expose the last actual block without averaging.");
         clock.Milliseconds = 40; history.Advance(.02);
         Assert.That(history.Spectrum[0], Is.All.EqualTo(expected).Within(1e-7));
-        Assert.That(history.BlockSpectrum[0], Is.All.Zero, "No newly consumed block means a visible gap in Spectrum.");
         clock.Milliseconds = 71; history.Advance(.031);
         Assert.That(history.Spectrum[0], Is.All.Zero);
     }

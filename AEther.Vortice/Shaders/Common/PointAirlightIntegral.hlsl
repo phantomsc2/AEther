@@ -1,6 +1,6 @@
 #ifndef AETHER_POINT_AIRLIGHT_INTEGRAL
 #define AETHER_POINT_AIRLIGHT_INTEGRAL
-// Shared with v4: the existing CPU-generated RGB tail table and its exact kernel.
+// Homogeneous point-light scattering using the CPU-generated RGB tail table.
 // Consumer supplies RasterLookupInfo/Lut/Sampler and numeric constants.
 static const float4 PointNodes=float4(.1834346425,.5255324099,.7966664774,.9602898565);
 static const float4 PointWeights=float4(.3626837834,.3137066459,.2223810345,.1012285363);

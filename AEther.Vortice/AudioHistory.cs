@@ -8,14 +8,14 @@ public sealed class AudioHistory
 {
     const double Retention = .05, HandoffSeconds = .1;
     sealed record Row(long Index, long Capture, long Completed, double Start, double End,
-        double Arrival, float[] Samples, float[] Residual, float[] Momentary, long Generation, bool Live, AudioStreamClock? Clock, SourceWatermark? Progress);
+        double Arrival, float[] Samples, float[] Residual, float[] Diagnostics, long Generation, bool Live, AudioStreamClock? Clock, SourceWatermark? Progress);
     readonly Channel<Row> pending, offline;
     readonly Queue<Row> scheduled = new(), recent = new();
     readonly TimeProvider timeProvider;
     readonly long started;
     readonly double rate;
     readonly int handoffRows;
-    readonly double[] sum, residualSum, maximum, residualMaximum;
+    readonly double[] sum, residualSum, maximum, residualMaximum, diagnosticSum, diagnosticMaximum;
     long newestRow = -1, consumedRow = -1, firstRow, generation = -1;
     double position, newestEnd, newestArrival, cursor, stateTime;
     double historyClockTime;
@@ -77,10 +77,8 @@ public sealed class AudioHistory
             spectrumAggregation = value;
         }
     }
-    /// <summary>Newest analysis block consumed this display frame; zero when no new block became due.</summary>
-    internal float[][] BlockSpectrum { get; }
-    internal float[][] BlockResidualSpectrum { get; }
-    internal float[][] BlockMomentaryResidual { get; }
+    /// <summary>Aggregated diagnostic row: residual RMS, observed amplitude, log and complex smoother amplitudes.</summary>
+    internal float[][] DiagnosticSpectrum { get; }
     /// <summary>Residual RMS selected or averaged over the same rows as Spectrum.</summary>
     public float[][] ResidualSpectrum { get; }
     public Vector3 Components { get; private set; }
@@ -118,13 +116,12 @@ public sealed class AudioHistory
         Bands = bands; rate = analysisRate; Seconds = seconds; PresentationDelay = presentationDelay;
         Rows = (int)Math.Clamp(Math.Ceiling((seconds + presentationDelay) * rate) + 2, 4, 16384);
         Spectrum = [new float[4 * bands], new float[4 * bands]];
-        BlockSpectrum = [new float[4 * bands], new float[4 * bands]];
         // RGBA row for upload into the existing spectrum textures.
-        BlockMomentaryResidual = [new float[4 * bands], new float[4 * bands]];
-        BlockResidualSpectrum = [new float[bands], new float[bands]];
+        DiagnosticSpectrum = [new float[4 * bands], new float[4 * bands]];
         History = [new float[4 * bands * Rows], new float[4 * bands * Rows]];
         InvalidateHistory();
         sum = new double[8 * bands];
+        diagnosticSum = new double[8 * bands]; diagnosticMaximum = new double[8 * bands];
         residualSum = new double[2 * bands];
         maximum = new double[8 * bands];
         residualMaximum = new double[2 * bands];
@@ -182,16 +179,14 @@ public sealed class AudioHistory
             throw new ArgumentException("A timed row must have a positive source interval.");
         if (!input.ResidualRms.IsEmpty && input.ResidualRms.Length != Bands * channelCount)
             throw new ArgumentException("Residual dimensions do not match the renderer.");
-        if (!input.MomentaryResidual.IsEmpty && input.MomentaryResidual.Length != Bands * channelCount)
-            throw new ArgumentException("Momentary residual dimensions do not match the renderer.");
         if (!input.ObservedAmplitude.IsEmpty && input.ObservedAmplitude.Length != Bands * channelCount)
             throw new ArgumentException("Observed amplitude dimensions do not match the renderer.");
         if (!input.LogSmoothedAmplitude.IsEmpty && input.LogSmoothedAmplitude.Length != Bands * channelCount)
             throw new ArgumentException("Log smoother dimensions do not match the renderer.");
         if (!input.ComplexSmoothedAmplitude.IsEmpty && input.ComplexSmoothedAmplitude.Length != Bands * channelCount)
             throw new ArgumentException("Complex smoother dimensions do not match the renderer.");
-        // Diagnostic RGBA: signed residual, raw magnitude, mode A magnitude, mode B magnitude.
-        var momentary = new float[Bands * 8];
+        // Aggregated diagnostic RGBA: residual RMS, raw magnitude, mode A magnitude, mode B magnitude.
+        var diagnostics = new float[Bands * 8];
         var residual = new float[Bands * 2];
         var owned = new float[Bands * 8];
         for (var c = 0; c < 2; c++)
@@ -203,29 +198,24 @@ public sealed class AudioHistory
                     double value = input.ResidualRms.Span[channel * Bands + k];
                     residual[c * Bands + k] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
                 }
-            if (!input.MomentaryResidual.IsEmpty)
-                for (int k = 0; k < Bands; k++)
-                {
-                    double value = input.MomentaryResidual.Span[channel * Bands + k];
-                    momentary[(c * Bands + k) * 4] = double.IsFinite(value) ? (float)Math.Clamp(value, -float.MaxValue, float.MaxValue) : 0;
-                }
+            for (int k = 0; k < Bands; k++) diagnostics[(c * Bands + k) * 4] = residual[c * Bands + k];
             if (!input.ObservedAmplitude.IsEmpty)
                 for (int k = 0; k < Bands; k++)
                 {
                     double value = input.ObservedAmplitude.Span[channel * Bands + k];
-                    momentary[(c * Bands + k) * 4 + 1] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
+                    diagnostics[(c * Bands + k) * 4 + 1] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
                 }
             if (!input.LogSmoothedAmplitude.IsEmpty)
                 for (int k = 0; k < Bands; k++)
                 {
                     double value = input.LogSmoothedAmplitude.Span[channel * Bands + k];
-                    momentary[(c * Bands + k) * 4 + 2] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
+                    diagnostics[(c * Bands + k) * 4 + 2] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
                 }
             if (!input.ComplexSmoothedAmplitude.IsEmpty)
                 for (int k = 0; k < Bands; k++)
                 {
                     double value = input.ComplexSmoothedAmplitude.Span[channel * Bands + k];
-                    momentary[(c * Bands + k) * 4 + 3] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
+                    diagnostics[(c * Bands + k) * 4 + 3] = double.IsFinite(value) ? (float)Math.Clamp(value, 0, float.MaxValue) : 0;
                 }
             var src = input.GetChannel(channel).Span;
             for (var i = 0; i < src.Length; i++)
@@ -234,15 +224,12 @@ public sealed class AudioHistory
         var row = new Row(input.AnalysisRow, input.CaptureTimestamp, input.AnalysisTimestamp,
             timed ? AudioClock.Seconds(input.SampleStartTimestamp!.Value) : input.AnalysisRow / rate,
             timed ? AudioClock.Seconds(input.SampleEndTimestamp!.Value) : (input.AnalysisRow + 1) / rate,
-            HostNow, owned, residual, momentary, input.DiscontinuityGeneration, timed, input.StreamClock, input.SourceWatermark);
+            HostNow, owned, residual, diagnostics, input.DiscontinuityGeneration, timed, input.StreamClock, input.SourceWatermark);
         (timed ? pending : offline).Writer.TryWrite(row);
     }
 
     public void Advance(double dt, long? presentationTimestamp = null)
     {
-        foreach (var channel in BlockSpectrum) Array.Clear(channel);
-        foreach (var channel in BlockMomentaryResidual) Array.Clear(channel);
-        foreach (var channel in BlockResidualSpectrum) Array.Clear(channel);
         long hostTicks = AudioClock.Now(timeProvider);
         double host = AudioClock.Seconds(hostTicks);
         double target = AudioClock.Seconds((presentationTimestamp ?? hostTicks)
@@ -365,15 +352,6 @@ public sealed class AudioHistory
     {
         newestEnd = row.End; newestArrival = row.Arrival;
         haveConsumed = true;
-        // The diagnostic spectrum exposes delivery cadence. Never hold, average,
-        // or replay older blocks across subsequent display frames.
-        if (!row.Live || host - PresentationDelay - row.End <= Retention)
-            for (int channel = 0; channel < 2; channel++)
-            {
-                row.Samples.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockSpectrum[channel]);
-                row.Residual.AsSpan(channel * Bands, Bands).CopyTo(BlockResidualSpectrum[channel]);
-                row.Momentary.AsSpan(channel * Bands * 4, Bands * 4).CopyTo(BlockMomentaryResidual[channel]);
-            }
         LatestCaptureTimestamp = row.Capture;
         LatestProgress = row.Progress;
         LatestSourceTimestamp = row.Live ? (long)Math.Round(row.End * System.Diagnostics.Stopwatch.Frequency) : null;
@@ -402,6 +380,7 @@ public sealed class AudioHistory
     {
         Array.Clear(sum);
         Array.Clear(residualSum);
+        Array.Clear(diagnosticSum);
         double width = end - start;
         if (width <= 0) return;
         double a = SpectrumAggregation;
@@ -409,9 +388,11 @@ public sealed class AudioHistory
         {
             Array.Clear(maximum);
             Array.Clear(residualMaximum);
+            Array.Clear(diagnosticMaximum);
             foreach (var row in recent)
             {
                 if (row.End <= start || row.Start >= end) continue;
+                for (var i = 0; i < diagnosticMaximum.Length; i++) diagnosticMaximum[i] = Math.Max(diagnosticMaximum[i], row.Diagnostics[i]);
                 for (var i = 0; i < maximum.Length; i++) maximum[i] = Math.Max(maximum[i], row.Samples[i]);
                 for (var i = 0; i < residualMaximum.Length; i++) residualMaximum[i] = Math.Max(residualMaximum[i], row.Residual[i]);
             }
@@ -419,6 +400,7 @@ public sealed class AudioHistory
         if (a == 1)
         {
             maximum.CopyTo(sum, 0);
+            diagnosticMaximum.CopyTo(diagnosticSum, 0);
             residualMaximum.CopyTo(residualSum, 0);
         }
         else
@@ -428,11 +410,13 @@ public sealed class AudioHistory
             {
                 double weight = Math.Max(0, Math.Min(end, row.End) - Math.Max(start, row.Start)) / width;
                 if (weight == 0) continue;
+                Accumulate(row.Diagnostics, diagnosticSum, diagnosticMaximum, weight, p, a > 0);
                 Accumulate(row.Samples, sum, maximum, weight, p, a > 0);
                 Accumulate(row.Residual, residualSum, residualMaximum, weight, p, a > 0);
             }
             if (a > 0)
             {
+                FinishPowerMean(diagnosticSum, diagnosticMaximum, 1 - a);
                 FinishPowerMean(sum, maximum, 1 - a);
                 FinishPowerMean(residualSum, residualMaximum, 1 - a);
             }
@@ -441,6 +425,8 @@ public sealed class AudioHistory
             for (var i = 0; i < Bands * 4; i++) Spectrum[c][i] = (float)Math.Clamp(sum[c * Bands * 4 + i], 0, float.MaxValue);
         for (var c = 0; c < 2; c++)
             for (var k = 0; k < Bands; k++) ResidualSpectrum[c][k] = (float)Math.Clamp(residualSum[c * Bands + k], 0, float.MaxValue);
+        for (var c = 0; c < 2; c++)
+            for (var i = 0; i < Bands * 4; i++) DiagnosticSpectrum[c][i] = (float)Math.Clamp(diagnosticSum[c * Bands * 4 + i], 0, float.MaxValue);
         double power = 0;
         for (var i = 3; i < sum.Length; i += 4) power += sum[i] * sum[i];
         Energy = (float)Math.Sqrt(power / (2 * Bands));
@@ -471,6 +457,7 @@ public sealed class AudioHistory
     {
         foreach (var spectrum in Spectrum) Array.Clear(spectrum);
         foreach (var residual in ResidualSpectrum) Array.Clear(residual);
+        foreach (var diagnostic in DiagnosticSpectrum) Array.Clear(diagnostic);
         Energy = 0;
     }
 

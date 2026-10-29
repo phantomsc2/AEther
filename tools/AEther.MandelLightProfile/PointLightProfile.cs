@@ -5,19 +5,20 @@ using Vortice.Direct3D11;
 
 internal static partial class Program
 {
+    static long rasterAudioRow;
     static void RunPointLightProfile(string[] args)
     {
         var positional = args.Where(x => !x.StartsWith("--")).ToArray();
         string source = Path.GetFullPath(positional.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
         string output = Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/mandellight-v5");
-        string tree = Path.Combine(output, "Shaders");
+        string tree = Path.Combine(output, "Shaders-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(tree, "Scenes"));
         foreach (string file in Directory.EnumerateFiles(Path.Combine(source, "Common"), "*.hlsl", SearchOption.AllDirectories))
         {
             string target = Path.Combine(tree, Path.GetRelativePath(source, file));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.Copy(file, target, true);
         }
-        foreach (string scene in new[] { "MandelLightv4", "MandelLightv5" })
+        foreach (string scene in new[] { "MandelLightv5" })
             File.Copy(Path.Combine(source, "Scenes", scene + ".hlsl"), Path.Combine(tree, "Scenes", scene + ".hlsl"), true);
         using var window = new Form { ClientSize = new(1280, 720), ShowInTaskbar = false };
         var clock = new Clock();
@@ -31,17 +32,10 @@ internal static partial class Program
             (Name:"t", Scene:"MandelLightv5", S:0.0, T:.02, B:0.0),
             (Name:"b", Scene:"MandelLightv5", S:0.0, T:0.0, B:.02),
             (Name:"stb", Scene:"MandelLightv5", S:.02, T:.02, B:.02),
-            (Name:"v4-point-180", Scene:"MandelLightv4", S:.02, T:.02, B:0.0),
         })
         {
             renderer.SelectScene(item.Scene); renderer.ActiveShader!.Parameters!.Reset();
             Set(renderer, "View.CameraSpeed", 0); Set(renderer, "Shape.Speed", 0);
-            if (item.Scene == "MandelLightv4")
-            {
-                Set(renderer, "Lights.Count", 89f/95); Set(renderer, "Lights.Directional", false);
-                Set(renderer, "RingLight.Intensity", 0);
-                Set(renderer, "Quality.HalfResolutionAirlight", false);
-            }
             clock.Reset();
             void Render()
             {
@@ -52,7 +46,7 @@ internal static partial class Program
                     int at = 4*(channel*bands+band);
                     spectrum[at] = item.S*shape; spectrum[at+1] = item.T*shape; spectrum[at+2] = item.B*shape;
                 }
-                renderer.PostAudio(new(spectrum, 4*bands, DateTime.UnixEpoch) { AnalysisRow = ++v4AudioRow }, 2);
+                renderer.PostAudio(new(spectrum, 4*bands, DateTime.UnixEpoch) { AnalysisRow = ++rasterAudioRow }, 2);
                 clock.Advance(); renderer.Render(false);
             }
             var wait = Stopwatch.StartNew();
@@ -71,7 +65,6 @@ internal static partial class Program
             }
             renderer.TransportPassMarker = null;
             var medians = frames.SelectMany(x => x.Keys).Distinct().ToDictionary(k => k, k => Median(frames.Select(x => x.GetValueOrDefault(k))));
-            if (medians.Keys.Any(x => x.StartsWith("Raster light "))) throw new InvalidOperationException("Unexpected shadow draw.");
             Save(renderer.ReadPixels(false), 1280, 720, Path.Combine(output, item.Name + ".png"));
             Console.WriteLine(item.Name + ": " + string.Join(", ", medians.Select(x => $"{x.Key}={x.Value:F3}ms")));
             results.Add(new { item.Name, item.Scene, width = 1280, height = 720, milliseconds = medians });
@@ -79,7 +72,7 @@ internal static partial class Program
         File.WriteAllText(Path.Combine(output, "timings.json"), JsonSerializer.Serialize(new
         {
             adapter = renderer.AdapterDescription,
-            note = "720p, 128 fixed cubes, stationary camera, full-resolution airlight, shared atmosphere LUT ready. 41 frames after warmup; two untimed renders before each measurement. V5 uses 3x60 fixed point lights; v4 uses 2x90 unshadowed point lights, no filament. Different layouts and audio inputs: cost comparison only. Total includes output, excluding readback, compilation and LUT generation.",
+            note = "720p, 128 fixed cubes, stationary camera, full-resolution airlight, shared atmosphere LUT ready. 41 frames after warmup; two untimed renders before each measurement. Uses 3x60 GPU-generated point lights. Total includes output, excluding readback, compilation and LUT generation.",
             results,
         }, new JsonSerializerOptions { WriteIndented = true }));
     }

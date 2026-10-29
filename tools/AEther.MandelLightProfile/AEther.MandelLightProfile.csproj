@@ -9,5 +9,4 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../AEther.Vortice/AEther.Vortice.csproj" /></ItemGroup>
-  <ItemGroup><Content Include="AirlightLut.hlsl" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

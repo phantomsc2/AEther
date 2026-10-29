@@ -161,10 +161,9 @@ internal static partial class Program
     {
         var fixture = Path.Combine(output, "output-check");
         Directory.CreateDirectory(fixture);
-        foreach (var file in Directory.GetFiles(shaders, "*.hlsl"))
-            File.Copy(file, Path.Combine(fixture, Path.GetFileName(file)), true);
-        File.WriteAllText(Path.Combine(fixture, "Spectrum.hlsl"), """
-            float4 PS(PSDefaultin input) : SV_Target
+        CopyShaderTree(shaders, fixture);
+        File.WriteAllText(Path.Combine(fixture, "Scenes", "Spectrum.hlsl"), """
+            float4 PS(PSin input) : SV_Target
             {
                 float value = input.UV.y < .5 ? .002 + .078 * input.UV.x
                     : (input.UV.x < .2 ? 0 : (input.UV.x > .8 ? 1 : .041));
@@ -174,7 +173,8 @@ internal static partial class Program
         const int width = 2048, height = 64;
         foreach (bool highPrecision in new[] { true, false })
         {
-            using var renderer = new Renderer(window, width, height, 16, 64, 1, fixture, highPrecision);
+            using var renderer = new Renderer(window, width, height, 16, 64, 1,
+                shaderDirectory: fixture, highPrecisionOutput: highPrecision);
             renderer.SelectScene("Spectrum");
             renderer.Render(false);
             if (highPrecision && !renderer.HighPrecisionOutput)
@@ -213,7 +213,7 @@ internal static partial class Program
             renderer.Resize(639, 359);
             renderer.Render(false);
             if (renderer.ReadPresentedPixels().Length != 639 * 359 * 4) throw new Exception("Output resize failed.");
-            var presentPath = Path.Combine(fixture, "Present.hlsl");
+            var presentPath = Path.Combine(fixture, "Common", "Postprocessing.hlsl");
             var source = File.ReadAllText(presentPath);
             try
             {

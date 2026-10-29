@@ -39,13 +39,13 @@ internal sealed class ShaderProgram : IDisposable
             if (binding.BindCount != 1) throw new InvalidOperationException($"{file}: resource arrays are not supported ({binding.Name}).");
             var supported = binding.Type switch
             {
-                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "RasterPassConstants" or "RasterLightConstants" or "RasterAirlightConstants",
-                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "RasterShadowSampler" or "RasterLutSampler",
+                ShaderInputType.ConstantBuffer => binding.Name is "FrameConstants" or "Parameters" or "FluidConstants" or "RasterAirlightConstants",
+                ShaderInputType.Sampler => binding.Name is "Linear" or "FluidSampler" or "ClampFluid" or "PressureSampler" or "RasterLutSampler",
                 ShaderInputType.Texture => binding.Name is "Spectrum0" or "Spectrum1" or "Histogram0" or "Histogram1"
                     or "FilteredHistogram0" or "FilteredHistogram1"
                     or "FluidVelocity" or "Velocity" or "Advected" or "Pressure" or "Rhs" or "Correction"
-                    or "RasterShadows" or "RasterSurface" or "RasterDepth" or "RasterAirlight" or "RasterAirlightLut"
-                    or "PointSurface" or "PointDepth" or "PointAirlight"
+                    or "RasterAirlightLut"
+                    or "RasterSurface" or "RasterDepth" or "RasterAirlight"
                     || MaterialResource(binding.Name, "FluidMaterial") || MaterialResource(binding.Name, "FluidPredicted"),
                 ShaderInputType.Structured => binding.Name == "PointLights",
                 ShaderInputType.ByteAddress => binding.Name == "PointLightCount",
@@ -157,15 +157,16 @@ public sealed class ShaderScene : IDisposable
     readonly string source;
     ShaderProgram? program;
     FluidSimulation.Programs? fluid;
-    RasterLightTransport.Programs? raster;
-    ProceduralPointLightTransport.Programs? points;
+
+    RasterLight.Programs? raster;
     bool initialized;
     internal bool ProgramReady => program != null;
     internal ShaderProgram Program => program ?? throw new InvalidOperationException($"Scene '{Name}' has not been compiled yet.");
+    internal ShaderProgram CreateDefaultProgram() => new(device, source, "PS", Name + ".hlsl");
     public ShaderParameters? Parameters => program?.Parameters ?? fluid?.Configuration.Values;
     internal FluidSimulation.Programs? Fluid => fluid;
-    internal RasterLightTransport.Programs? Raster => raster;
-    internal ProceduralPointLightTransport.Programs? Points => points;
+
+    internal RasterLight.Programs? Raster => raster;
     internal ShaderScene(ID3D11Device device, string name, string source, bool compileImmediately = true)
     {
         Name = name;
@@ -180,26 +181,22 @@ public sealed class ShaderScene : IDisposable
         try
         {
             var nextProgram = new ShaderProgram(device, source, "PS", Name + ".hlsl");
-            RasterLightTransport.Programs? nextRaster = null;
-            ProceduralPointLightTransport.Programs? nextPoints = null;
+
+            RasterLight.Programs? nextRaster = null;
             FluidSimulation.Programs? nextFluid = null;
             try
             {
-                if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl");
-                if (nextProgram.Uses("PointSurface")) nextPoints = new(device, source, Name + ".hlsl");
-                if (nextRaster != null && nextPoints != null)
-                    throw new InvalidOperationException("A scene must select one raster backend.");
+                if (nextProgram.Uses("RasterSurface")) nextRaster = new(device, source, Name + ".hlsl", nextProgram.Parameters);
                 if (nextProgram.UsesFluid)
                     nextFluid = new(device, source, Name + ".hlsl", nextProgram);
                 program = nextProgram;
                 raster = nextRaster;
-                points = nextPoints;
                 fluid = nextFluid;
                 initialized = true;
             }
             catch
             {
-                nextProgram.Dispose(); nextRaster?.Dispose(); nextPoints?.Dispose(); nextFluid?.Dispose();
+                nextProgram.Dispose(); nextRaster?.Dispose(); nextFluid?.Dispose();
                 throw;
             }
         }
@@ -207,8 +204,8 @@ public sealed class ShaderScene : IDisposable
     }
     void DisposePrograms()
     {
-        program?.Dispose(); raster?.Dispose(); points?.Dispose(); fluid?.Dispose();
-        raster = null; points = null; fluid = null;
+        program?.Dispose(); raster?.Dispose(); fluid?.Dispose();
+        raster = null; fluid = null;
     }
     internal ShaderScene Recompile()
     {
@@ -223,7 +220,6 @@ public sealed class ShaderScene : IDisposable
         program = replacement.program; replacement.program = null;
         fluid = replacement.fluid; replacement.fluid = null;
         raster = replacement.raster; replacement.raster = null;
-        points = replacement.points; replacement.points = null;
         initialized = true;
     }
     public void Dispose() => DisposePrograms();

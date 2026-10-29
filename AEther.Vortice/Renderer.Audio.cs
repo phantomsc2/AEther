@@ -28,7 +28,7 @@ public sealed partial class Renderer
             }
             Audio.SpectrumAggregation = options.SpectrumAggregation;
             Options = options;
-            if (updateAudio) UploadAudio(reset: true);
+            if (updateAudio) UploadAudio();
         }
     }
 
@@ -89,7 +89,7 @@ public sealed partial class Renderer
             previousMusicalTime = 0;
             // Texture contents must be zeroed before any scene (including transport
             // preparation) can sample them. No old rows or queued packets survive.
-            UploadAudio(reset: true);
+            UploadAudio();
             if (logger != null) Logger = logger.ForContext<Renderer>();
         }
     }
@@ -138,25 +138,23 @@ public sealed partial class Renderer
     // Counts cover both histogram textures; Rows is the number updated per channel.
     internal AudioUpload LastHistoryUpload { get; private set; }
 
-    unsafe void UploadAudio(bool reset = false)
+    unsafe void UploadAudio()
     {
         long start = Stopwatch.GetTimestamp();
         // Capture/analysis never touches a graphics lock. All uploads follow Advance.
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.VSSetShaderResources(0, ShaderProgram.EmptyViews);
         uint pitch = (uint)(Audio.Bands * 16);
-        bool blocks = SceneName is "Spectrum" or "Debug";
-        var spectrum = blocks ? Audio.BlockSpectrum : Audio.Spectrum;
+        var spectrum = Audio.Spectrum;
         for (int channel = 0; channel < 2; channel++)
             fixed (float* data = spectrum[channel])
                 context.UpdateSubresource(textures[channel], 0, new Box(0, 0, 0, Audio.Bands, 1, 1), (IntPtr)data, pitch, 0);
 
 
-        if (blocks || reset)
-            for (int channel = 0; channel < 2; channel++)
-                fixed (float* data = Audio.BlockMomentaryResidual[channel])
-                    context.UpdateSubresource(textures[channel], 0, new Box(0, 1, 0, Audio.Bands, 2, 1),
-                        (IntPtr)data, pitch, 0);
+        for (int channel = 0; channel < 2; channel++)
+            fixed (float* data = Audio.DiagnosticSpectrum[channel])
+                context.UpdateSubresource(textures[channel], 0, new Box(0, 1, 0, Audio.Bands, 2, 1),
+                    (IntPtr)data, pitch, 0);
 
         Span<AudioHistory.HistoryRange> ranges = stackalloc AudioHistory.HistoryRange[2];
         int count = Audio.GetHistoryUpdates(ranges);

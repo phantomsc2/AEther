@@ -198,8 +198,6 @@ internal static partial class Program
                                 var row = (FrameworkElement)VisualTreeHelper.GetParent(VisualTreeHelper.GetParent(number));
                                 editedPath = (string)row.Tag;
                                 var values = current.Renderer.ActiveShader!.Parameters!;
-                                var debugValues = current.Renderer.GetSceneParameters("Debug")!;
-                                debugValues.SetBoolean(Find(debugValues, "CombinedLevel"), true);
                                 if (values.GetFloat(Find(values, (string)row.Tag)) != .75f)
                                     throw new Exception("Numeric editor did not update the shader.");
                                 var scenes = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
@@ -351,9 +349,6 @@ internal static partial class Program
                                 break;
                             case 10:
                                 if (current.Renderer.DebugDrawCount <= debugDraws) return;
-                                var restoredDebug = current.Renderer.GetSceneParameters("Debug")!;
-                                if (!restoredDebug.GetBoolean(Find(restoredDebug, "CombinedLevel")))
-                                    throw new Exception("Full session restart lost the embedded Debug parameters.");
                                 if (!analysis.CanRender || current.Renderer.DebugOutputError != null)
                                     throw new Exception("The hub analysis graph failed to reconnect after reopen/resize.");
                                 hubWidth = host.AppWindow.Size.Width;

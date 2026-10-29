@@ -268,6 +268,7 @@ public class DisplayTimingTests
         using var window = new Window();
         using var renderer = new Renderer(window.Handle, width, height, 1, 100, .2,
             initialScene: "Debug", timeProvider: new Clock());
+        renderer.SetGraphicsOptions(renderer.Options with { SpectrumAggregation = 1 });
         for (int row = 0; row < 8; row++)
         {
             bool active = row == 2 || row == 7;
@@ -308,7 +309,7 @@ public class DisplayTimingTests
     }
 
     [Test, Category("GPU")]
-    public void SpectrumShowsNewBlocksWithoutAveragingOrHoldingAcrossGapsAt720p()
+    public void SpectrumShowsAggregateAndRetainsItAcrossGapsAt720p()
     {
         const int width = 1280, height = 720;
         using var window = new Window();
@@ -326,14 +327,15 @@ public class DisplayTimingTests
         }
         renderer.Render(false);
         Assert.That(renderer.Audio.Spectrum[0][1], Is.EqualTo(.5f), "Other scenes retain their frame aggregate.");
-        Assert.That(renderer.Audio.BlockSpectrum[0][1], Is.EqualTo(.8f));
-        Assert.That(renderer.ReadPixels(false)[((height / 2) * width + 1050) * 4 + 1], Is.GreaterThan(0),
-            "The actual .8 block extends beyond the .5 average.");
+
+        Assert.That(renderer.ReadPixels(false)[((height / 2) * width + 1050) * 4 + 1], Is.Zero,
+            "The .5 aggregate must not show the newest .8 block.");
         clock.Milliseconds = 21;
         renderer.Render(false);
-        Assert.That(renderer.Audio.BlockResidualSpectrum[0], Is.All.Zero);
-        Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero,
-            "A display frame without a new block shows a gap, including the residual outline.");
+        Assert.That(renderer.Audio.ResidualSpectrum[0], Is.All.EqualTo(.3f));
+        Assert.That(renderer.Audio.Spectrum[0][1], Is.EqualTo(.5f));
+        Assert.That(renderer.ReadPixels(false)[((height / 2) * width + 800) * 4 + 1], Is.GreaterThan(0),
+            "The aggregate remains visible until stale-data expiry.");
     }
 
     [TestCase(1280, 720)]
