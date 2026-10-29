@@ -11,7 +11,7 @@ struct FilamentRingSettings { float Intensity; };
 struct QualitySettings { float Samples; float ShadowResolution; float ShadowBias; bool HardwarePCF; bool HalfResolutionAirlight; };
 struct SamplingSettings { float OpticalDepthWeight; bool Jitter; bool RandomLight; };
 struct FilterSettings { bool Enabled; };
-struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; float Exposure;
+struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset;
     bool ShowDepth; bool ShowShadows; float ShadowLight; };
 cbuffer Parameters : register(b1)
 {
@@ -23,7 +23,7 @@ cbuffer Parameters : register(b1)
     QualitySettings Quality = { .24409449, 1, .15, true, true };
     SamplingSettings Sampling = { .5, true, true };
     FilterSettings Filter = { true };
-    ViewSettings View = { .55, .15, .5, .4, false, false, 0 };
+    ViewSettings View = { .55, .15, .5, false, false, 0 };
 };
 ProjectionCamera SceneCamera()
 {
@@ -61,11 +61,8 @@ GeometryVertex EvaluateGeometry(uint vertex, uint instance)
     result.Albedo=Shape.Albedo*lerp(.65,1,Random(id+6));
     return result;
 }
-float4 Display(float3 radiance)
-{
-    float3 mapped=1-exp(-max(0,radiance)*exp2(6*(View.Exposure-.5)));
-    return float4(lerp(12.92*mapped,1.055*pow(mapped,1/2.4)-.055,step(.0031308,mapped)),1);
-}
+// Fixed lighting calibration preserves the former default exposure (-0.6 stops).
+static const float SceneLightGain = exp2(-.6);
 float4 PS(PSin input) : SV_Target
 {
     int2 pixel=(int2)input.Position.xy;
@@ -81,14 +78,14 @@ float4 PS(PSin input) : SV_Target
         float2 uv=.5+(frac(tile)-.5)*((w-2.0)/w);
         float z=RasterShadows.Load(int4(clamp((int2)(uv*w),0,(int)w-1),
             ShadowSlice(light)+(spot ? 0 : cell.x+3*cell.y),0));
-        return float4((z>=1 ? 0 : exp(-.06*LinearDepth(z))).xxx,1);
+        return DisplayOutput((z>=1 ? 0 : exp(-.06*LinearDepth(z))).xxx);
     }
     ProjectionCamera camera=SceneCamera();
     float3 direction=ProjectionDirection(camera,input.UV);
     float z=RasterDepth.Load(int3(pixel,0)); bool hit=z<1;
     float end=hit ? ProjectionDepthDistance(camera,direction,z) : 0;
-    if (View.ShowDepth) return float4((hit ? exp(-.04*end) : 0).xxx,1);
+    if (View.ShowDepth) return DisplayOutput((hit ? exp(-.04*end) : 0).xxx);
     float3 surface=hit ? RasterSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
     float3 air=any(AirScatter()>0) ? FilterAirlight(pixel) : 0;
-    return Display(surface+air);
+    return LinearOutput(SceneLightGain*(surface+air));
 }

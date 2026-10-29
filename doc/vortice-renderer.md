@@ -183,19 +183,24 @@ GPU shaders before replacing any working program. Failed reload preserves the ol
 
 ## Output precision
 
-Scene colors are composed into an FP16 texture before presentation. `Present.hlsl`
-decodes the existing display-encoded colors with the sRGB transfer function and writes
-linear FP16 scRGB (`R16G16B16A16_FLOAT`, `RGB_FULL_G10_NONE_P709`) to the flip-model
-swap chain. This avoids rounding soft gradients to eight bits before Windows composes
-the image. The tone mapping and palette remain as authored; this change does not
-increase highlight brightness or expand the scene gamut.
+Scene output is composed into an FP16 texture before presentation. Visualization
+shaders return linear illumination through `LinearOutput`; diagnostic display colors
+use `DisplayOutput` or the compatible `float4(rgb, 1)` convention. `Present.hlsl`
+applies the shared exposure and tone curve to linear illumination and decodes
+diagnostic colors with the sRGB transfer function. It writes linear FP16 scRGB
+(`R16G16B16A16_FLOAT`, `RGB_FULL_G10_NONE_P709`) to the flip-model swap chain,
+avoiding eight-bit quantization before Windows composition. See the
+[output contract](shader-authoring.md#minimal-scene) for the helpers and curve.
 
 On HDR displays, reference white follows `DISPLAYCONFIG_SDR_WHITE_LEVEL`, queried for
 the containing output once per second. Composition swap chains do not support
 `GetContainingOutput`, so the WinUI path matches the window's monitor to DXGI outputs
 across adapters. Polling follows monitor moves, HDR mode changes
-and the Windows SDR-brightness slider. SDR displays use a scale of one. An unavailable
-display query falls back to the nominal 80-nit scRGB reference white. See Microsoft's
+and the Windows SDR-brightness slider. Active HDR also uses the output's reported
+peak luminance to set tone-map headroom, retaining highlights above reference white.
+SDR displays use a scale and headroom of one, including with FP16 presentation.
+An unavailable display query falls back to nominal 80-nit reference white and SDR
+headroom; missing peak luminance also uses SDR headroom. See Microsoft's
 [Advanced Color guidance](https://learn.microsoft.com/en-us/windows/win32/direct3darticles/high-dynamic-range).
 
 If FP16 scRGB presentation is unsupported, output falls back to RGBA8 SDR with stable,
@@ -204,8 +209,11 @@ remain exact, and the pattern does not flicker over static images. FP16 output i
 dithered by the app; the compositor/driver manages conversion to the display signal.
 Final panel precision and any downstream processing can still limit visible gradients.
 
-`ReadPixels()` exports the scene as dithered, display-encoded RGBA8, independently of
-the monitor's white level. `ReadPixels(false)` disables export dithering for diagnostics.
+`ReadPixels()` uses the presentation shader and a lazy export target to produce
+dithered, display-encoded RGBA8 with SDR headroom and the last rendered frame's
+exposure, independently of the monitor's white level. `ReadPixels(false)` disables
+export dithering for diagnostics. Normal rendering still has one scene and one
+presentation pass; export work runs only on readback.
 The GPU output check reads the actual swap chain, separately from the eight-bit export:
 `dotnet run --project tools/AEther.Smoke -- . --output-only`. It checks dark-gradient
 precision, the sRGB transfer function, exact black, stable unbiased fallback dithering,

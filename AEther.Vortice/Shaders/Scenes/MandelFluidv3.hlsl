@@ -56,7 +56,7 @@ float3 RadiatingShade(float2 uv, float sampleWidth, float pulse)
     float3 light = 4.5 * pigment * body * (ambient + illumination);
     light *= outside;
     light = max(0, light);
-    return light / (1 + light);
+    return light;
 }
 
 float4 PS(const PSin input) : SV_Target
@@ -74,5 +74,5 @@ float4 PS(const PSin input) : SV_Target
             float2 offset = (float2(x, y) + .5) * sampleWidth - .5;
             color += RadiatingShade(input.UV + uvX * offset.x + uvY * offset.y, sampleWidth, pulse);
         }
-    return float4(pow(saturate(color * sampleWidth * sampleWidth), 1 / 2.2), 1);
+    return LinearOutput(color * sampleWidth * sampleWidth);
 }

@@ -5,13 +5,13 @@
 struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
 struct LightSettings { bool Enabled; float Count; float Radius; float Gain; };
-struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; float Exposure; bool ShowDepth; };
+struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; bool ShowDepth; };
 cbuffer Parameters : register(b1)
 {
     ShapeSettings Shape = { true, .03101343, .25, .45, .75, .1, float3(.65,.7,.75) };
     AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
     LightSettings Lights = { true, .62105263, .57, .66666667 };
-    ViewSettings View = { .55, .15, .5, .4, false };
+    ViewSettings View = { .55, .15, .5, false };
 };
 ProjectionCamera SceneCamera()
 {
@@ -50,11 +50,8 @@ GeometryVertex EvaluateGeometry(uint vertex, uint instance)
     result.Albedo=Shape.Albedo*lerp(.65,1,Random(id+6));
     return result;
 }
-float4 Display(float3 radiance)
-{
-    float3 mapped=1-exp(-max(0,radiance)*exp2(6*(View.Exposure-.5)));
-    return float4(lerp(12.92*mapped,1.055*pow(mapped,1/2.4)-.055,step(.0031308,mapped)),1);
-}
+// Fixed lighting calibration preserves the former default exposure (-0.6 stops).
+static const float SceneLightGain = exp2(-.6);
 uint LightCount() { return Lights.Enabled ? 3*(1+(uint)round(95*Lights.Count)) : 0; }
 PointLight EvaluateLight(uint index)
 {
@@ -78,7 +75,7 @@ float4 PS(PSin input) : SV_Target
     int2 pixel=(int2)input.Position.xy;
     float3 origin,direction; float end; bool hit;
     PointRay(pixel,origin,direction,hit,end);
-    if (View.ShowDepth) return float4((hit ? exp(-.04*end) : 0).xxx,1);
+    if (View.ShowDepth) return DisplayOutput((hit ? exp(-.04*end) : 0).xxx);
     float3 surface=hit ? PointSurface.Load(int3(pixel,0)).rgb*exp(-AirExtinction()*end) : 0;
-    return Display(surface+(any(AirScatter()>0) ? PointAirlight.Load(int3(pixel,0)).rgb : 0));
+    return LinearOutput(SceneLightGain*(surface+(any(AirScatter()>0) ? PointAirlight.Load(int3(pixel,0)).rgb : 0)));
 }

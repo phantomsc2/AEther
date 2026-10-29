@@ -308,7 +308,5 @@ float4 PS(PSin input) : SV_Target
             radiance += integrand / (pdfAngular + pdfGuide + pdfExponential);
         }
     }
-    float mapped = 1 - exp(-radiance / samples);
-    float encoded = mapped <= .0031308 ? 12.92 * mapped : 1.055 * pow(mapped, 1 / 2.4) - .055;
-    return float4(encoded.xxx, 1);
+    return LinearOutput((radiance / samples).xxx);
 }

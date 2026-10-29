@@ -22,8 +22,12 @@ internal sealed partial class ColorOutput : IDisposable
     ID3D11Texture2D? scene;
     ID3D11RenderTargetView? sceneTarget;
     ID3D11ShaderResourceView? sceneView;
+    ID3D11Texture2D? export;
+    ID3D11RenderTargetView? exportTarget;
     double nextDisplayCheck;
     float whiteScale = 1;
+    float headroom = 1;
+    float renderedGain = 1;
     int width, height;
     public bool HighPrecision { get; }
     public WaitHandle FrameReady { get; } = null!;
@@ -87,7 +91,7 @@ internal sealed partial class ColorOutput : IDisposable
                     throw new InvalidOperationException("The swap chain did not provide a frame latency handle.");
                 FrameReady = new FrameWaitHandle(handle);
             }
-            constants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
+            constants = device.CreateBuffer(32, BindFlags.ConstantBuffer);
             attachSwapChain?.Invoke(swapChain);
         }
         catch
@@ -120,7 +124,7 @@ internal sealed partial class ColorOutput : IDisposable
         nextDisplayCheck = 0;
         // Diagnostic previews can draw display-encoded colors straight into the SDR back buffer.
         if (directSdr) return;
-        // Never quantize the scene to 8 bits before decoding for scRGB.
+        // Keep linear illumination and display colors at high precision until mapping.
         scene = device.CreateTexture2D(new Texture2DDescription
         {
             Width = (uint)newWidth, Height = (uint)newHeight, MipLevels = 1, ArraySize = 1,
@@ -131,31 +135,47 @@ internal sealed partial class ColorOutput : IDisposable
         sceneView = device.CreateShaderResourceView(scene);
     }
 
-    public void Draw(ID3D11PixelShader shader, double now)
+    public void Draw(ID3D11PixelShader shader, double now, double exposure = 0)
     {
         if (directSdr) return;
+        renderedGain = (float)Math.Pow(2, exposure);
         if (HighPrecision && now >= nextDisplayCheck)
         {
             nextDisplayCheck = now + 1;
-            whiteScale = 1;
+            whiteScale = headroom = 1;
             // Poll infrequently to follow monitor moves, HDR toggles and the
             // Windows SDR-brightness slider without doing display queries per frame.
-            using var output = FindOutput();
-            if (output != null)
+            try
             {
-                using (var advanced = output.QueryInterfaceOrNull<IDXGIOutput6>())
-                    if (advanced?.Description1.ColorSpace == ColorSpaceType.RgbFullG2084NoneP2020)
-                        whiteScale = DisplayWhiteLevel.GetScale(output.Description.DeviceName);
+                using var output = FindOutput();
+                using var advanced = output?.QueryInterfaceOrNull<IDXGIOutput6>();
+                if (advanced?.Description1 is { ColorSpace: ColorSpaceType.RgbFullG2084NoneP2020 } display)
+                {
+                    whiteScale = DisplayWhiteLevel.GetScale(output!.Description.DeviceName);
+                    if (float.IsFinite(display.MaxLuminance) && display.MaxLuminance > 0)
+                        headroom = Math.Max(1, display.MaxLuminance / (80 * whiteScale));
+                }
             }
+            catch (SharpGenException) { whiteScale = headroom = 1; }
         }
-        context.UpdateSubresource(new Vector4(HighPrecision ? 1 : 0, whiteScale, 0, 0), constants);
+        DrawTo(shader, backTarget!, new(HighPrecision ? 1 : 0, whiteScale, renderedGain, headroom), true);
+    }
+
+    void DrawTo(ID3D11PixelShader shader, ID3D11RenderTargetView target, Vector4 mapping, bool dither)
+    {
+        context.UpdateSubresource(new Presentation { Mapping = mapping, Dither = new(dither ? 1 : 0, 0, 0, 0) }, constants);
         context.PSSetConstantBuffer(3, constants);
-        context.OMSetRenderTargets(backTarget!);
+        context.OMSetBlendState(null);
+        context.OMSetDepthStencilState(null);
+        context.OMSetRenderTargets(target);
         context.PSSetShaderResource(9, sceneView!);
         context.PSSetShader(shader);
         context.Draw(3, 0);
         context.PSSetShaderResource(9, null!);
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct Presentation { public Vector4 Mapping, Dither; }
 
     IDXGIOutput? FindOutput()
     {
@@ -191,26 +211,28 @@ internal sealed partial class ColorOutput : IDisposable
     }
 
     /// <summary>Display-encoded RGBA8 for PNGs/tests, before monitor-specific white scaling.</summary>
-    public byte[] ReadPixels(bool dither)
+    public byte[] ReadPixels(ID3D11VertexShader vertex, ID3D11PixelShader shader, bool dither)
     {
         if (directSdr)
         {
             using var back = swapChain.GetBuffer<ID3D11Texture2D>(0);
             return ReadSurface(back, 4);
         }
-        var values = MemoryMarshal.Cast<byte, Half>(ReadSurface(scene!, 8));
-        var result = new byte[width * height * 4];
-        for (int pixel = 0; pixel < width * height; pixel++)
+        if (export == null)
         {
-            for (int c = 0; c < 3; c++)
-            {
-                float encoded = Math.Clamp((float)values[4 * pixel + c], 0, 1);
-                float noise = dither ? (Hash((uint)(3 * pixel + c)) >> 8) / 16777216f - .5f : 0;
-                result[4 * pixel + c] = (byte)Math.Clamp((int)MathF.Floor(encoded * 255 + noise + .5f), 0, 255);
-            }
-            result[4 * pixel + 3] = 255;
+            var description = scene!.Description;
+            description.Format = Format.R8G8B8A8_UNorm;
+            description.BindFlags = BindFlags.RenderTarget;
+            export = device.CreateTexture2D(description);
+            exportTarget = device.CreateRenderTargetView(export);
         }
-        return result;
+        // Reuse the presentation shader, forcing SDR independently of the monitor.
+        // The gain belongs to the last frame, even if options changed since drawing.
+        context.RSSetViewport(0, 0, width, height);
+        context.IASetPrimitiveTopology(global::Vortice.Direct3D.PrimitiveTopology.TriangleList);
+        context.VSSetShader(vertex);
+        DrawTo(shader, exportTarget!, new(0, 1, renderedGain, 1), dither);
+        return ReadSurface(export, 4);
     }
 
     internal float[] ReadPresentedPixels()
@@ -238,17 +260,10 @@ internal sealed partial class ColorOutput : IDisposable
         finally { context.Unmap(staging, 0); }
     }
 
-    static uint Hash(uint value)
-    {
-        unchecked
-        {
-            value ^= value >> 16; value *= 0x7feb352d;
-            value ^= value >> 15; value *= 0x846ca68b;
-            return value ^ (value >> 16);
-        }
-    }
     void ReleaseTargets()
     {
+        exportTarget?.Dispose(); exportTarget = null;
+        export?.Dispose(); export = null;
         sceneView?.Dispose(); sceneView = null;
         sceneTarget?.Dispose(); sceneTarget = null;
         scene?.Dispose(); scene = null;

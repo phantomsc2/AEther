@@ -23,6 +23,10 @@ float AmplitudeResponse(float amplitude, float h)
     return x > h ? 1 / (1 + h / x) : x / (h + x);
 }
 struct PSin { float4 Position : SV_POSITION; float2 UV : TEXCOORDS; };
+// Scene alpha is an output-mode marker, not transparency. Presentation is opaque.
+// Existing float4(rgb, 1) shaders remain display-encoded and bypass exposure.
+float4 LinearOutput(float3 illumination) { return float4(max(0, illumination), 0); }
+float4 DisplayOutput(float3 encodedColor) { return float4(encodedColor, 1); }
 PSin VS(uint id : SV_VertexID)
 {
     PSin o;

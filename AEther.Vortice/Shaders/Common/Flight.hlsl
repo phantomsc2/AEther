@@ -66,6 +66,6 @@ float FlightLevel(float4 audio, float gain)
 float4 FlightOutput(float3 light, float2 screen, float glow)
 {
     light *= exp(-.12 * dot(screen, screen));
-    return float4(pow(saturate(1 - exp(-max(0, light) * (1 + 3 * glow))), 1 / 2.2), 1);
+    return LinearOutput(light * (1 + 3 * glow));
 }
 #endif

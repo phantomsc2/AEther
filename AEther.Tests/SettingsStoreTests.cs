@@ -22,7 +22,7 @@ public class SettingsStoreTests
             var original = new AppSettings
             {
                 Analyzer = new AnalyzerOptions { InputGainDb = -3, UseSwift = false, WindowFunction = DFTWindow.Hamming },
-                Graphics = new GraphicsOptions(4, .8),
+                Graphics = new GraphicsOptions(4, .8, -2.5),
             };
             store.Save(original);
             using var json = JsonDocument.Parse(File.ReadAllText(path));
@@ -43,6 +43,21 @@ public class SettingsStoreTests
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
+
+    [Test]
+    public void OlderGraphicsSettingsDefaultToZeroExposure()
+    {
+        var options = JsonSerializer.Deserialize<GraphicsOptions>("{\"HistorySeconds\":4,\"SpectrumAggregation\":0.8}");
+        Assert.That(options, Is.EqualTo(new GraphicsOptions(4, .8, 0)));
+    }
+
+    [TestCase(-12), TestCase(0), TestCase(12)]
+    public void ExposureAcceptsItsFullRange(double exposure) =>
+        Assert.DoesNotThrow(() => new GraphicsOptions(Exposure: exposure).Validate());
+
+    [TestCase(-12.01), TestCase(12.01), TestCase(double.NaN), TestCase(double.PositiveInfinity), TestCase(double.NegativeInfinity)]
+    public void ExposureRejectsInvalidValues(double exposure) =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => new GraphicsOptions(Exposure: exposure).Validate());
 
     [Test]
     public void MissingFileUsesDefaultsAndInvalidSettingsAreRejected()

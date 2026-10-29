@@ -13,6 +13,12 @@ tooltips, and `System.ComponentModel.DataAnnotations.Range` supplies fixed
 numeric bounds. Defaults come from the option instance's initializers. There
 are no custom slider annotations or property-name cases in the editor.
 
+Graphics **Exposure** uses stops from -12 to +12, defaulting to zero. One stop
+doubles or halves linear scene illumination. It is persisted in
+`AppSettings.Graphics.Exposure`; older settings default to zero. Updates affect
+presentation without restarting analysis or clearing graphics history. Diagnostic
+output bypasses exposure. Scene shaders have no separate exposure control.
+
 The controls expose each property's actual numeric value. Four analyzer
 properties perform nonlinear conversions themselves:
 

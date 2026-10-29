@@ -50,6 +50,7 @@ public partial class ShaderRenderingTests
             }
             clock.Advance();
             var previousPasses = canvasPasses;
+            if (frame == 30) renderer.SetGraphicsOptions(renderer.Options with { Exposure = 12 });
             renderer.Render(false, renderCanvas: drawCanvas, renderDebug: true);
             Assert.That(canvasPasses - previousPasses, Is.EqualTo(drawCanvas ? 1 : 0),
                 "The retained canvas scene must not run while only Debug is rendered.");

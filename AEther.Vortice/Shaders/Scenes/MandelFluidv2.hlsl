@@ -137,7 +137,7 @@ float3 CometShade(float2 uv, float sampleWidth)
 
     // Occlude every layer, including the shock flash: the moving body is black.
     light *= outside;
-    return 1 - exp(-max(0, light));
+    return max(0, light);
 }
 
 float4 PS(const PSin input) : SV_Target
@@ -152,5 +152,5 @@ float4 PS(const PSin input) : SV_Target
             float2 offset = (float2(x, y) + .5) * sampleWidth - .5;
             color += CometShade(input.UV + uvX * offset.x + uvY * offset.y, sampleWidth);
         }
-    return float4(pow(saturate(color * sampleWidth * sampleWidth), 1 / 2.2), 1);
+    return LinearOutput(color * sampleWidth * sampleWidth);
 }

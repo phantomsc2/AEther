@@ -193,8 +193,7 @@ float3 ShadeSliceAt(float2 uv, float sampleWidth, float movementTime, float3 rea
     light += float3(.6, .78, 1) * coreFlash * 1.5;
 #endif
     float vignette = 1 - .38 * smoothstep(.25, 2.5, length(screen));
-    float3 color = 1 - exp(-light * vignette);
-    return saturate(color);
+    return max(0, light * vignette);
 }
 
 
@@ -220,7 +219,7 @@ float4 PS(const PSin IN) : SV_Target
             color += ShadeSlice(IN.UV + uvX * offset.x + uvY * offset.y, sampleWidth, relief);
         }
     color *= sampleWidth * sampleWidth;
-    return float4(pow(saturate(color), 1 / 2.2), 1);
+    return LinearOutput(color);
 }
 
 #endif

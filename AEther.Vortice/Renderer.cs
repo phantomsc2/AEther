@@ -560,12 +560,12 @@ public sealed partial class Renderer : IDisposable
         if (active.Points != null) GpuMarker("Point composite", false);
         GpuMarker("Scene", false);
         GpuMarker("Output", true);
-        output.Draw(outputPixel, now);
+        output.Draw(outputPixel, now, Options.Exposure);
         GpuMarker("Output", false);
     }
 
     /// <summary>Display-encoded RGBA8 export; dithering avoids reintroducing bands in PNGs.</summary>
-    public byte[] ReadPixels(bool dither = true) { lock (graphicsGate) return output.ReadPixels(dither); }
+    public byte[] ReadPixels(bool dither = true) { lock (graphicsGate) return output.ReadPixels(vertex, outputPixel, dither); }
 
     /// <summary>Match a composition swap chain's physical pixels to the host's XAML scale.</summary>
     public void SetCompositionScale(float x, float y) { lock (graphicsGate) output.SetCompositionScale(x, y); }

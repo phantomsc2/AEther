@@ -102,7 +102,7 @@ public partial class ShaderRenderingTests
     {
         using var shaders=new SceneShaders("MandelLightv5");
         string file=Path.Combine(shaders.Path,"Scenes","MandelLightv5.hlsl"),source=File.ReadAllText(file);
-        int begin=source.IndexOf("uint2 GeometryCount()",StringComparison.Ordinal),end=source.IndexOf("float4 Display(",begin,StringComparison.Ordinal);
+        int begin=source.IndexOf("uint2 GeometryCount()",StringComparison.Ordinal),end=source.IndexOf("static const float SceneLightGain",begin,StringComparison.Ordinal);
         source=source[..begin]+"""
             uint2 GeometryCount() { return uint2(6,1); }
             GeometryVertex EvaluateGeometry(uint vertex, uint instance)

@@ -10,7 +10,7 @@ struct AirSettings { float Density; float3 Scattering; };
 struct EmissionSettings { bool Enabled; float Strength; float3 Color; };
 struct LightSettings { bool Enabled; float Intensity; float Speed; float Radius; float Phase; float3 Color; };
 struct QualitySettings { float Samples; };
-struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; float Exposure; };
+struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; };
 cbuffer Parameters
 {
     ShapeSettings Shape = { .46666667, .25, .5, .6, .15 };
@@ -22,7 +22,7 @@ cbuffer Parameters
     LightSettings Light3 = { false, .4, .35, .2, .55, float3(1,.2,.08) };
     LightSettings Light4 = { false, .4, .35, .2, .8, float3(.2,1,.45) };
     QualitySettings Quality = { .49206349 };
-    ViewSettings View = { .4324711, .15, .5, .5 };
+    ViewSettings View = { .4324711, .15, .5 };
 };
 static const float Pi=3.14159265359;
 static const float AirRadius=16;
@@ -329,8 +329,5 @@ float4 PS(PSin input) : SV_Target
         }
         radiance+=cameraTransmission*(emission*materialDensity+localScatter*incoming)/max(pdf,1e-20);
     }
-    radiance*=exp2(6*(View.Exposure-.5))/samples;
-    float3 mapped=1-exp(-max(0,radiance));
-    float3 encoded=lerp(12.92*mapped,1.055*pow(mapped,1/2.4)-.055,step(.0031308,mapped));
-    return float4(encoded,1);
+    return LinearOutput(radiance/samples);
 }

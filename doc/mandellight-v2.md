@@ -153,7 +153,7 @@ Every float control follows the normalized [0,1] contract.
 | `View.CameraDistance` | 0–40 world units; zero places the camera inside the cluster |
 | `View.CameraSpeed` | Camera orbit 0–0.25 radians/second |
 | `View.HorizontalOffset` | Translation from minus to plus one camera distance along camera-right |
-| `View.Exposure` | Exposure multiplier 1/8–8; default 1 |
+| Graphics `Exposure` | Shared exposure in stops, -12 to +12; default 0 (unity) |
 
 Zero material density restores the air-only result when emission is off. Emission
 can deliberately remain visible at zero material density. With all lights disabled

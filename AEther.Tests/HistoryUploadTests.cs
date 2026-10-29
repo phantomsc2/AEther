@@ -301,7 +301,7 @@ public class HistoryUploadTests
                 if (Directory.Exists(candidate)) { source = candidate; break; }
             }
             if (source is null) throw new DirectoryNotFoundException("Cannot locate shader sources.");
-            foreach (var name in new[] { "Inputs.hlsl", "Present.hlsl" })
+            foreach (var name in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl" })
                 File.Copy(Path.Combine(source, name), Path.Combine(root, "Common", name));
             File.WriteAllText(Path.Combine(root, "Scenes", "Spectrum.hlsl"), """
                 float4 PS(PSin input) : SV_Target

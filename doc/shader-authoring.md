@@ -98,14 +98,37 @@ float4 PS(PSin input) : SV_TARGET
     float4 local = .5 * (Spectrum0.SampleLevel(Linear, float2(input.UV.x, .5), 0)
         + Spectrum1.SampleLevel(Linear, float2(input.UV.x, .5), 0));
     float level = AmplitudeResponse(local.b, .01);
-    return float4(Appearance.Enabled ? Appearance.Tint * Appearance.Brightness * level : 0, 1);
+    return LinearOutput(Appearance.Enabled ? Appearance.Tint * Appearance.Brightness * level : 0);
 }
 ```
 
 `PS` is the required pixel entry point. `PSin` contains `Position : SV_POSITION`
 and `UV : TEXCOORDS`. The host supplies the fullscreen triangle vertex shader.
-Scene output follows the existing display-encoded RGB convention; presentation
-decodes it for scRGB output. Alpha should be one.
+Use `LinearOutput(illumination)` to opt into shared postprocessing. Return linear
+RGB illumination, including values above one, with no final tone curve, gamma
+encoding, or display clipping. Average antialiasing samples in linear illumination.
+The renderer applies global **Exposure** from Graphics settings, in stops from
+-12 to +12 (default zero); +1 doubles illumination and -1 halves it. Shaders do
+not declare an Exposure parameter.
+
+Use `DisplayOutput(encodedColor)` for diagnostic palettes and inline depth/shadow
+views that must bypass exposure and tone mapping. Existing `float4(rgb, 1)` returns
+keep this display-encoded behavior. Debug, Spectrum, and Histogram use this path.
+Internally, scene-buffer alpha marks the contract: zero for linear illumination,
+one for display colors. It is not transparency; final output and exports are opaque.
+
+`Common/Postprocessing.hlsl` owns tone mapping and the sRGB transfer functions.
+The existing presentation pass uses the exponential curve
+`h * (1 - exp(-max(illumination, 0) * exp2(Exposure) / h))`. SDR headroom `h` is
+one. Active HDR uses at least one, derived from the display peak luminance divided
+by Windows reference white, preserving highlights above white. FP16 surface support
+alone does not enable HDR headroom. FP16 output stays linear scRGB; SDR output is
+sRGB encoded and spatially dithered. Legacy display colors are decoded for scRGB.
+
+RGBA8 readback uses the same shader with SDR headroom and the last rendered frame's
+exposure, independently of the monitor. `ReadPixels(false)` disables export dither.
+Changing Exposure leaves audio history and fluid simulation intact. Former scene
+exposure defaults are fixed lighting constants, with no overlapping UI controls.
 
 Sample local S/T/B and raw
 amplitude from `Spectrum0/1`, or `Histogram0/1` for historical sources at their

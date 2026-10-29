@@ -22,7 +22,7 @@ public class SwapChainPacingTests
         try
         {
             var source = FindShaders();
-            foreach (var name in new[] { "Inputs.hlsl", "Present.hlsl" })
+            foreach (var name in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl" })
                 File.Copy(Path.Combine(source, "Common", name), Path.Combine(shaders, "Common", name));
             File.WriteAllText(Path.Combine(shaders, "Scenes", "Spectrum.hlsl"),
                 "float4 PS(PSin input) : SV_Target { return float4(0, 0, 0, 1); }");

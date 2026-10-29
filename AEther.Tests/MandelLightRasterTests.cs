@@ -357,7 +357,7 @@ public class MandelLightRasterTests
         renderer.SelectScene("MandelLightv4");
         Set(renderer, "Quality.HalfResolutionAirlight", false);
         Set(renderer, "Shape.Enabled", false);
-        Set(renderer, "View.Exposure", .5f);
+        renderer.SetGraphicsOptions(renderer.Options with { Exposure = .6 }); // Cancel the fixed scene calibration.
         Set(renderer, "Filter.Enabled", false);
         renderer.Render(false); byte[] raw = renderer.ReadPixels(false);
         Pixel(raw, 4, 4, new(4.1f, 4.2f, 4.3f));
@@ -447,7 +447,7 @@ public class MandelLightRasterTests
             Path = System.IO.Path.Combine(root, "AEther-raster-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Common"));
             Directory.CreateDirectory(System.IO.Path.Combine(Path, "Scenes"));
-            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl", "PointAirlightIntegral.hlsl", "Projection.hlsl" })
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl", "RasterGeometry.hlsl", "RasterAirlight.hlsl", "PointAirlightIntegral.hlsl", "Projection.hlsl" })
                 File.Copy(System.IO.Path.Combine(source, "Common", file), System.IO.Path.Combine(Path, "Common", file));
             string scene=File.ReadAllText(System.IO.Path.Combine(source, "Scenes", "MandelLightv4.hlsl"));
             string airlightPath=System.IO.Path.Combine(Path,"Common","RasterAirlight.hlsl");
@@ -458,7 +458,7 @@ public class MandelLightRasterTests
                 // are enough to detect either count being hardcoded or stale.
                 scene=scene.Replace("Shape", "Objects");
                 int begin=scene.IndexOf("uint2 GeometryCount()",StringComparison.Ordinal);
-                int end=scene.IndexOf("float4 Display(",begin,StringComparison.Ordinal);
+                int end=scene.IndexOf("static const float SceneLightGain",begin,StringComparison.Ordinal);
                 scene=scene[..begin] + """
                     uint2 GeometryCount()
                     {

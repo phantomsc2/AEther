@@ -57,7 +57,7 @@ public sealed partial class Renderer
         }
     }
 
-    internal byte[] ReadDebugPixels() { lock (graphicsGate) return debugOutput!.ReadPixels(false); }
+    internal byte[] ReadDebugPixels() { lock (graphicsGate) return debugOutput!.ReadPixels(vertex, outputPixel, false); }
 
     bool DrawDebug(Frame frame, double now, bool present, bool renderCanvas)
     {

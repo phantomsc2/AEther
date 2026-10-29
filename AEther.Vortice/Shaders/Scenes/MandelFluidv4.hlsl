@@ -1,9 +1,7 @@
 #include "../Common/Inputs.hlsl"
 #include "../Common/RingFluidParameters.hlsl"
-struct DisplayParameters
-{
-    float Exposure;          // 1/4096x .. 4096x; .5 = unity.
-};
+// Fixed lighting calibration preserves the former default exposure (+6 stops).
+static const float SceneLightGain = 64;
 struct LightingParameters
 {
     float Ambient;           // Steady illumination, additive with live flashes at every age.
@@ -13,7 +11,6 @@ cbuffer Parameters
 {
     EmitterParameters Emitter = RING_EMITTER_DEFAULTS;
     FluidParameters Fluid = RING_FLUID_DEFAULTS;
-    DisplayParameters Display = { .75 };
     LightingParameters Lighting = { .1960, .3330 };
 };
 #include "../Common/RingEmitter.hlsl"
@@ -38,7 +35,7 @@ float4 PS(const PSin input) : SV_Target
 {
     float4 dye = max(0, FluidMaterial0.Sample(FluidSampler, input.UV));
     float2 material = FluidMaterial1.Sample(FluidSampler, input.UV);
-    if (dye.a <= 0) return float4(0, 0, 0, 1);
+    if (dye.a <= 0) return LinearOutput(0);
     // One S material, tinted once at emission and faded during transport.
     // Mixing blends actual source colors instead of recoloring an average label.
     // B controls launch velocity; T only controls illumination below.
@@ -62,6 +59,5 @@ float4 PS(const PSin input) : SV_Target
     // Add lighting before exposure and presentation; material age only affects
     // pigment decay during transport, never the balance of ambient and flashes.
     float illumination = Lighting.Ambient + transient;
-    float gain = exp2(24 * Display.Exposure - 12);
-    return float4(max(0, gain * pigment * illumination), 1);
+    return LinearOutput(SceneLightGain * pigment * illumination);
 }

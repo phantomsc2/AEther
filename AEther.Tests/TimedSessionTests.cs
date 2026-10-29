@@ -176,7 +176,7 @@ public class TimedSessionTests
                 string candidate = Path.Combine(directory.FullName, "AEther.Vortice", "Shaders", "Common");
                 if (Directory.Exists(candidate)) { common = candidate; break; }
             }
-            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl" })
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl" })
                 File.Copy(Path.Combine(common, file), Path.Combine(Root, "Common", file));
             foreach (string name in new[] { "Probe", "Other", "Lazy" })
                 File.WriteAllText(Path.Combine(Root, "Scenes", name + ".hlsl"), """
@@ -315,7 +315,7 @@ public class TimedSessionTests
                 if (Directory.Exists(candidate)) { source = candidate; break; }
             }
             Assert.That(source, Is.Not.Null);
-            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl" })
+            foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl" })
                 File.Copy(Path.Combine(source, file), Path.Combine(root, "Common", file));
             File.WriteAllText(Path.Combine(root, "Scenes", "TimedProbe.hlsl"), """
                 #include "../Common/Inputs.hlsl"

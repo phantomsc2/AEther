@@ -12,7 +12,8 @@ Silence renders black. The rings stay fixed while the camera and cubes can move.
 Defaults are 128 cubes, 60 lights per ring, radius 5.7, and shared gain 4x.
 `Lights.Count` maps to 1..96 lights per ring, `Radius` to 0..10 world units,
 and `Gain` to `2^(12*value-6)`. `Enabled` removes all lights. Geometry, atmosphere,
-camera, exposure, and depth preview retain their v4 meanings.
+camera and depth preview retain their v4 meanings. Exposure is the shared Graphics
+setting in stops; the former default -0.6-stop scene gain is a fixed shader constant.
 
 ## Point-light contract
 

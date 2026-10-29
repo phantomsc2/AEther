@@ -10,7 +10,7 @@ namespace AEther.Vortice;
 
 public sealed partial class Renderer
 {
-    /// <summary>Update spectrum presentation; retention changes clear history without restarting analysis or simulation.</summary>
+    /// <summary>Update presentation; retention changes clear history without restarting analysis or simulation.</summary>
     public void SetGraphicsOptions(GraphicsOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -18,6 +18,8 @@ public sealed partial class Renderer
         lock (graphicsGate)
         {
             if (Options == options) return;
+            bool updateAudio = Options.HistorySeconds != options.HistorySeconds
+                || Options.SpectrumAggregation != options.SpectrumAggregation;
             if (Options.HistorySeconds != options.HistorySeconds)
             {
                 var configuration = Audio.PrepareHistory(options.HistorySeconds);
@@ -26,7 +28,7 @@ public sealed partial class Renderer
             }
             Audio.SpectrumAggregation = options.SpectrumAggregation;
             Options = options;
-            UploadAudio(reset: true);
+            if (updateAudio) UploadAudio(reset: true);
         }
     }
 
