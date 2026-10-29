@@ -1,8 +1,8 @@
-# Mandelbox distance and history coordinates
+# MandelPond distance and history coordinates
 
 ## Musical structure experiment
 
-The live Mandelbox controls now include Julia blend (default .3), internal fold
+The live MandelPond controls now include Julia blend (default .3), internal fold
 rotation (.35 radians per axis), and anisotropy (.22 logarithmic stretch).
 Setting all three to zero restores the original orbit. All three follow
 `MovementTime`, so movement speed also controls their exploration and zero freezes
@@ -44,7 +44,7 @@ spectral coordinate. The immediate core uses the corresponding current spectrum.
 The existing fractal history warp still shapes the fronts; no fractal derivative
 or audio-analysis changes are involved.
 
-`MandelboxDistanceTests` checks the expansion bound against independent finite
+`MandelPondDistanceTests` checks the expansion bound against independent finite
 differences across individual/default/maximum controls, musical poses and signed
 scales. Rendering regressions cover stereo/history mapping, spatial sampling,
 reload and settings behavior.
@@ -53,27 +53,27 @@ Iteration depth follows smoothed musical velocity directly: `depth=3+7*clamp(vel
 
 Stereo spectra occupy two semicircles: left audio on the left, right audio on the right, with bass meeting at the bottom and treble at the top. The angular coordinate is `atan2(abs(x), -y)/pi` in aspect-correct screen coordinates. Tonal UVs retain the fractal blend along the sides, fading that blend to zero at the bass/treble endpoints. All history and current-spectrum sampling selects the corresponding channel, including transient hulls and core flashes. Channel differences can produce a seam along the vertical axis. GPU smoke checks use isolated left/right bass and treble to verify placement and channel isolation.
 
-The current renderer is `AEther.Vortice/Shaders/Mandelbox.hlsl`; the `.fx` implementations discussed below are historical. Its slice depth, rotation, zoom and palette advance with integrated musical time. Each analysis row contributes RMS magnitude plus power, with extra drive from transient RMS. Movement speed follows that drive through an EMA with separate attack (0.16 seconds) and decay (1.6 seconds): `alpha=1-exp(-dt/tau)`, selecting attack when the target exceeds current speed. Heavy passages build speed quickly; zero input lets existing momentum coast down by 95% in about 4.8 seconds. Velocity and its accumulated travel are integrated analytically per frame, with audio drive weighted by sample duration. There is no base drift from rest. The immediate transient flash releases in 45 ms, while recorded hits continue outward on the separate presentation clock, including when capture stops sending packets. Unwritten and expired history is masked instead of wrapping into old events.
+The current renderer is `AEther.Vortice/Shaders/MandelPond.hlsl`; the `.fx` implementations discussed below are historical. Its slice depth, rotation, zoom and palette advance with integrated musical time. Each analysis row contributes RMS magnitude plus power, with extra drive from transient RMS. Movement speed follows that drive through an EMA with separate attack (0.16 seconds) and decay (1.6 seconds): `alpha=1-exp(-dt/tau)`, selecting attack when the target exceeds current speed. Heavy passages build speed quickly; zero input lets existing momentum coast down by 95% in about 4.8 seconds. Velocity and its accumulated travel are integrated analytically per frame, with audio drive weighted by sample duration. There is no base drift from rest. The immediate transient flash releases in 45 ms, while recorded hits continue outward on the separate presentation clock, including when capture stops sending packets. Unwritten and expired history is masked instead of wrapping into old events.
 
 The slice now covers the viewport by cropping the interior field to its aspect ratio. History uses Euclidean radius with its horizon at the viewport corners, giving circular flashes across a full canvas. Fractal warping falls to zero at that horizon. Tonal frequency coordinates blend 68% toward the fractal coordinate at full warp; the default warp is .95. Transient contours have stronger detail and contrast, with bounded flash exposure to preserve their shape. On resuming after a packet-free pause, packet arrival time realigns the presentation clock with sample rows and discards expired pre-pause history; musical time keeps its pose. The smoke renderer checks illumination on every edge, shader compilation/reload, silence expiry and pause/resume without recreating the renderer; `AudioHistoryTests` checks frame-independent musical travel and transient acceleration.
 
-The active `mandelbox-slice.fx` uses the standard scalar Mandelbox distance estimator described by [Mikael Hvidtfeldt Christensen](https://blog.hvidtfeldts.net/index.php/2011/11/distance-estimated-3d-fractals-vi-the-mandelbox/). Each box fold reflects coordinates without changing length. The sphere fold at radii squared .25..1 scales local lengths by `a=1/clamp(r²,.25,1)`. The affine step has scale -1.5 and adds the original sample point. The shader tracks
+The active `mandelbox-slice.fx` uses the standard scalar MandelPond distance estimator described by [Mikael Hvidtfeldt Christensen](https://blog.hvidtfeldts.net/index.php/2011/11/distance-estimated-3d-fractals-vi-the-mandelbox/). Each box fold reflects coordinates without changing length. The sphere fold at radii squared .25..1 scales local lengths by `a=1/clamp(r²,.25,1)`. The affine step has scale -1.5 and adds the original sample point. The shader tracks
 
     z_next = -1.5 * a * boxfold(z) + p
     dr_next = 1.5 * a * dr + 1
     DE = |z| / dr
 
-starting with `z=p`, `dr=1`. The `+1` is necessary because `p` is reintroduced at every step; without it the derivative would describe a Julia-style orbit with constant offset. This scalar recurrence bounds the norm of the full Jacobian by the triangle inequality. It is conservative relative to a local derivative calculation, though `|z|/dr` is still an empirical Mandelbox distance estimator rather than a globally exact signed distance to the fractal set.
+starting with `z=p`, `dr=1`. The `+1` is necessary because `p` is reintroduced at every step; without it the derivative would describe a Julia-style orbit with constant offset. This scalar recurrence bounds the norm of the full Jacobian by the triangle inequality. It is conservative relative to a local derivative calculation, though `|z|/dr` is still an empirical MandelPond distance estimator rather than a globally exact signed distance to the fractal set.
 
 The old `mandelbox.fx` attempted to calculate a full 3×3 Jacobian. Its sphere inversion branch uses `z` after multiplying it by the inversion factor in `I - 2*a*outer_product(z,z)`, whereas the Jacobian needs the **pre-inversion** vector `q` and `I - 2*outer_product(q,q)/dot(q,q)`. Its Jacobian updates also multiply the local transform on the right even though the orbit uses `z -> local(z)`; with column vectors the chain rule needs `J_next=J_local*J_old`. Those mistakes can be hidden by plotting only `det(J)`, because determinant multiplication is commutative. The `+I` affine update makes the order matter again.
 
 Taking `cuberoot(abs(det(J)))` is not a valid distance denominator in general. The determinant measures volume change, whereas the local distance calculation needs the largest change of radius: `|grad_p |z|| = |J^T z|/|z|` (or a conservative matrix norm). For example, a Jacobian with singular values 100, 1, 1 has cube-root determinant about 4.64 but induced norm 100. The old shader further multiplies by `log(|z|)`, which belongs to a different family of escape-time estimators and can make the field negative inside the unit sphere. It also sets `z0.z = sin(.3*T)` and immediately overwrites it with zero, so that slice was not moving in its third dimension.
 
-An independent finite-difference check over 300 points found the running scalar derivative at least as large as the local radial derivative within the numerical tolerance of the check. At one actual nine-iteration Mandelbox point, the local radial derivative was 270.186 while `cuberoot(abs(det(J)))` was 57.088, a factor of 4.733 apart. The corresponding executable checks are in `AEther.Tests/MandelboxDistanceTests.cs`.
+An independent finite-difference check over 300 points found the running scalar derivative at least as large as the local radial derivative within the numerical tolerance of the check. At one actual nine-iteration MandelPond point, the local radial derivative was 270.186 while `cuberoot(abs(det(J)))` was 57.088, a factor of 4.733 apart. The corresponding executable checks are in `AEther.Tests/MandelPondDistanceTests.cs`.
 
 The active shader uses distance for the spectral contour coordinate, but its previous history age was solely `1-exp(-.85*screenRadius)`, explaining the visible circular transient rings. Now it computes a second history coordinate from the ratio of the nine-iteration and four-iteration distance estimates. `V` cycles screen-only, a mixed setting (the default), and the strongest fractal mapping. A radial component remains at the strongest setting so new events originate near the center and advance toward the outer field. Audio changes illumination, while the field and its UV mapping remain geometric.
 
-This mapping makes equal-age fronts follow Mandelbox detail. It does not simulate material transport along a vector field: where a true path and speed along a surface matter, we would need to choose a potential, calculate its gradient, and integrate trajectories. The three rendered mapping variants in the smoke artifacts make this distinction visible.
+This mapping makes equal-age fronts follow MandelPond detail. It does not simulate material transport along a vector field: where a true path and speed along a surface matter, we would need to choose a potential, calculate its gradient, and integrate trajectories. The three rendered mapping variants in the smoke artifacts make this distinction visible.
 
 The visual time projection now uses `r(age)=1.02*(1-exp(-k*age))`, with age normalized to the recorded history span and `k=4` by default. Its inverse in the pixel shader is `age=-log(1-r/1.02)/k`. Here `r` measures the fraction of the distance to the viewport's horizontal or vertical boundary, then is warped by the fold field. This keeps the oldest recorded light visible near the outer edge. At the default one-second history, an event moves outward rapidly during its first quarter-second, then approaches the image horizon asymptotically. Press `C` to cycle `k=4, 8, 2`; higher values allocate more screen area to the recent past. The fold field warps radius before this inverse map, so an equal-age attack front follows fractal contours. This is the characteristic solution of a transport-and-decay model for emitted light: the histogram is the source history, the inverse map selects the emission time, and an age-dependent decay fades old light. It is not a simulation of moving fractal geometry or fluid momentum.
 
@@ -107,7 +107,7 @@ reload/resize, history expiry and settings lifecycle checks remain active.
 Very high requested depths retain the last finite estimate if the orbit or derivative
 approaches float overflow. This is a numerical-range guard, not a fixed iteration cap.
 
-Scale is a live Mandelbox property, default -1.5. The orbit uses the signed scale and
+Scale is a live MandelPond property, default -1.5. The orbit uses the signed scale and
 the expansion bound uses abs(scale). Negative, zero and positive values are supported;
 fixed-point orbit/derivative stagnation ends evaluation at the last finite estimate.
 Finite-difference tests cover eight scales and GPU checks verify stable, distinct images

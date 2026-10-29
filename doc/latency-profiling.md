@@ -162,7 +162,7 @@ events. Individual fluid draws include their pass name and grid dimensions. Shad
 and spectrum/histogram resources are also named. Annotation calls run only while a graphics tool
 reports an active capture/debugging connection; live GPU timing does not require RenderDoc.
 
-See [MandelFluidv4 measurements](mandelfluidv4-performance.md) for the deterministic 720p profiling
+See [MandelFluid measurements](mandelfluid-performance.md) for the deterministic 720p profiling
 command, solver tradeoffs, and before/after timings.
 
 ### Incremental histogram uploads

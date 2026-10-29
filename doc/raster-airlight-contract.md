@@ -1,7 +1,7 @@
 # Raster geometry, point lights and airlight
 
 `RasterGeometry` and `RasterLight` are the single procedural raster system.
-MandelLightv5 uses it. Geometry, camera and point-light construction belong to
+MandelLight uses it. Geometry, camera and point-light construction belong to
 scene HLSL; C# owns allocations, bindings, dispatches and draws.
 
 Include `Common/RasterGeometry.hlsl` followed by `Common/RasterLight.hlsl`.
@@ -32,7 +32,7 @@ float3 AirExtinction(); // Scattering + absorption coefficients, nonnegative.
 
 The callbacks can use arbitrary reflected parameters, frame/audio inputs or
 constants. C# has no reserved medium parameter names and does not read coefficients.
-MandelLightv5 keeps its own Air controls and density mapping inside its callbacks.
+MandelLight keeps its own Air controls and density mapping inside its callbacks.
 
 ## Rendering and resources
 

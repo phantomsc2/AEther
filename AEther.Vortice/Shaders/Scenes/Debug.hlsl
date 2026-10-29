@@ -1,4 +1,6 @@
 #include "../Common/Inputs.hlsl"
+#include "../Common/SpectrumView.hlsl"
+#include "../Common/HistogramView.hlsl"
 
 cbuffer Parameters
 {
@@ -7,42 +9,14 @@ cbuffer Parameters
 
 float4 PS(PSin input) : SV_Target
 {
-    uint bands, rows;
-    Histogram0.GetDimensions(bands, rows);
-    int bin = min((int)((1 - input.UV.y) * bands), (int)bands - 1);
-    bool left = input.UV.x < .5;
-    if (input.UV.x >= .4 && input.UV.x < .6)
+    // Each stereo half contains a history panel and a mirrored spectrum panel.
+    float x = input.UV.x;
+    if (x >= .4 && x < .6)
     {
-        // Each channel grows inward from its history edge.
-        float4 v = left ? Spectrum0.Load(int3(bin, 0, 0)) : Spectrum1.Load(int3(bin, 0, 0));
-        float x = left ? (input.UV.x - .4) / .1 : (.6 - input.UV.x) / .1;
-        float pixel = 1 / (.1 * Resolution.x);
-        float3 bars = saturate((saturate(v.rgb) - x) / pixel + .5) * step(1e-20, v.rgb);
-        float total = v.a > 0 ? saturate((saturate(v.a) - x) / pixel + .5) : 0;
-        // Total amplitude fills behind the components, softly tinting their overlap.
-        float3 background = .25 * total.xxx;
-        return float4(CombinedLevel ? background : max(bars, background), 1);
+        float u = x < .5 ? .5 - (x - .4) * 5 : .5 + (.6 - x) * 5;
+        return DrawSpectrum(float2(u, input.UV.y), .2 * Resolution.x,
+                            true, true, true, true, CombinedLevel, false);
     }
-
-    // Integrate actual row coverage, including fractional pixels at event edges.
-    // Each channel's history runs outward from its spectrum edge.
-    float age = left ? (.4 - input.UV.x) / .4 : (input.UV.x - .6) / .4;
-    float halfPixel = HistorySpan / (.8 * Resolution.x);
-    float lo = max(0, age * HistorySpan - halfPixel);
-    float hi = age * HistorySpan + halfPixel;
-    float footprint = max(1e-8, (hi - lo) * rows);
-    lo = max(lo, HistoryNewestAge);
-    hi = min(hi, HistoryAvailable + 1.0 / rows);
-    if (hi <= lo || HistoryAvailable <= 0) return float4(0, 0, 0, 1);
-    float first = (HistogramShift - hi) * rows + .5;
-    float end = (HistogramShift - lo) * rows + .5;
-    float4 history = 0;
-    [loop] for (int row = (int)floor(first); row < (int)ceil(end); row++)
-    {
-        int slot = (row % (int)rows + (int)rows) % (int)rows;
-        float coverage = max(0, min(end, row + 1.0) - max(first, (float)row));
-        float4 block = left ? Histogram0.Load(int3(bin, slot, 0)) : Histogram1.Load(int3(bin, slot, 0));
-        history += block * (coverage / footprint);
-    }
-    return float4(CombinedLevel ? history.aaa : history.rgb, 1);
+    float u = x < .5 ? x * 1.25 : .5 + (x - .6) * 1.25;
+    return DrawHistogram(float2(u, input.UV.y), .8 * Resolution.x, CombinedLevel);
 }

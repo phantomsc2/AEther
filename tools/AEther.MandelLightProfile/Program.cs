@@ -16,79 +16,11 @@ internal static partial class Program
     {
         if (args.Contains("--projection")) { RunProjectionCapture(args); return; }
         if (args.Contains("--point-lights")) { RunPointLightProfile(args); return; }
-        if (args.Contains("--fluid-v4")) { RunFluidV4Profile(args); return; }
-        var positional = args.Where(arg => !arg.StartsWith("--", StringComparison.Ordinal)).ToArray();
-        string source = Path.GetFullPath(positional.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
-        string output = Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/mandellight-profile/current");
-        Directory.CreateDirectory(output);
-        string tree = Path.Combine(output, "Shaders-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(tree, "Scenes"));
-        foreach (var file in Directory.EnumerateFiles(Path.Combine(source, "Common"), "*.hlsl", SearchOption.AllDirectories))
-        {
-            string destination = Path.Combine(tree, Path.GetRelativePath(source, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, true);
-        }
-        string scene = "MandelLightv2";
-        File.Copy(Path.Combine(source, "Scenes/"+scene+".hlsl"), Path.Combine(tree, "Scenes/"+scene+".hlsl"), true);
-        if (args.Contains("--reference"))
-        {
-            string file=Path.Combine(tree,"Scenes/"+scene+".hlsl");
-            // Keep the loop bound uniform-driven: a literal 256 makes FXC spend
-            // excessive time propagating constants through this shader's arrays.
-            string original=File.ReadAllText(file);
-            string reference=original.Replace("int samples=1+(int)round(63*Quality.Samples);","int samples=1+(int)round(255*Quality.Samples);");
-            if (reference==original) throw new InvalidOperationException("Cannot override v2's sample budget.");
-            File.WriteAllText(file,reference);
-        }
-        using var window = new Form { ClientSize = new(1280, 720), ShowInTaskbar = false };
-        var clock = new Clock();
-        using var renderer = new Renderer(window.Handle, 1280, 720, 32, 60, shaderDirectory: tree, timeProvider: clock);
-        if (renderer.ShaderError != null) throw new InvalidOperationException(renderer.ShaderError);
-        renderer.SelectScene(scene);
-        var device = Field<ID3D11Device>(renderer, "device");
-        var context = Field<ID3D11DeviceContext>(renderer, "context");
-        using var dxgiDevice = device.QueryInterface<IDXGIDevice>();
-        using var adapter = dxgiDevice.GetAdapter();
-        Console.WriteLine(adapter.Description.Description);
-        MeasureV2(renderer,device,context,clock,output,args.Contains("--quick") || args.Contains("--reference"),args.Contains("--reference"));
+        if (args.Contains("--fluid")) { RunFluidProfile(args); return; }
+        RunPointLightProfile(args);
     }
 
-    static void MeasureV2(Renderer renderer, ID3D11Device device, ID3D11DeviceContext context, Clock clock, string output, bool quick, bool reference)
-    {
-        string[] cases=quick ? ["default"] : ["default","one-blob","sixteen-blobs","samples64","one-light","four-lights","inside","dense","emission","air-only","1280x720"];
-        var results=new List<object>();
-        foreach (string name in cases)
-        {
-            renderer.ActiveShader!.Parameters!.Reset();
-            if (reference) Set(renderer,"Quality.Samples",1);
-            int width=name=="1280x720" ? 1280 : 1920, height=name=="1280x720" ? 720 : 1080;
-            renderer.Resize(width,height);
-            if (name=="one-blob") Set(renderer,"Shape.Count",0);
-            if (name=="sixteen-blobs") Set(renderer,"Shape.Count",1);
-            if (name=="samples64") Set(renderer,"Quality.Samples",1);
-            if (name=="one-light") Set(renderer,"Light2.Enabled",false);
-            if (name=="four-lights") { Set(renderer,"Light3.Enabled",true); Set(renderer,"Light4.Enabled",true); }
-            if (name=="inside") Set(renderer,"View.CameraDistance",.05f);
-            if (name=="dense") Set(renderer,"Material.Density",1);
-            if (name=="emission") { Set(renderer,"Emission.Enabled",true); Set(renderer,"Light.Enabled",false); Set(renderer,"Light2.Enabled",false); }
-            if (name=="air-only") Set(renderer,"Material.Enabled",false);
-            clock.Reset();
-            for (int i=0;i<20;i++) { clock.Advance(); renderer.Render(false); renderer.ReadPixels(false); }
-            var timings=new List<double>();
-            for (int i=0;i<21;i++)
-            {
-                using var timer=new Timestamps(device,context);
-                clock.Advance(); timer.Begin(); renderer.Render(false); timer.End();
-                timings.Add(timer.Resolve()["Total"]);
-            }
-            double milliseconds=Median(timings);
-            Console.WriteLine($"{name}: {milliseconds:F3}ms");
-            results.Add(new { name,width,height,milliseconds });
-            Save(renderer.ReadPixels(false),width,height,Path.Combine(output,name+".png"));
-        }
-        File.WriteAllText(Path.Combine(output,"timings.json"),JsonSerializer.Serialize(results,new JsonSerializerOptions { WriteIndented=true }));
-    }
+
     static T Field<T>(object value, string name) => (T)value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value)!;
     static double Median(IEnumerable<double> values) { var a = values.Order().ToArray(); return a[a.Length / 2]; }
     static ShaderParameter Find(Renderer renderer, string path)

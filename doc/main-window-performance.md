@@ -1,7 +1,7 @@
 # Main-window performance tightening
 
 Measured on 2026-10-27 in Release on Intel Arc Graphics, using the actual WinUI
-hub and a 1280×720 MandelFluidv4 scene. The hub client was also 1280×720. Each
+hub and a 1280×720 MandelFluid scene. The hub client was also 1280×720. Each
 phase had warmup followed by eight seconds of timestamped synthetic stereo input.
 The capture/analyzer continued running in all phases. Results are under
 `artifacts/hub-profile/{baseline,tightened,envelope}`; the probe is documented in
@@ -44,7 +44,7 @@ between runs, so the measurements do not support claiming a total application CP
 speedup. The nearly identical frame-interval p95 also should not be presented as an
 FPS gain. Results include scheduling/composition effects and a stateful fluid scene.
 
-The final, unbucketed implementation was also checked with the default Mandelbox
+The final, unbucketed implementation was also checked with the default MandelPond
 scene at 1280×720 (`artifacts/hub-profile/final-mandelbox`). Full-hub GPU frame
 median was 5.807 ms, with 0.234 ms in the spectrum output (about 4%). Chart update
 median was 7.369 ms once per second. Frame interval median/p95 was 16.682/16.987 ms.

@@ -10,8 +10,8 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void TonalMovementClockAdvancesEquallyWithAndWithoutFluid()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
-        File.WriteAllText(Path.Combine(shaders.Path,"Scenes","MandelFluidv4.hlsl"),"""
+        using var shaders = new SceneShaders("MandelFluid");
+        File.WriteAllText(Path.Combine(shaders.Path,"Scenes","MandelFluid.hlsl"),"""
             struct FluidSettings { bool PeriodicBoundary; bool LowQuality; float Viscosity; };
             cbuffer Parameters { FluidSettings Fluid = { true, true, 0 }; };
             #include "../Common/FluidSimulation.hlsl"
@@ -26,12 +26,12 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         using var otherWindow = new HiddenWindow();
         var clock = new RenderClock();
-        using var fluid = new Renderer(window.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"MandelFluidv4");
+        using var fluid = new Renderer(window.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"MandelFluid");
         using var plain = new Renderer(otherWindow.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"Clock");
         for (int frame=0;frame<60;frame++)
         {
             if(frame==20) fluid.SelectScene("Clock");
-            if(frame==40) fluid.SelectScene("MandelFluidv4");
+            if(frame==40) fluid.SelectScene("MandelFluid");
             clock.Advance();
             foreach(var target in new[] { fluid,plain })
             {

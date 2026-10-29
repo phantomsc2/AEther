@@ -12,9 +12,9 @@ internal static partial class Program
         Directory.CreateDirectory(output);
         using var window=new Form {ClientSize=new(1280,720),ShowInTaskbar=false};
         var clock=new Clock();
-        using var renderer=new Renderer(window.Handle,1280,720,32,60,shaderDirectory:source,timeProvider:clock,initialScene:"FilamentFlight");
+        using var renderer=new Renderer(window.Handle,1280,720,32,60,shaderDirectory:source,timeProvider:clock,initialScene:"MandelLight");
         var results=new List<object>();
-        foreach (string scene in new[] {"FilamentFlight","FoldFlight","SpectrumRoad","FluidFlight","PlaneFlight","MandelLightv2","MandelLightv5","MandelVolume"})
+        foreach (string scene in new[] {"MandelPond","MandelLight","MandelFluid"})
         foreach (var size in new[] {(Width:1280,Height:720),(Width:720,Height:1280),(Width:720,Height:720)})
         {
             renderer.SelectScene(scene); renderer.Resize(size.Width,size.Height);

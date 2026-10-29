@@ -19,7 +19,7 @@ internal static partial class Program
     static void ProfilePresentation(string[] args)
     {
         string Option(string name, string fallback) => args.FirstOrDefault(a => a.StartsWith(name + "="))?[(name.Length + 1)..] ?? fallback;
-        string scene = Option("--scene", "MandelFluidv4");
+        string scene = Option("--scene", "MandelFluid");
         string output = Path.GetFullPath(Option("--output", "artifacts/presentation/current"));
         int width = int.Parse(Option("--width", "1280")), height = int.Parse(Option("--height", "720"));
         int seconds = int.Parse(Option("--seconds", "10"));
@@ -90,7 +90,7 @@ internal static partial class Program
                         renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
                         renderer.RawPresentationClock = args.Contains("--raw-frame-clock");
                         renderer.FixedFluidMaterialCadence = args.Contains("--fixed-fluid-material");
-                        if (args.Contains("--fast") && scene == "MandelFluidv4")
+                        if (args.Contains("--fast") && scene == "MandelFluid")
                         {
                             var parameters = renderer.ActiveShader!.Parameters!;
                             var fluid = parameters.Items.Single(p => p.Name == "Fluid");

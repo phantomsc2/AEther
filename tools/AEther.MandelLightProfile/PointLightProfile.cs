@@ -10,7 +10,7 @@ internal static partial class Program
     {
         var positional = args.Where(x => !x.StartsWith("--")).ToArray();
         string source = Path.GetFullPath(positional.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
-        string output = Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/mandellight-v5");
+        string output = Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/mandellight");
         string tree = Path.Combine(output, "Shaders-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(tree, "Scenes"));
         foreach (string file in Directory.EnumerateFiles(Path.Combine(source, "Common"), "*.hlsl", SearchOption.AllDirectories))
@@ -18,7 +18,7 @@ internal static partial class Program
             string target = Path.Combine(tree, Path.GetRelativePath(source, file));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.Copy(file, target, true);
         }
-        foreach (string scene in new[] { "MandelLightv5" })
+        foreach (string scene in new[] { "MandelLight" })
             File.Copy(Path.Combine(source, "Scenes", scene + ".hlsl"), Path.Combine(tree, "Scenes", scene + ".hlsl"), true);
         using var window = new Form { ClientSize = new(1280, 720), ShowInTaskbar = false };
         var clock = new Clock();
@@ -28,10 +28,10 @@ internal static partial class Program
         var results = new List<object>();
         foreach (var item in new[]
         {
-            (Name:"s", Scene:"MandelLightv5", S:.02, T:0.0, B:0.0),
-            (Name:"t", Scene:"MandelLightv5", S:0.0, T:.02, B:0.0),
-            (Name:"b", Scene:"MandelLightv5", S:0.0, T:0.0, B:.02),
-            (Name:"stb", Scene:"MandelLightv5", S:.02, T:.02, B:.02),
+            (Name:"s", Scene:"MandelLight", S:.02, T:0.0, B:0.0),
+            (Name:"t", Scene:"MandelLight", S:0.0, T:.02, B:0.0),
+            (Name:"b", Scene:"MandelLight", S:0.0, T:0.0, B:.02),
+            (Name:"stb", Scene:"MandelLight", S:.02, T:.02, B:.02),
         })
         {
             renderer.SelectScene(item.Scene); renderer.ActiveShader!.Parameters!.Reset();

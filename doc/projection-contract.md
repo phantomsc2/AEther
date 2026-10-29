@@ -85,7 +85,7 @@ takes an explicit XY scale and near/far pair.
   inverse screen radius. `SourceDistance` controls its radius. The foreground
   and fluid injection use the same hit function, including steering and roll.
 
-Mandelbox, MandelFluid variants, and analysis scenes retain their 2D mappings.
+MandelPond, MandelFluid variants, and analysis scenes retain their 2D mappings.
 Sampling a slice of a 3D field does not itself require a perspective camera.
 
 ## Clipping and infinite airlight

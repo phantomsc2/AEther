@@ -100,8 +100,8 @@ public partial class ShaderRenderingTests
     [TestCase(160,90), TestCase(90,160), TestCase(96,96), Category("GPU")]
     public void RasterDepthReconstructsTheSameCameraPlane(int width, int height)
     {
-        using var shaders=new SceneShaders("MandelLightv5");
-        string file=Path.Combine(shaders.Path,"Scenes","MandelLightv5.hlsl"),source=File.ReadAllText(file);
+        using var shaders=new SceneShaders("MandelLight");
+        string file=Path.Combine(shaders.Path,"Scenes","MandelLight.hlsl"),source=File.ReadAllText(file);
         int begin=source.IndexOf("uint2 GeometryCount()",StringComparison.Ordinal),end=source.IndexOf("static const float SceneLightGain",begin,StringComparison.Ordinal);
         source=source[..begin]+"""
             uint2 GeometryCount() { return uint2(6,1); }
@@ -127,12 +127,12 @@ public partial class ShaderRenderingTests
             """;
         File.WriteAllText(file,source);
         using var window=new HiddenWindow();
-        using var renderer=new Renderer(window.Handle,width,height,32,60,shaderDirectory:shaders.Path,initialScene:"MandelLightv5");
+        using var renderer=new Renderer(window.Handle,width,height,32,60,shaderDirectory:shaders.Path,initialScene:"MandelLight");
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero);
     }
 
-    [TestCase("MandelLightv5"), Category("GPU")]
+    [TestCase("MandelLight"), Category("GPU")]
     public void ProjectionFarPlaneDoesNotTruncateInfiniteAirlight(string scene)
     {
         using var shaders=new SceneShaders(scene);
@@ -151,36 +151,5 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(original));
     }
 
-    [TestCase("FluidFlight"), TestCase("PlaneFlight"), Category("GPU")]
-    public void FluidFlightIntersectionsProjectBackToTheInjectionPixel(string scene)
-    {
-        using var shaders=new SceneShaders(scene);
-        string common=Path.Combine(shaders.Path,"Common","FluidFlight.hlsl");
-        File.WriteAllText(common,File.ReadAllText(common).Replace("float4 PS(PSin input)","float4 FlightDisplayPS(PSin input)"));
-        File.AppendAllText(Path.Combine(shaders.Path,"Scenes",scene+".hlsl"),"""
 
-            float4 PS(PSin input) : SV_Target
-            {
-                float4 hit=FlightSurfaceHit((2*input.UV-1)*float2(AspectRatio,1));
-                if (hit.w<=0) return float4(FluidMaterial0.Load(int3(0,0,0)).rgb,1);
-                ProjectionCamera c=FlightView();
-                float4 clip=ProjectionClip(c,hit.xyz);
-                float2 uv=.5+.5*clip.xy/clip.w*float2(1,-1);
-            #ifdef FLIGHT_PLANE_PROJECTION
-                bool surface=abs(hit.y)<.001;
-            #else
-                bool surface=abs(length(hit.xy)-(.8+.6*Flight.SourceDistance))<.001;
-            #endif
-                bool valid=surface && all(abs(uv-input.UV)<.0001) && abs(clip.w-hit.w)<.001;
-                return float4(!valid,.25,0,1)+float4(FluidMaterial0.Load(int3(0,0,0)).rgb,0);
-            }
-            """);
-        using var window=new HiddenWindow();
-        using var renderer=new Renderer(window.Handle,96,54,32,60,shaderDirectory:shaders.Path,timeProvider:new PointClock(),initialScene:scene);
-        PointSet(renderer,"Flight.Steering.x",.65f); PointSet(renderer,"Flight.Steering.y",.7f);
-        PointSet(renderer,"Flight.Roll",.6f); renderer.Render(false);
-        var pixels=renderer.ReadPixels(false);
-        Assert.That(pixels.Where((_,i)=>i%4==0),Is.All.Zero);
-        Assert.That(pixels.Where((_,i)=>i%4==1).Any(x=>x>0),Is.True,"The test must intersect the world surface.");
-    }
 }

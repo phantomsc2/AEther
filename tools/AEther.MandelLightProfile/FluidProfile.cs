@@ -6,11 +6,11 @@ using Vortice.Direct3D11;
 
 internal static partial class Program
 {
-    static void RunFluidV4Profile(string[] args)
+    static void RunFluidProfile(string[] args)
     {
         string Option(string key, string fallback) => args.FirstOrDefault(a => a.StartsWith(key + "="))?[(key.Length + 1)..] ?? fallback;
         string source = Path.GetFullPath(Option("--shader-root", "AEther.Vortice/Shaders"));
-        string output = Path.GetFullPath(Option("--output", "artifacts/fluid-v4/current"));
+        string output = Path.GetFullPath(Option("--output", "artifacts/fluid/current"));
         int count = int.Parse(Option("--frames", "48"), System.Globalization.CultureInfo.InvariantCulture);
         int rate = int.Parse(Option("--hz", "60"));
         int width = int.Parse(Option("--width", "1280")), height = int.Parse(Option("--height", "720"));
@@ -24,7 +24,7 @@ internal static partial class Program
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(file, destination, true);
         }
-        File.Copy(Path.Combine(source, "Scenes/MandelFluidv4.hlsl"), Path.Combine(tree, "Scenes/MandelFluidv4.hlsl"), true);
+        File.Copy(Path.Combine(source, "Scenes/MandelFluid.hlsl"), Path.Combine(tree, "Scenes/MandelFluid.hlsl"), true);
         var results = new List<object>();
         foreach (var item in new[] { (Name: "default", Low: false, Periodic: true, Viscosity: 0f),
             (Name: "viscous", Low: false, Periodic: true, Viscosity: .5f),
@@ -36,7 +36,7 @@ internal static partial class Program
             var clock = new FluidProfileClock(rate);
             using var renderer = new Renderer(window.Handle, width, height, 97, 1000, shaderDirectory: tree,
                 timeProvider: clock);
-            renderer.SelectScene("MandelFluidv4");
+            renderer.SelectScene("MandelFluid");
             Set(renderer, "Fluid.LowQuality", item.Low);
             Set(renderer, "Fluid.PeriodicBoundary", item.Periodic);
             Set(renderer, "Fluid.Viscosity", item.Viscosity);

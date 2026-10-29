@@ -15,7 +15,7 @@ Procedural triangle scenes can use the [geometry contract](geometry-contract.md)
 HLSL supplies vertex/instance counts and evaluates vertices, and the host executes
 one indirect instanced draw. The [RasterLight contract](raster-airlight-contract.md)
 supplies point-light surfaces and precalculated homogeneous single-scattering
-airlight, with shader-emitted position/intensity records. MandelLightv5 uses this
+airlight, with shader-emitted position/intensity records. MandelLight uses this
 single raster backend.
 
 Perspective scenes share the [HLSL projection contract](projection-contract.md)
@@ -137,14 +137,14 @@ zero to zero. There is no separate global fit or global evidence transport.
 ## MandelVolume prototype
 
 `MandelVolume` is an audio-independent single-scattering experiment. Its camera
-and Mandelbox stay fixed; one white point light orbits inside the
+and MandelPond stay fixed; one white point light orbits inside the
 fractal using wall time `T`. A thin ambient medium fills the same bounding sphere
 as the fractal density, producing a halo through single scattering around the
 light. The background outside that sphere is black, with no emission,
 fluid, image history, or temporal accumulation. It intentionally remains visible
 without music, under the prototype exception in `AGENTS.md`.
 
-The Mandelbox iteration multiplier and maximum iteration count are editable.
+The MandelPond iteration multiplier and maximum iteration count are editable.
 Defaults retain scale two and four iterations. The terminal orbit radius is
 normalized by `max(1,abs(scale))^N`, staying finite at scale zero. Fractal density
 follows one continuous Gaussian profile, rather than a periodic stack of shells:
@@ -161,7 +161,7 @@ sigma_s = Density.Albedo * sigma_t
 
 `Center` selects a radius in the normalized fractal orbit coordinates. `Width`
 is the standard deviation in the same field units; neither is an exact distance
-from the Mandelbox surface or the world origin. A smooth spatial envelope fades
+from the MandelPond surface or the world origin. A smooth spatial envelope fades
 extinction between world radii 9.5 and 10.5. Bounds remain fixed during scale and
 iteration edits; some variants can meet that spatial envelope. This is a finite
 procedural density field, not a surface DE. Changing iterations can require
@@ -202,7 +202,7 @@ still 0.05, keeping the sharpest lobe finite. Weak gradients fade Alignment back
 to zero. Gradient orientation is two-sided: reversing `n` leaves reflection
 unchanged.
 
-The field gradient uses the full analytic 3x3 Jacobian of the finite Mandelbox
+The field gradient uses the full analytic 3x3 Jacobian of the finite MandelPond
 orbit. Its three columns propagate through box-fold reflections, the sphere
 inversion Jacobian, scale, and the `+p` derivative `+I`. The final gradient is
 `max(1,abs(scale))^(-N) * transpose(J) * z / length(z)`. Zero terminal radius
@@ -252,11 +252,11 @@ survive hot reload; use Reset defaults to load the complete new reference preset
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
 sample counts show grain; raising quality costs GPU time.
 
-## MandelLightv5
+## MandelLight
 
 The scene uses GPU-generated point lights in three perpendicular STB rings,
 procedural cube geometry, Lambertian surfaces and the shared airlight LUT.
-See the [scene controls](mandellight-v5.md) and
+See the [scene controls](mandellight.md) and
 [RasterGeometry/RasterLight contract](raster-airlight-contract.md).
 
 ## MandelLightv2 prototype

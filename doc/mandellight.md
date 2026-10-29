@@ -1,6 +1,6 @@
-# MandelLightv5: shader-defined point lights
+# MandelLight: shader-defined point lights
 
-Select **MandelLightv5** after building the host. The scene combines a homogeneous atmosphere and procedural cube cloud with three fixed perpendicular rings of point lights:
+Select **MandelLight** after building the host. The scene combines a homogeneous atmosphere and procedural cube cloud with three fixed perpendicular rings of point lights:
 S in XZ, T in XY, and B in YZ. Each ring samples its corresponding live
 `Spectrum.rgb` component, using the angular frequency palette and stereo blend.
 The shader samples row zero at UV.y=.25 in the two-row spectrum textures,

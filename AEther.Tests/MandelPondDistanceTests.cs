@@ -3,7 +3,7 @@ using NUnit.Framework;
 
 namespace AEther.Tests
 {
-    public class MandelboxDistanceTests
+    public class MandelPondDistanceTests
     {
         // Independent finite differences check what the shader's scalar bound
         // means geometrically; the derivative is never taken from the recurrence.

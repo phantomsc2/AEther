@@ -26,7 +26,7 @@ and private memory. Performance results should be compared in Release at 720p or
 
 ## Actual main-window comparison
 
-Run with `--hub --scene=MandelFluidv4 --tag=my-run` to exercise the production
+Run with `--hub --scene=MandelFluid --tag=my-run` to exercise the production
 `MainWindow`, timestamped synthetic stereo capture, analyzer and scene renderer.
 Add `--chart-hz=10` to request a different chart refresh rate (up to 60 Hz);
 without it the production interval is used. The process CSV records completed

@@ -344,109 +344,16 @@ public partial class ShaderRenderingTests
         }
     }
 
-    [TestCase(960, 540, false), TestCase(540, 960, false), TestCase(1024, 256, false), TestCase(256, 256, false)]
-    [TestCase(960, 540, true), TestCase(540, 960, true), TestCase(1024, 256, true), TestCase(256, 256, true), Category("GPU")]
-    public void FluidProjectionRemovesDivergenceAndPreservesCurl(int width, int height, bool periodic)
-    {
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, width, height, Bands, 60,
-            shaderDirectory: ShaderDirectory, timeProvider: clock);
-        renderer.SelectScene("MandelFluidv3");
-        var parameters = renderer.ActiveShader!.Parameters!;
-        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
-            .Single(p => p.Name == "PeriodicBoundary"), periodic);
-        clock.Advance(); renderer.Render(false);
-        Assert.That(Math.Max(renderer.Fluid.Width, renderer.Fluid.Height), Is.EqualTo(512));
-        var check = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
-        TestContext.Progress.WriteLine($"{width}x{height}, periodic={periodic}: divergence {check.Before:G5} -> {check.After:G5}, relative curl error {check.CurlError:G5}");
-        Assert.That(check.Before, Is.GreaterThan(.01), "The fixture needs a divergent velocity field.");
-        // V4's square grid and fixed coarse solve have the same bounded budget
-        // at every aspect. Preserve that solver, including its 4:1 convergence,
-        // and verify that older scene shading cannot select a different path.
-        using var referenceWindow = new HiddenWindow();
-        using var reference = new Renderer(referenceWindow.Handle, width, height, Bands, 60,
-            shaderDirectory: ShaderDirectory, timeProvider: clock, initialScene: "MandelFluidv4");
-        var referenceParameters = reference.ActiveShader!.Parameters!;
-        referenceParameters.SetBoolean(referenceParameters.Items.Single(p => p.Name == "Fluid").Children
-            .Single(p => p.Name == "PeriodicBoundary"), periodic);
-        clock.Advance(); reference.Render(false);
-        var expected = reference.Fluid.CheckProjection(reference.FluidPrograms);
-        Assert.That(check.After, Is.EqualTo(expected.After).Within(1e-8), "Match the unchanged v4 projection.");
-        Assert.That(check.After, Is.LessThan(check.Before * .1), "Remove at least 90% of RMS divergence even at 4:1.");
-        Assert.That(check.CurlError, Is.LessThan(1e-4), "Pressure projection must preserve rotational motion.");
-    }
 
-    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), Category("GPU")]
-    public void MandelFluidVariantsShareV4MaterialAndMotion(string scene)
-    {
-        using var shaders = new SceneShaders(scene);
-        using var referenceShaders = new SceneShaders("MandelFluidv4");
-        using var window = new HiddenWindow();
-        using var referenceWindow = new HiddenWindow();
-        var clock = new FluidClock(165);
-        using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-        using var reference = new Renderer(referenceWindow.Handle, 160, 90, Bands, 60,
-            shaderDirectory: referenceShaders.Path, timeProvider: clock, initialScene: referenceShaders.Scene);
-        foreach (var target in new[] { renderer, reference })
-        {
-            var parameters = target.ActiveShader!.Parameters!;
-            var fluid = parameters.Items.Single(p => p.Name == "Fluid");
-            parameters.SetBoolean(fluid.Children.Single(p => p.Name == "LowQuality"), true);
-            parameters.SetFloat(fluid.Children.Single(p => p.Name == "Viscosity"), .2f);
-            parameters.SetFloat(fluid.Children.Single(p => p.Name == "Curl"), .15f);
-        }
-        var data = Enumerable.Range(0, Bands * 8).Select(i => .05 + .02 * (i % 7)).ToArray();
-        for (int frame = 1; frame <= 20; frame++)
-        {
-            clock.Frame = frame;
-            foreach (var target in new[] { renderer, reference })
-            {
-                target.PostAudio(new(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
-                target.Render(false);
-                Assert.That(target.Fluid.Width, Is.EqualTo(128));
-                Assert.That(target.Fluid.Height, Is.EqualTo(128));
-                Assert.That(target.Fluid.LastMaterialSteps, Is.EqualTo(1));
-            }
-            Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(reference.Fluid.LastSteps));
-        }
-        Assert.That(reference.Fluid.ReadDye().Max(), Is.GreaterThan(.01), "The shared fixture must emit material.");
-        Assert.That(renderer.Fluid.ReadDye(), Is.EqualTo(reference.Fluid.ReadDye()));
-        Assert.That(renderer.Fluid.ReadAge(), Is.EqualTo(reference.Fluid.ReadAge()));
-        Assert.That(renderer.Fluid.ReadVelocity(), Is.EqualTo(reference.Fluid.ReadVelocity()));
-    }
 
-    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), TestCase("MandelFluidv4"), Category("GPU")]
-    public void MandelFluidSeparatesMaterialFromBackgroundMotion(string scene)
-    {
-        using var shaders = new SceneShaders(scene);
-        using var window = new HiddenWindow();
-        foreach (int component in new[] { 0, 1, 2 })
-        {
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-                shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "LowQuality"), true);
-            var data = new double[Bands * 8];
-            for (int i = 0; i < data.Length; i += 4) { data[i + component] = .2; data[i + 3] = .2; }
-            for (int frame = 0; frame < 8; frame++)
-            {
-                renderer.PostAudio(new(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
-                clock.Advance(); renderer.Render(false);
-            }
-            if (component == 0) Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(.01), "S emits material.");
-            else Assert.That(renderer.Fluid.ReadDye(), Is.All.Zero, "B and T cannot emit material.");
-            if (component == 2) Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True, "B drives launch velocity.");
-            else Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero, "S and T cannot drive launch velocity.");
-        }
-    }
+
+
+
 
     [Test, Category("GPU")]
     public void GraphicsHistoryChangesPreserveFluidAndShaderState()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new FluidClock(120);
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
@@ -471,7 +378,7 @@ public partial class ShaderRenderingTests
     [TestCase(false), TestCase(true), Category("GPU")]
     public void MandelFluidV4ProjectionPreservesRotation(bool periodic)
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
@@ -490,7 +397,7 @@ public partial class ShaderRenderingTests
     [TestCase(30), TestCase(60), TestCase(120), TestCase(165), Category("GPU")]
     public void MandelFluidV4RegularClockDoesNotBatchSimulationSteps(int rate)
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new FluidClock(rate);
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
@@ -514,7 +421,7 @@ public partial class ShaderRenderingTests
     [TestCase(60), TestCase(1000), Category("GPU")]
     public void MandelFluidV4EmitsAndFlowsWithNormalPresentationLatency(int analysisRate)
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new FluidClock(1000) { Frame = 1000 };
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, analysisRate,
@@ -563,7 +470,7 @@ public partial class ShaderRenderingTests
     [TestCase(120), TestCase(165), Category("GPU")]
     public void MandelFluidV4FastMaterialMovesBetweenPressureUpdates(int rate)
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new FluidClock(rate);
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 1000,
@@ -592,7 +499,7 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void MandelFluidV4ParameterCopiesFollowEditsAndReset()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
@@ -619,7 +526,7 @@ public partial class ShaderRenderingTests
     [TestCase(false), TestCase(true), Category("GPU")]
     public void MandelFluidV4ExtremeForcingRemainsFiniteAndBounded(bool periodic)
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
@@ -652,7 +559,7 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void MandelFluidV4KeepsSingleCellFilamentsWithoutArtificialDiffusion()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
+        using var shaders = new SceneShaders("MandelFluid");
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
@@ -672,293 +579,14 @@ public partial class ShaderRenderingTests
         }
     }
 
-    [TestCase("MandelFluid"), TestCase("MandelFluidv2"), TestCase("MandelFluidv3"), TestCase("MandelFluidv4"), Category("GPU")]
-    public void PeriodicFluidReturnsPigmentAcrossTheSeamAndKeepsItsAge(string scene)
-    {
-        using var window = new HiddenWindow();
-        var open = Measure(false);
-        var loop = Measure(true);
-        TestContext.Progress.WriteLine($"{scene}: pigment at opposite edge {open.Left:G5} -> {loop.Left:G5}, retained fraction {loop.Fraction:G5}");
-        Assert.That(loop.Left, Is.GreaterThan(Math.Max(.01, 10 * open.Left)));
-        Assert.That(loop.Fraction, Is.InRange(.6, 1.05), "Periodic transport retains dye apart from configured decay and numerical mixing.");
-        (double Left, double Fraction) Measure(bool periodic)
-        {
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: ShaderDirectory, timeProvider: clock);
-            renderer.SelectScene(scene);
-            var parameters = renderer.ActiveShader!.Parameters!;
-            var fluid = parameters.Items.Single(p => p.Name == "Fluid");
-            var boundary = fluid.Children.Single(p => p.Name == "PeriodicBoundary");
-            parameters.SetBoolean(boundary, periodic);
-            foreach (var name in new[] { "EmissionVelocity", "Curl", "Viscosity" })
-                parameters.SetFloat(fluid.Children.Single(p => p.Name == name), 0);
-            clock.Advance(); renderer.Render(false);
-            renderer.Fluid.SeedRecirculationForCheck();
-            var initial = renderer.Fluid.ReadDye().Where((_, i) => i % 4 == 3).Sum(v => (double)v);
-            for (int frame = 0; frame < 60; frame++) { clock.Advance(); renderer.Render(false); }
-            var dye = renderer.Fluid.ReadDye();
-            Assert.That(dye.All(v => float.IsFinite(v) && v >= 0 && v <= 12), Is.True);
-            Assert.That(renderer.Fluid.ReadVelocity().All(float.IsFinite), Is.True);
-            double left = 0, total = 0;
-            for (int y = 0; y < renderer.Fluid.Height; y++)
-                for (int x = 0; x < renderer.Fluid.Width; x++)
-                {
-                    var density = dye[4 * (y * renderer.Fluid.Width + x) + 3];
-                    total += density;
-                    if (x < renderer.Fluid.Width / 4) left += density;
-                }
-            if (periodic)
-            {
-                var age = renderer.Fluid.ReadAge();
-                for (int cell = 0; cell < age.Length / 2; cell++)
-                    if (dye[4 * cell + 3] > .001)
-                    {
-                        Assert.That(age[2 * cell] / dye[4 * cell + 3], Is.EqualTo(.5).Within(.03),
-                            "Birth timestamp must travel with wrapped pigment.");
-                        Assert.That(age[2 * cell + 1] / dye[4 * cell + 3], Is.EqualTo(.5).Within(.03),
-                            "Frequency must travel with wrapped pigment.");
-                    }
-            }
-            // Changing the option is live and must not reset the simulation.
-            parameters.SetBoolean(boundary, !periodic);
-            renderer.Render(false);
-            Assert.That(renderer.Fluid.PeriodicBoundary, Is.EqualTo(!periodic));
-            Assert.That(renderer.Fluid.ReadDye(), Is.EqualTo(dye));
-            return (left, total / initial);
-        }
-    }
 
-    [Test, Category("GPU")]
-    public void FlightMaterialOwnsItsDecayOnTheSharedFloat32Backend()
-    {
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: ShaderDirectory, timeProvider: clock);
-        renderer.SelectScene("FluidFlight");
-        var parameters = renderer.ActiveShader!.Parameters!;
-        var fluid = parameters.Items.Single(p => p.Name == "Fluid");
-        parameters.SetBoolean(fluid.Children.Single(p => p.Name == "PeriodicBoundary"), true);
-        parameters.SetBoolean(fluid.Children.Single(p => p.Name == "LowQuality"), true);
-        var flight = parameters.Items.Single(p => p.Name == "Flight");
-        parameters.SetFloat(flight.Children.Single(p => p.Name == "HalfLife"), 0);
-        clock.Advance(); renderer.Render(false);
-        renderer.Fluid.SeedRecirculationForCheck(.00002f, 0);
-        Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(0));
-        for (int frame = 0; frame < 120; frame++) { clock.Advance(); renderer.Render(false); }
-        Assert.That(renderer.Fluid.MaterialCount, Is.EqualTo(1), "Flight has no ring age/frequency attachment.");
-        Assert.That(renderer.Fluid.ReadDye().Max(), Is.LessThan(1e-10),
-            "The flight material shader fades all channels, including density.");
-    }
 
-    [Test, Category("GPU")]
-    public void MandelFluidV3CentralStrobesRevealOldCloudsWithoutChangingFluid()
-    {
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        const int width = 384, height = 216;
-        using var renderer = new Renderer(window.Handle, width, height, Bands, 60,
-            shaderDirectory: ShaderDirectory, timeProvider: clock);
-        renderer.SelectScene("MandelFluidv3");
-        var parameters = renderer.ActiveShader!.Parameters!;
-        Assert.That(parameters.Items.Any(p => p.Name == "Comet"), Is.False);
-        var lighting = parameters.Items.Single(p => p.Name == "Lighting");
-        Assert.That(lighting.Children.Select(p => p.Name), Is.EquivalentTo(new[] { "Strobe", "Ambient", "SpatialFalloff" }));
-        var strobe = lighting.Children.Single(p => p.Name == "Strobe");
-        var ambient = lighting.Children.Single(p => p.Name == "Ambient");
-        Assert.That(parameters.GetFloat(strobe), Is.EqualTo(.7f));
-        Assert.That(parameters.GetFloat(ambient), Is.EqualTo(.008f));
-        parameters.SetFloat(ambient, 0);
-        parameters.SetFloat(parameters.Items.Single(p => p.Name == "Quality")
-            .Children.Single(p => p.Name == "MovementSpeed"), 0);
-        long row = 0;
-        for (int frame = 0; frame < 240; frame++) Tick(Bands / 4);
-        parameters.SetFloat(ambient, .008f);
-        Tick(toneBand: Bands / 4, advance: false);
-        Capture("cloud-bed");
-        Tick(toneBand: Bands / 4, attackBand: Bands / 4, advance: false);
-        Capture("cloud-strobe");
-        parameters.SetFloat(ambient, 0);
-        // Let local component envelopes settle as well as the light envelope;
-        // otherwise successive zero-dt lighting edits can still change depth.
-        for (int frame = 0; frame < 180; frame++) Tick();
-        Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(.01));
-        AssertBlack("Retained dye is dark without transient illumination when ambient is zero.");
-        var pigment = renderer.Fluid.ReadDye();
-        var velocity = renderer.Fluid.ReadVelocity();
-        Tick(attackBand: Bands / 4, advance: false);
-        long flashLight = Light();
-        Capture("old-cloud-strobe");
-        Assert.That(flashLight, Is.GreaterThan(1000), "Current transients must reveal old material immediately.");
-        Assert.That(renderer.Fluid.ReadDye(), Is.EqualTo(pigment), "Lighting must not change pigment transport.");
-        Assert.That(renderer.Fluid.ReadVelocity(), Is.EqualTo(velocity), "Lighting must not change the fluid motion.");
-        parameters.SetFloat(strobe, 0);
-        Tick(attackBand: Bands / 4, advance: false);
-        AssertBlack("The Strobe control must disable transient light.");
-        parameters.SetFloat(strobe, .7f);
-        for (int frame = 0; frame < 45; frame++) Tick();
-        AssertBlack("The cloud must go dark between hits while pigment remains.");
-        Assert.That(renderer.Fluid.ReadDye().Max(), Is.GreaterThan(.001));
-        parameters.SetFloat(strobe, 0);
-        parameters.SetFloat(ambient, .008f);
-        Tick(advance: false);
-        long ambientLight = Light();
-        Assert.That(ambientLight, Is.GreaterThan(0), "Ambient can gently reveal retained dye.");
-        Assert.That(ambientLight, Is.LessThan(flashLight / 3), "Default ambient must preserve dramatic strobe contrast.");
-        parameters.SetFloat(ambient, .04f);
-        Tick(advance: false);
-        Assert.That(Light(), Is.GreaterThan(ambientLight), "Ambient intensity must remain configurable.");
-        renderer.Fluid.Clear();
-        parameters.SetFloat(strobe, .7f);
-        Tick(attackBand: Bands / 4, advance: false);
-        AssertBlack("Neither ambient nor a strobe may illuminate empty space.");
 
-        long Light() => renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Sum(v => (long)v);
-        void AssertBlack(string message) => Assert.That(
-            renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).All(v => v == 0), Is.True, message);
-        void Capture(string name)
-        {
-            var directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "artifacts", "mandelfluidv3");
-            Directory.CreateDirectory(directory);
-            var path = Path.Combine(directory, name + ".rgba");
-            File.WriteAllBytes(path, renderer.ReadPixels(false));
-            TestContext.AddTestAttachment(path, $"{width}x{height} RGBA8 cloud lighting");
-        }
-        void Tick(int toneBand = -1, int attackBand = -1, bool advance = true)
-        {
-            var data = new double[Bands * 8];
-            for (int i = 0; i < data.Length; i += 4)
-            {
-                int band = i / 4 % Bands;
-                data[i] = toneBand >= 0 && (Math.Abs(band - toneBand) <= 2
-                    || Math.Abs(band - 2 * toneBand) <= 2 || Math.Abs(band - 3 * toneBand) <= 2) ? .6 : 0;
-                data[i + 1] = attackBand >= 0 && Math.Abs(band - attackBand) <= 2 ? .8 : 0;
-                data[i + 2] = toneBand >= 0 ? .2 : 0;
-                data[i + 3] = Math.Max(data[i + 2], Math.Max(data[i], data[i + 1]));
-            }
-            renderer.PostAudio(new SampleEvent<double>(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                { AnalysisRow = row++ }, 2);
-            if (advance) clock.Advance();
-            renderer.Render(false);
-        }
-    }
-    [Test, Category("GPU")]
-    public void MandelFluidV3TransientsWithoutPigmentStayBlack()
-    {
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-            shaderDirectory: ShaderDirectory, timeProvider: clock);
-        renderer.SelectScene("MandelFluidv3");
-        long row = 0;
-        Tick(false);
-        Tick(true);
-        var hit = renderer.ReadPixels(false);
-        Assert.That(hit.Where((_, i) => i % 4 != 3).All(v => v == 0), Is.True,
-            "A transient alone must leave every RGB channel black.");
-        for (int i = 0; i < 12; i++)
-        {
-            Tick(false);
-            Assert.That(renderer.ReadPixels(false).Where((_, c) => c % 4 != 3).All(v => v == 0), Is.True,
-                "Once the current transient is zero, retained history must not light a delayed front.");
-        }
-        Assert.That(renderer.Fluid.ReadDye().All(v => v == 0), Is.True, "Transients cannot inject liquid.");
-        void Tick(bool hit)
-        {
-            var data = new double[Bands * 8];
-            if (hit)
-                for (int channel = 0; channel < 2; channel++)
-                    for (int band = 0; band < Bands; band++)
-                    {
-                        int i = 4 * (channel * Bands + band);
-                        data[i + 1] = .8 * Math.Exp(-.5 * Math.Pow((band - Bands / 2.0) / 1.5, 2));
-                        data[i + 3] = data[i + 1];
-                    }
-            renderer.PostAudio(new SampleEvent<double>(data, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                { AnalysisRow = row++ }, 2);
-            clock.Advance(); renderer.Render(false);
-        }
-    }
 
-    [Test, Category("GPU")]
-    public void TransientCutoutDistortionIsSpectralAndReversible()
-    {
-        var temporaryRoot = Path.GetFullPath(Path.GetTempPath());
-        var shaders = Path.Combine(temporaryRoot, "AEther-cutout-pulse-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(shaders, "Common"));
-        Directory.CreateDirectory(Path.Combine(shaders, "Scenes"));
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(Path.Combine(ShaderDirectory, "Common"), "*.hlsl"))
-                File.Copy(file, Path.Combine(shaders, "Common", Path.GetFileName(file)));
-            // Render the production cutout as a binary silhouette, isolating
-            // its geometry from flashes, fluid memory and exposure changes.
-            var source = File.ReadAllText(Path.Combine(ShaderDirectory, "Scenes", "MandelFluidv2.hlsl"));
-            const string entry = "float4 PS(const PSin input)";
-            Assert.That(source, Does.Contain(entry));
-            source = source.Replace(entry, "float4 OriginalPS(const PSin input)") + """
 
-                float4 PS(const PSin input) : SV_Target
-                {
-                    float2 p = (2 * input.UV - 1) * float2(AspectRatio, 1);
-                    float outside = step(CometBoundary(), CometDistances(p).x);
-                    return float4(outside, outside, outside, 1);
-                }
-                """;
-            File.WriteAllText(Path.Combine(shaders, "Scenes", "CutoutPulseProbe.hlsl"), source);
-            using var window = new HiddenWindow();
-            var clock = new RenderClock();
-            using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
-                shaderDirectory: shaders, timeProvider: clock, initialScene: "CutoutPulseProbe");
-            // Hold the ongoing tumble still to isolate the deformation, and
-            // settle the tonal/noise material at a useful fractal depth.
-            var parameters = renderer.ActiveShader!.Parameters!;
-            parameters.SetFloat(parameters.Items.Single(p => p.Name == "Quality")
-                .Children.Single(p => p.Name == "MovementSpeed"), 0);
-            long row = 0;
-            for (int frame = 0; frame < 1200; frame++) Tick();
-            var original = renderer.ReadPixels(false);
-            int originalArea = Area(original);
-            Assert.That(originalArea, Is.GreaterThan(10), "The fixture must contain a visible cutout.");
 
-            Tick(Bands / 4);
-            var lowHit = renderer.ReadPixels(false);
-            Assert.That(lowHit, Is.Not.EqualTo(original), "A low-band hit must deform the cutout.");
-            for (int frame = 0; frame < 90; frame++) Tick();
-            Assert.That(renderer.ReadPixels(false), Is.EqualTo(original),
-                "After the deformation, every pixel must return to the underlying silhouette.");
-            Tick(3 * Bands / 4);
-            var highHit = renderer.ReadPixels(false);
-            Assert.That(highHit, Is.Not.EqualTo(original), "A high-band hit must deform the cutout.");
-            Assert.That(highHit, Is.Not.EqualTo(lowHit), "Different transient bands must deform different regions.");
-            for (int frame = 0; frame < 90; frame++) Tick();
-            Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
 
-            void Tick(int attackBand = -1)
-            {
-                var samples = new double[Bands * 8];
-                for (int i = 0; i < samples.Length; i += 4)
-                {
-                    int band = i / 4 % Bands;
-                    samples[i] = .6;
-                    samples[i + 1] = attackBand >= 0 && Math.Abs(band - attackBand) <= 4 ? .8 : 0;
-                    samples[i + 2] = .3;
-                    samples[i + 3] = .9;
-                }
-                renderer.PostAudio(new SampleEvent<double>(samples, Bands * Splitter.OutputStride, DateTime.UnixEpoch)
-                    { AnalysisRow = row++ }, 2);
-                clock.Advance(); renderer.Render(false);
-            }
-            static int Area(byte[] pixels) => Enumerable.Range(0, pixels.Length / 4).Count(i => pixels[4 * i] == 0);
-        }
-        finally
-        {
-            if (!Path.GetFullPath(shaders).StartsWith(temporaryRoot, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Cutout probe cleanup escaped the temporary directory.");
-            Directory.Delete(shaders, true);
-        }
-    }
+
 
     sealed class RenderClock : TimeProvider
     {

@@ -14,11 +14,11 @@ This is a proposed design, assembled from the references below; it is not a clai
 
 ## 2. The connection
 
-- Mandelbox: repeatedly compose folds, inversion, scale and an offset; render a field associated with the resulting orbits.
+- MandelPond: repeatedly compose folds, inversion, scale and an offset; render a field associated with the resulting orbits.
 - Flame: randomly compose maps and render the accumulated visitation density, with a palette and nonlinear exposure.
 - Spectral tunnel: continuously inject an audio-derived distribution, transform it, transport it outward and let it fade.
 - Common abstraction: iteration acts on points; collectively, those points define a distribution or image.
-- Important distinction: a Mandelbox field and a flame visitation density are different observables of iterative dynamics. Reusing their transformations does not make their renderers interchangeable.
+- Important distinction: a MandelPond field and a flame visitation density are different observables of iterative dynamics. Reusing their transformations does not make their renderers interchangeable.
 
 ### Why an initial seed alone is insufficient
 
@@ -184,7 +184,7 @@ $$
 
 - Equal musical intervals then have equal coordinate spacing.
 - Reuse the analyzer's frequency mapping if it already supplies suitable bands; do not logarithmically remap twice.
-- A natural tunnel embedding puts frequency around the angle and history along the radius. Stereo can occupy separate semicircles, as in the current Mandelbox.
+- A natural tunnel embedding puts frequency around the angle and history along the radius. Stereo can occupy separate semicircles, as in the current MandelPond.
 - Frequency endpoints are not intrinsically periodic. Handle their angular seam explicitly.
 - If interpreting values as energy, aggregate power into bands; a display magnitude is a legitimate artistic source but is not automatically an energy density.
 
@@ -201,7 +201,7 @@ $$
 - Translation in log radius becomes dilation on screen: this is a useful tunnel model.
 - The maximum visible age is $a_{\max}=\log(r_{\max}/r_0)/\kappa$.
 - Use a small disk or annulus, not a mathematical point: an outward velocity proportional to radius leaves the exact origin stationary.
-- Linear radial travel is another choice. The current Mandelbox instead uses a saturating outward projection. These produce different acceleration and history spacing.
+- Linear radial travel is another choice. The current MandelPond instead uses a saturating outward projection. These produce different acceleration and history spacing.
 - Log frequency and log radius solve different problems: musical interval spacing versus multiplicative visual growth.
 
 ### A useful lifted state
@@ -312,9 +312,9 @@ This explains why history lookup can produce a coherent tunnel without storing p
 
 ### Current project anchors
 
-- `AEther.Vortice/Shaders/Common/Mandelbox.hlsl` already maps history age to outward, fractal-warped fronts. It samples current spectra near the core.
+- `AEther.Vortice/Shaders/Common/MandelPond.hlsl` already maps history age to outward, fractal-warped fronts. It samples current spectra near the core.
 - That shader reevaluates geometry with current parameters; its travelling illumination does not preserve historical geometry by itself.
-- `doc/mandelbox-distance.md` explains the history mapping and its distinction from material transport; some passages document older revisions.
+- `doc/mandelpond-distance.md` explains the history mapping and its distinction from material transport; some passages document older revisions.
 - `doc/mandelfluid.md` describes persistent pigment and an outward carrier, a useful neighboring experiment for material transport.
 - `doc/shader-authoring.md` documents spectrum/history inputs. Arbitrary simulation pass schedules are not exposed by the current scene contract, so general texture feedback needs host support.
 
@@ -336,7 +336,7 @@ The sketches are compiled and rendered on D3D11 with synthetic audio during deve
 3. [Karl Sims — Fluid Flow Tutorial](https://karlsims.com/fluid-flow.html). Concrete explanation of pushing particles versus pulling textures, plus repeated injection. Borrow advection; outward expansion does not require an incompressible fluid solve.
 4. [John Hutchinson — Fractals and Self-Similarity (1981)](https://doi.org/10.1512/iumj.1981.30.30055). Foundations for invariant sets and measures; useful for understanding precisely when contractive IFS results apply.
 5. [Barnsley, Harding and Igudesman — How to Transform and Filter Images using Iterated Function Systems (2011)](https://arxiv.org/abs/1102.3199). A bridge from IFS geometry to transforming existing images.
-6. [Gregg Helt — Extending Mandelbox Fractals with Shape Inversions (2018)](https://arxiv.org/abs/1809.01720). Inspiration for generalizing the fold/inversion vocabulary beyond spheres.
+6. [Gregg Helt — Extending MandelPond Fractals with Shape Inversions (2018)](https://arxiv.org/abs/1809.01720). Inspiration for generalizing the fold/inversion vocabulary beyond spheres.
 7. [Karl Sims — Seven Experiments in Procedural Animation](https://www.karlsims.com/seven.html). Watch for continuity, emerging detail and how parameter animation changes the character of a field.
 
 ### Optional path toward sound synthesis

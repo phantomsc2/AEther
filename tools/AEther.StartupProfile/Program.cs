@@ -24,7 +24,7 @@ internal static class Program
             "startup.first_draw_ms", "startup.first_frame_ready_ms", "startup.dispose_ms", "startup.total_ms"];
         Console.WriteLine($"{Environment.OSVersion}; {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}; 1280x720; 48 kHz stereo; {runs} runs/case");
         foreach (bool swift in new[] { true, false })
-        foreach (string scene in new[] { "Mandelbox", "MandelFluidv4" })
+        foreach (string scene in new[] { "MandelPond", "MandelFluid" })
         {
             var results = stages.ToDictionary(s => s, _ => new List<double>());
             for (int run = 0; run < runs; run++)

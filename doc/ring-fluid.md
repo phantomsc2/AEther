@@ -1,6 +1,6 @@
 # Shared MandelFluid backend
 
-MandelFluid, MandelFluidv2, MandelFluidv3 and MandelFluidv4 use the same simulation.
+MandelFluid, MandelFluidv2, MandelFluidv3 and MandelFluid use the same simulation.
 V4's numerical passes, emitter, defaults and lighting behavior are preserved;
 the older variants retain their own scene shading and adopt v4's fluid behavior.
 

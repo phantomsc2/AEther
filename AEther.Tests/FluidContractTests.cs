@@ -8,23 +8,7 @@ namespace AEther.Tests;
 
 public partial class ShaderRenderingTests
 {
-    [TestCase("MandelFluid", 2), TestCase("MandelFluidv2", 2), TestCase("MandelFluidv3", 2)]
-    [TestCase("MandelFluidv4", 2), TestCase("FluidFlight", 1), TestCase("PlaneFlight", 1), Category("GPU")]
-    public void FluidScenesUseTheSameSolverWithTheirOwnMaterialLayout(string scene, int attachments)
-    {
-        using var shaders = new SceneShaders(scene);
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-        var values = renderer.ActiveShader!.Parameters!;
-        values.SetBoolean(values.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "LowQuality"), true);
-        clock.Advance(); renderer.Render(false);
-        Assert.That(renderer.Fluid.Width, Is.EqualTo(128));
-        Assert.That(renderer.Fluid.Height, Is.EqualTo(128));
-        Assert.That(renderer.Fluid.MaterialCount, Is.EqualTo(attachments));
-        Assert.That(renderer.Fluid.LastMaterialSteps, Is.EqualTo(1));
-    }
+
 
     const string FluidContractSource = """
         // A comment with #define RING_FLUID must have no special host meaning.
@@ -73,8 +57,8 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void ShaderDefinedMaterialCanCarrySignedScalarsVectorsAndItsOwnEvolution()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
-        File.WriteAllText(Path.Combine(shaders.Path, "Scenes", "MandelFluidv4.hlsl"), FluidContractSource);
+        using var shaders = new SceneShaders("MandelFluid");
+        File.WriteAllText(Path.Combine(shaders.Path, "Scenes", "MandelFluid.hlsl"), FluidContractSource);
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
@@ -95,8 +79,8 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void FluidCanRunWithAShaderDefinedBoundaryAndNoMaterial()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
-        File.WriteAllText(Path.Combine(shaders.Path, "Scenes", "MandelFluidv4.hlsl"), """
+        using var shaders = new SceneShaders("MandelFluid");
+        File.WriteAllText(Path.Combine(shaders.Path, "Scenes", "MandelFluid.hlsl"), """
             struct FluidSettings { bool PeriodicBoundary; bool LowQuality; float Viscosity; };
             cbuffer Parameters { FluidSettings Fluid = { true, true, 0 }; };
             #include "../Common/FluidSimulation.hlsl"
@@ -126,8 +110,8 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void IncompatibleMaterialOutputsRejectReloadAndKeepTheWorkingScene()
     {
-        using var shaders = new SceneShaders("MandelFluidv4");
-        var path = Path.Combine(shaders.Path, "Scenes", "MandelFluidv4.hlsl");
+        using var shaders = new SceneShaders("MandelFluid");
+        var path = Path.Combine(shaders.Path, "Scenes", "MandelFluid.hlsl");
         File.WriteAllText(path, FluidContractSource);
         using var window = new HiddenWindow();
         var clock = new RenderClock();

@@ -4,7 +4,7 @@
 owns both counts and all vertex construction. There is no CPU geometry count,
 vertex buffer, index buffer, count readback, or reserved `Shape` parameter group.
 The consumer is [RasterLight](raster-airlight-contract.md), used by
-[MandelLightv5](mandellight-v5.md).
+[MandelLight](mandellight.md).
 
 Include `Common/RasterGeometry.hlsl` and implement:
 
@@ -42,5 +42,5 @@ resource bindings. Geometry callbacks may use `Parameters`, `FrameConstants`,
 and the existing spectrum/history textures and samplers. Counts can depend on
 frame or audio inputs just like positions. Geometry and camera callbacks define world-space construction and projection.
 
-MandelLightv5 implements 36 vertices per cube and shader-defined instance counts.
+MandelLight implements 36 vertices per cube and shader-defined instance counts.
 RasterLight supplies camera projection, surface lighting and camera depth targets.

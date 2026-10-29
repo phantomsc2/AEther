@@ -168,11 +168,11 @@ internal static partial class Program
                                     || !Descendants(audio.Content).OfType<NumberBox>().Any(n => AutomationProperties.GetName(n) == "Input gain (dB)"))
                                     throw new Exception("Input and Gain must live in the hub.");
                                 selector.SelectedItem = "Spectrum";
-                                selector.SelectedItem = "Mandelbox";
+                                selector.SelectedItem = "MandelPond";
                                 stage++;
                                 break;
                             case 2:
-                                if (!shadersVisible() || !canvasWindow.IsVisible || current.Renderer.SceneName != "Mandelbox")
+                                if (!shadersVisible() || !canvasWindow.IsVisible || current.Renderer.SceneName != "MandelPond")
                                     throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
                                 if (current.Analyzer.Progress.Latest.Gpu == null) return;
                                 if (!settings.Columns.Children.Contains(backlog) || Grid.GetColumn(backlog) != 2 || Grid.GetRow(backlog) != 0
@@ -316,8 +316,8 @@ internal static partial class Program
                                     throw new Exception("Session restart did not synchronize the hub scene picker.");
                                 if (current.Renderer.SceneName != "Spectrum" || restored.GetBoolean(Find(restored, "ShowS")))
                                     throw new Exception("Session restart lost the selected scene or parameter values.");
-                                shaderPanel.SelectScene("Mandelbox");
-                                if (restoredPicker.SelectedItem?.ToString() != "Mandelbox")
+                                shaderPanel.SelectScene("MandelPond");
+                                if (restoredPicker.SelectedItem?.ToString() != "MandelPond")
                                     throw new Exception("Programmatic selection did not synchronize the hub scene picker.");
                                 restored = current.Renderer.ActiveShader!.Parameters!;
                                 if (restored.GetFloat(Find(restored, editedPath!)) != .75f)
@@ -328,7 +328,7 @@ internal static partial class Program
                                 break;
                             case 7:
                                 if (current.Renderer.DebugDrawCount <= debugDraws) return;
-                                if (current.Renderer.SceneName != "Mandelbox" || started != 3)
+                                if (current.Renderer.SceneName != "MandelPond" || started != 3)
                                     throw new Exception("Debug-only rendering changed the canvas scene or restarted capture.");
                                 if (eventLog.IsExpanded) eventLog.Toggle();
                                 debugDraws = current.Renderer.DebugDrawCount;

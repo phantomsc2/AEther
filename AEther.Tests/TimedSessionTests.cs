@@ -208,7 +208,7 @@ public class TimedSessionTests
             renderer.PostAudio(new(samples, audio.Bands * Splitter.OutputStride, DateTime.UnixEpoch) { AnalysisRow = row }, 2);
         renderer.Render(false);
         Assert.That(renderer.ReadHistogram(0).Any(v => v > 0), Is.True);
-        foreach (var scene in new[] { "Spectrum", "Histogram", "MandelFluidv4", "Mandelbox" })
+        foreach (var scene in new[] { "Spectrum", "Histogram", "MandelFluid", "MandelPond" })
         {
             renderer.SelectScene(scene);
             renderer.Render(false);

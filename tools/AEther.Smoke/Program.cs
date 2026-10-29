@@ -116,7 +116,7 @@ internal static partial class Program
     static void CheckFluid(IntPtr window, string shaders, string output)
     {
         string? reference = null;
-        foreach (var scene in new[] { "MandelFluidv4", "MandelFluid", "MandelFluidv2", "MandelFluidv3" })
+        foreach (var scene in new[] { "MandelFluid" })
         {
             var clock = new FluidSmokeClock();
             using var renderer = new Renderer(window, 1280, 720, 64, 60,

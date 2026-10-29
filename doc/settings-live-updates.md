@@ -111,7 +111,7 @@ uses the upper median of the ten subsequent runs, excluding the first run of
 each case. CPU stage times include **both channels**. They are constructor wall
 times, not steady-state processing costs or filter settling times.
 
-| Warm stage (ms) | SWIFT / Mandelbox | SWIFT / MandelFluidv4 | DFT / Mandelbox | DFT / MandelFluidv4 |
+| Warm stage (ms) | SWIFT / MandelPond | SWIFT / MandelFluid | DFT / MandelPond | DFT / MandelFluid |
 | --- | ---: | ---: | ---: | ---: |
 | Spectrum setup | 0.518 | 0.389 | 0.863 | 0.509 |
 | Smoother setup (both filters) | 0.022 | 0.016 | 0.017 | 0.009 |
@@ -125,7 +125,7 @@ times, not steady-state processing costs or filter settling times.
 | Start to first GPU-complete readback | 277.450 | 396.641 | 267.319 | 403.401 |
 | Stop/drain/dispose | 18.604 | 21.475 | 14.910 | 21.368 |
 
-The first process run (SWIFT / Mandelbox) took 23.084 ms for analyzer construction:
+The first process run (SWIFT / MandelPond) took 23.084 ms for analyzer construction:
 12.828 ms spectrum, 1.721 ms smoother and 0.518 ms splitter. GPU construction took
 408.586 ms, and the first completed readback arrived at 1,208.517 ms from the
 start. First-run disposal took 440.499 ms. Only this first case includes initial

@@ -103,7 +103,7 @@ within the process; they are not saved between app launches. See
 [shader authoring](doc/shader-authoring.md) for the input contract, examples, mappings,
 and current limitations.
 
-Mandelbox and MandelFluid share fractal geometry. MandelFluid adds persistent pigment:
+MandelPond and MandelFluid share fractal geometry. MandelFluid adds persistent pigment:
 tones supply body material, background drives turbulence and rhythmic attacks highlight the
 field. Histogram displays one second of history per stereo side, with now in the center.
 Mono is mirrored; multichannel inputs use the first two channels.

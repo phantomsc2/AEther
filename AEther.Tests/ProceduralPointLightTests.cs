@@ -19,10 +19,10 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void ProceduralRingsUseIndependentLiveStbAndGpuDefinedPositions()
     {
-        using var shaders = new SceneShaders("MandelLightv5");
+        using var shaders = new SceneShaders("MandelLight");
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 96, 54, 32, 60,
-            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
+            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLight");
         var passes = new List<string>();
         renderer.TransportPassMarker = (name, begin) => { if (begin) passes.Add(name); };
         for (int component = 0; component < 3; component++)
@@ -61,8 +61,8 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void PointLightContractOwnsCountsAndPropertiesWithoutReservedLightSettings()
     {
-        using var shaders = new SceneShaders("MandelLightv5");
-        string file = Path.Combine(shaders.Path, "Scenes", "MandelLightv5.hlsl");
+        using var shaders = new SceneShaders("MandelLight");
+        string file = Path.Combine(shaders.Path, "Scenes", "MandelLight.hlsl");
         string source = File.ReadAllText(file);
         int begin = source.IndexOf("uint LightCount()", StringComparison.Ordinal);
         int end = source.IndexOf("float4 PS(", begin, StringComparison.Ordinal);
@@ -79,7 +79,7 @@ public partial class ShaderRenderingTests
         File.WriteAllText(file, Regex.Replace(source, @"\bLights\b", "Emitters"));
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 64, 36, 32, 60,
-            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
+            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLight");
         PointSet(renderer, "Emitters.Count", 1f); PointFeed(renderer, 0); renderer.Render(false);
         var records = PointRecords(renderer);
         Assert.That(records.Length, Is.EqualTo(512));
@@ -98,10 +98,10 @@ public partial class ShaderRenderingTests
     [TestCase(false), TestCase(true), Category("GPU")]
     public void ProceduralPointAirlightMatchesIndependentQuadrature(bool surfaceClipped)
     {
-        using var shaders = new SceneShaders("MandelLightv5");
+        using var shaders = new SceneShaders("MandelLight");
         if (surfaceClipped)
         {
-            string file = Path.Combine(shaders.Path, "Scenes", "MandelLightv5.hlsl");
+            string file = Path.Combine(shaders.Path, "Scenes", "MandelLight.hlsl");
             string source = File.ReadAllText(file);
             int begin = source.IndexOf("uint2 GeometryCount()", StringComparison.Ordinal);
             int end = source.IndexOf("static const float SceneLightGain", begin, StringComparison.Ordinal);
@@ -124,7 +124,7 @@ public partial class ShaderRenderingTests
         const int width = 64, height = 36;
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, width, height, 32, 60,
-            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
+            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLight");
         PointSet(renderer, "View.CameraSpeed", 0f); PointSet(renderer, "View.CameraDistance", .6f);
         PointSet(renderer, "Lights.Count", 0f); PointSet(renderer, "Lights.Gain", .5f);
         PointSet(renderer, "Shape.Enabled", false); PointSet(renderer, "Air.Density", .4f);
@@ -169,11 +169,11 @@ public partial class ShaderRenderingTests
     [Test, Category("GPU")]
     public void ProceduralPointPassRebuildsLookupAndSurvivesEditsResizeReloadAndSceneSwitches()
     {
-        using var shaders = new SceneShaders("MandelLightv5");
+        using var shaders = new SceneShaders("MandelLight");
         File.Copy(Path.Combine(ShaderDirectory,"Scenes","Spectrum.hlsl"),Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl"));
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 81, 47, 32, 60,
-            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLightv5");
+            shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: "MandelLight");
         PointRender(renderer, () => PointFeed(renderer, 0));
         var lookup = PointField<object>(PointField<object>(renderer,"rasterLight"),"lookup");
         byte[] original = renderer.ReadPixels(false);
@@ -190,7 +190,7 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
         renderer.SelectScene("Spectrum"); PointFeed(renderer,0); renderer.Render(false);
         Assert.That(PointField<object>(PointField<object>(renderer,"rasterLight"),"lookup"), Is.SameAs(lookup));
-        renderer.SelectScene("MandelLightv5"); PointFeed(renderer,0); renderer.Render(false);
+        renderer.SelectScene("MandelLight"); PointFeed(renderer,0); renderer.Render(false);
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original));
     }
 

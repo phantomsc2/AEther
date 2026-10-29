@@ -1,4 +1,4 @@
-// A finite-iteration 3D Mandelbox distance estimate, evaluated on a plane.
+// A finite-iteration 3D MandelPond distance estimate, evaluated on a plane.
 // Integrated audio moves the slice and slowly explores a family of orbit rules.
 float2 BoxDistanceAtDepth(float3 p, float t, float depth)
 {

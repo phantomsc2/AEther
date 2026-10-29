@@ -1,4 +1,4 @@
-# MandelFluidv4 performance and latency
+# MandelFluid performance and latency
 
 ## Current Arc target and smoothness (2026-10-22)
 
@@ -22,7 +22,7 @@ Repeat the real WinUI presentation run on the built-in panel (verify the monitor
 on the current machine; Windows primary may be the external monitor):
 
 ```powershell
-dotnet run --project tools/AEther.Smoke -c Release -- --presentation-profile '--monitor=\\.\DISPLAY1' --scene=MandelFluidv4 --fast --width=3200 --height=2000 --fullscreen --seconds=15 --output=artifacts/fluid-smooth/arc-default-native
+dotnet run --project tools/AEther.Smoke -c Release -- --presentation-profile '--monitor=\\.\DISPLAY1' --scene=MandelFluid --fast --width=3200 --height=2000 --fullscreen --seconds=15 --output=artifacts/fluid-smooth/arc-default-native
 ```
 
 `--fast` uses EmissionVelocity 1, VelocityGain .75, Curl .75. The profiler runs two seconds
