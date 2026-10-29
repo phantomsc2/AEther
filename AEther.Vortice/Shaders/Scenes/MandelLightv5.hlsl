@@ -4,13 +4,13 @@
 // Three fixed spectral point-light rings. Geometry and lighting live in HLSL.
 struct ShapeSettings { bool Enabled; float Count; float Seed; float Size; float Spread; float Speed; float3 Albedo; };
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
-struct LightSettings { bool Enabled; float Count; float Radius; float Gain; bool SampleAirlight; };
+struct LightSettings { bool Enabled; float Count; float Radius; float Gain; };
 struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; float Exposure; bool ShowDepth; };
 cbuffer Parameters : register(b1)
 {
     ShapeSettings Shape = { true, .03101343, .25, .45, .75, .1, float3(.65,.7,.75) };
     AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
-    LightSettings Lights = { true, .62105263, .57, .66666667, true };
+    LightSettings Lights = { true, .62105263, .57, .66666667 };
     ViewSettings View = { .55, .15, .5, .4, false };
 };
 ProjectionCamera SceneCamera()
@@ -23,7 +23,6 @@ ProjectionCamera SceneCamera()
     origin=-distance*forward+(2*View.HorizontalOffset-1)*distance*right;
     return MakeProjectionCamera(origin,forward,right,up);
 }
-bool UsePointLightSampling() { return Lights.SampleAirlight; }
 #include "../Common/RasterGeometry.hlsl"
 #include "../Common/PointLights.hlsl"
 #include "../Common/PointRasterAirlight.hlsl"
