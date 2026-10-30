@@ -23,7 +23,8 @@ public sealed class SettingsPanel : UserControl
     public event EventHandler? InputChanged;
     public event Action<string>? SceneSelected;
 
-    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameTimeView backlog)
+    public SettingsPanel(AudioPanel audio, GraphicsPanel graphics, ShaderPanel shaders, AnalysisView analysis, FrameTimeView backlog,
+        double previewAspectRatio)
     {
         this.shaders = shaders;
         var layout = new Grid();
@@ -34,13 +35,30 @@ public sealed class SettingsPanel : UserControl
         layout.Children.Add(EventLog);
         Content = layout;
         SizeChanged += (_, _) => EventLog.SetAvailableHeight(ActualHeight);
-        Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(384) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 32 }); // 0: live views
+        var previewRow = new RowDefinition { Height = new GridLength(384 / previewAspectRatio), MinHeight = 32 };
+        Columns.RowDefinitions.Add(previewRow); // 0: live views
         Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 1: divider
         var controlsRow = new RowDefinition { Height = new GridLength(1, GridUnitType.Star) };
         Columns.RowDefinitions.Add(controlsRow); // 2: controls
+
+        var defaultPreviewSize = true;
+        var updatingPreviewSize = false;
+        void UpdatePreviewSize()
+        {
+            if (!defaultPreviewSize || analysis.ActualWidth <= 0) return;
+            updatingPreviewSize = true;
+            try { previewRow.Height = new GridLength(analysis.ActualWidth / previewAspectRatio); }
+            finally { updatingPreviewSize = false; }
+        }
+        // Follow column resizing until the user explicitly chooses a row height.
+        previewRow.RegisterPropertyChangedCallback(RowDefinition.HeightProperty, (_, _) =>
+        {
+            if (!updatingPreviewSize) defaultPreviewSize = false;
+        });
+        analysis.SizeChanged += (_, _) => UpdatePreviewSize();
 
         var divider = new GridSplitter
         {
@@ -53,7 +71,8 @@ public sealed class SettingsPanel : UserControl
         ToolTipService.SetToolTip(divider, "Drag to resize. Arrow keys adjust; double-click restores the default height.");
         divider.DoubleTapped += (_, e) =>
         {
-            Columns.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            defaultPreviewSize = true;
+            UpdatePreviewSize();
             controlsRow.Height = new GridLength(1, GridUnitType.Star);
             e.Handled = true;
         };

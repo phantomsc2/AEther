@@ -70,7 +70,8 @@ public sealed class MainWindow : Window
         canvasWindow = new(root);
         analysis = new(this);
         frameTime = new(this);
-        settings = new(audio, graphics, shaders, analysis, frameTime);
+        var display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).OuterBounds;
+        settings = new(audio, graphics, shaders, analysis, frameTime, (double)display.Width / display.Height);
         SystemBackdrop = new MicaBackdrop();
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
