@@ -43,6 +43,15 @@ public sealed class Session : IDisposable, IAsyncDisposable
         }
         catch { Analyzer.Stop(); throw; } // The caller owns the source until construction succeeds.
         Subscribe();
+        LogConfiguration();
+    }
+
+    void LogConfiguration()
+    {
+        var format = source.Format;
+        Logger.Debug("Audio source {SourceType}: {SampleType}, {BitsPerSample} bits per sample, {SampleRate} Hz, {Channels} channels, {BytesPerFrame} bytes per frame; analyzer options {@AnalyzerOptions}",
+            source.GetType().FullName, format.Type.GetType().Name, format.Type.Size * 8,
+            format.SampleRate, format.ChannelCount, format.Size, Analyzer.Options);
     }
 
     void Subscribe()
@@ -64,7 +73,12 @@ public sealed class Session : IDisposable, IAsyncDisposable
             if (ReferenceEquals(state, run)) CaptureStopped?.Invoke(this, error);
         };
         if (source is ITimedSampleSource timed) timed.TimedDataAvailable += onTimedAudio;
-        else source.DataAvailable += onAudio;
+        else
+        {
+            logger.Information("Audio source has no packet timestamps; activating estimated host timing fallback");
+            source.DataAvailable += onAudio;
+        }
+        logger.Debug("Audio capture and analysis callbacks attached; timed source {TimedSource}", source is ITimedSampleSource);
         source.Stopped += onStopped;
         Analyzer.SamplesAnalyzed += onAnalysis;
     }
@@ -75,6 +89,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
     {
         if (ReferenceEquals(source, nextSource))
             throw new ArgumentException("Use a fresh capture source for the new analysis generation.", nameof(nextSource));
+        Logger.Debug("Replacing audio analysis generation; retaining graphics programs");
         var next = new Analyzer(nextSource.Format, options);
         try
         {
@@ -97,6 +112,7 @@ public sealed class Session : IDisposable, IAsyncDisposable
         stopTask = null;
         run = new();
         Subscribe();
+        LogConfiguration();
     }
 
     public void Start()
@@ -104,7 +120,8 @@ public sealed class Session : IDisposable, IAsyncDisposable
         var state = run;
         Interlocked.Exchange(ref state.Running, 1);
         _ = ObserveAnalysisAsync(Analyzer, Logger, state);
-        try { Analyzer.Start(); source.Start(); }
+        Logger.Debug("Starting analysis workers and audio capture");
+        try { Analyzer.Start(); source.Start(); Logger.Debug("Analysis workers and audio capture started"); }
         catch { Interlocked.Exchange(ref state.Running, 0); throw; }
     }
     async Task ObserveAnalysisAsync(Analyzer analyzer, ILogger logger, RunState state)
@@ -135,12 +152,14 @@ public sealed class Session : IDisposable, IAsyncDisposable
             finally { Analyzer.Stop(); await Analyzer.Completion; }
         }
         finally { Analyzer.SamplesAnalyzed -= onAnalysis; }
+        Logger.Information("Audio pipeline stopped");
     }
     void DisposeSource()
     {
         if (sourceDisposed) return;
         sourceDisposed = true;
         source.Dispose();
+        Logger.Debug("Audio source disposed");
     }
     public void Dispose() { try { DisposeSource(); } finally { Renderer.Dispose(); } }
 

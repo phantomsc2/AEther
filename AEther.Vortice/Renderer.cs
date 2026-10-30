@@ -175,6 +175,7 @@ public sealed partial class Renderer : IDisposable
             using (profile?.Measure("startup.gpu_shaders_ms"))
                 if (!ReloadShaders()) throw new InvalidOperationException(ShaderError, shaderException);
             initializing = false;
+            Logger.Debug("Renderer initialized; scene {Scene}; shader directory {ShaderDirectory}; analysis {AnalysisRate} Hz; bands {Bands}; history {HistorySeconds} s", SceneName, this.shaderDirectory, analysisRate, bands, historySeconds);
         }
         catch { Dispose(); throw; }
     }
@@ -203,6 +204,7 @@ public sealed partial class Renderer : IDisposable
                 return;
             }
         }
+        Logger.Information("Preferred Intel Arc adapter absent; activating default hardware adapter fallback");
         // Portable fallback only when no Arc hardware is present.
         D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport,
             [FeatureLevel.Level_11_0], out device, out context).CheckError();
@@ -512,6 +514,7 @@ public sealed partial class Renderer : IDisposable
     {
         if (disposed) return;
         disposed = true;
+        Logger.Debug("Disposing renderer and graphics resources");
         context?.ClearState(); context?.Flush();
         DetachDebugOutput();
         vertex?.Dispose(); outputPixel?.Dispose();

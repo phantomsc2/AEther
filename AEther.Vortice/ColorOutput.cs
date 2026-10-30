@@ -83,6 +83,10 @@ internal sealed partial class ColorOutput : IDisposable
             }
             candidate ??= Create(Format.R8G8B8A8_UNorm);
             swapChain = candidate;
+            (logger ?? Log.Logger).ForContext<ColorOutput>().Debug(
+                "Presentation configured: {Output}; swap chain format {SwapChainFormat}; scene format {SceneFormat}; composition {Composition}; dimensions {Width} x {Height}",
+                Description, HighPrecision ? Format.R16G16B16A16_Float : Format.R8G8B8A8_UNorm,
+                directSdr ? Format.R8G8B8A8_UNorm : Format.R16G16B16A16_Float, attachSwapChain != null, width, height);
             using (var chain = swapChain.QueryInterface<IDXGISwapChain2>())
             {
                 chain.MaximumFrameLatency = 1;

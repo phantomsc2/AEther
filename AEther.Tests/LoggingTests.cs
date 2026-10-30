@@ -14,6 +14,25 @@ namespace AEther.Tests;
 public class LoggingTests
 {
     [Test]
+    public void DebugEventsReachHistoryAndFile()
+    {
+        var directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "logging-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new EventLogStore();
+            using (var log = ApplicationLog.CreateLogger(store, directory))
+            {
+                log.Verbose("Hidden");
+                log.Debug("Format {SampleRate}", 48000);
+            }
+            Assert.That(store.Snapshot().Events.Single().Event.Level, Is.EqualTo(LogEventLevel.Debug));
+            using var row = JsonDocument.Parse(File.ReadLines(Directory.GetFiles(directory, "*.clef").Single()).Single());
+            Assert.That(row.RootElement.GetProperty("@l").GetString(), Is.EqualTo("Debug"));
+            Assert.That(row.RootElement.GetProperty("SampleRate").GetInt32(), Is.EqualTo(48000));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+    [Test]
     public void EventsRemainInHistoryAcrossPipelineGenerations()
     {
         var store = new EventLogStore();
@@ -47,7 +66,7 @@ public class LoggingTests
     {
         var store = new EventLogStore(2000);
         using var log = new LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(store).CreateLogger();
-        log.Debug("Not in application history");
+        log.Verbose("Not in application history");
         Parallel.For(0, 5000, i => log.Information("Event {Number}", i));
         var rows = store.Snapshot().Events;
         Assert.That(rows, Has.Length.EqualTo(2000));

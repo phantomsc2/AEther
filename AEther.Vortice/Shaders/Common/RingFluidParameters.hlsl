@@ -10,12 +10,12 @@ struct EmitterParameters
 };
 struct FluidParameters
 {
-    float EmissionVelocity;  // 0 .. 20 simulation units per second, scaled by local B.
-    float VelocityGain;      // Local B sensitivity; .5 = unity gain.
+    float EmissionVelocity;  // 0 .. 40 simulation units per second, scaled by local B.
+    float VelocityGain;      // Local B sensitivity; .5 matches the former .236 setting.
     float Viscosity;         // 0 .. .1 via .1 * slider^3; no dye diffusion.
     float Curl;              // Local B-driven counter-rotating launch velocity.
     bool PeriodicBoundary;
 };
 
 #define RING_EMITTER_DEFAULTS { .667, .1600, .1, .1600, 1, .12 }
-#define RING_FLUID_DEFAULTS { .3270, .0690, 0, 0, true }
+#define RING_FLUID_DEFAULTS { .5, .5, 0, 0, true }

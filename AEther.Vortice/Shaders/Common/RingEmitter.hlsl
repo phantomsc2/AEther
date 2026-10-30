@@ -35,8 +35,8 @@ float2 RingBoundaryVelocity(float2 p)
 {
     float3 stb;
     RingEmissionSample(p, 0, stb);
-    float background = AmplitudeResponse(stb.b * exp2(20 * Fluid.VelocityGain - 10), .01);
-    float speed = 20 * Fluid.EmissionVelocity * background;
+    float background = AmplitudeResponse(stb.b * exp2(20 * (Fluid.VelocityGain - .5) - 5.28), .01);
+    float speed = 40 * Fluid.EmissionVelocity * background;
     float2 normal = p / max(1e-6, length(p));
     float2 tangent = float2(-normal.y, normal.x);
     // Mirror circulation across the centerline: positive on the left, negative

@@ -27,7 +27,7 @@ public sealed class EventLogStore : ILogEventSink
 
     public void Emit(LogEvent logEvent)
     {
-        if (logEvent.Level < LogEventLevel.Information) return;
+        if (logEvent.Level < LogEventLevel.Debug) return;
         lock (gate)
         {
             if (events.Count == capacity) events.Dequeue();

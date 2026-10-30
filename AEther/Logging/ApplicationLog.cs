@@ -40,7 +40,7 @@ public static class ApplicationLog
 
     public static Logger CreateLogger(EventLogStore store, string directory)
     {
-        var configuration = new LoggerConfiguration().MinimumLevel.Information()
+        var configuration = new LoggerConfiguration().MinimumLevel.Debug()
             .Enrich.WithProperty("ApplicationSessionId", Guid.NewGuid().ToString("N"))
             .WriteTo.Sink(store);
         try

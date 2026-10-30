@@ -28,6 +28,10 @@ public sealed class EventLogView : UserControl
                           RowBackground="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                           Density="Compact" CanUserSortColumns="False" IsReadOnly="True">
             <tabular:TableView.Resources>
+                <Style x:Key="DebugIconStyle" TargetType="FontIcon">
+                    <Setter Property="Glyph" Value="&#xEBE8;" />
+                    <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Style>
                 <Style x:Key="InformationIconStyle" TargetType="FontIcon">
                     <Setter Property="Glyph" Value="&#xE946;" />
                     <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -179,6 +183,7 @@ public sealed class EventLogView : UserControl
         LogEventLevel.Fatal => "FatalIconStyle",
         LogEventLevel.Error => "ErrorIconStyle",
         LogEventLevel.Warning => "WarningIconStyle",
+        LogEventLevel.Debug => "DebugIconStyle",
         _ => "InformationIconStyle",
     };
 
