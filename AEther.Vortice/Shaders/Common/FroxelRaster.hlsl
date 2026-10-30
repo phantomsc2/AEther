@@ -72,6 +72,10 @@ float4 FroxelAtDepth(float2 uv,float depth)
     ProjectionCamera camera = FroxelCamera();
     float3 ray = ProjectionDirection(camera,uv);
     float distance = max(0,depth-FroxelSliceDepth(k))/dot(ray,camera.Forward);
+#ifdef FROXEL_SEGMENT_SOURCE
+    source.rgb=EvaluateFroxelSegment(ProjectionPosition(camera,ray,FroxelSliceDepth(k)),
+        ProjectionPosition(camera,ray,depth),source.rgb);
+#endif
     return float4(prefix.rgb+prefix.a*source.rgb*FroxelSegmentWeight(source.a,distance),
         prefix.a*exp(-source.a*distance));
 }

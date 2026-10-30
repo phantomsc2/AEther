@@ -13,6 +13,9 @@ float FroxelSourceRadius();
 #ifdef FROXEL_CUSTOM_SOURCE
 float3 EvaluateFroxelSource(float3 world, FroxelMedium medium);
 #endif
+#ifdef FROXEL_SEGMENT_SOURCE
+float3 EvaluateFroxelSegment(float3 begin,float3 end,float3 scattering);
+#endif
 
 RWStructuredBuffer<FroxelLight> FroxelLightOutput;
 StructuredBuffer<FroxelLight> FroxelLights;
@@ -20,6 +23,10 @@ RWTexture3D<float4> FroxelSourceOutput;
 Texture3D<float4> FroxelSource;
 RWTexture3D<float4> FroxelIntegratedOutput;
 Texture3D<float4> FroxelIntegrated;
+#ifdef FROXEL_PREPARED_LIGHTING
+Texture3D<float4> FroxelLighting;
+RWTexture3D<float4> FroxelLightingOutput;
+#endif
 SamplerState FroxelSampler;
 static const float FroxelPi = 3.14159265359;
 
@@ -63,9 +70,9 @@ void InjectFroxels(uint3 id : SV_DispatchThreadID)
     float3 world = ProjectionPosition(camera,ray,z);
     FroxelMedium medium = EvaluateFroxelMedium(world);
     float3 source = 0;
-#ifdef FROXEL_CUSTOM_SOURCE
+#if defined(FROXEL_CUSTOM_SOURCE) && !defined(FROXEL_SEGMENT_SOURCE)
     if (any(medium.Scattering > 0)) source = EvaluateFroxelSource(world,medium);
-#else
+#elif !defined(FROXEL_CUSTOM_SOURCE)
     if (any(medium.Scattering > 0))
     [loop] for (uint i=0; i<FroxelLightCount; ++i)
     {
@@ -78,9 +85,28 @@ void InjectFroxels(uint3 id : SV_DispatchThreadID)
             * light.Intensity * FroxelLightTransmittance(world,light.Position) / (r2+radius*radius);
     }
 #endif
+#ifdef FROXEL_SEGMENT_SOURCE
+    // Preserve coarse material separately from the narrow analytic lighting.
+    source=medium.Scattering;
+#endif
     // Saturate only at the storage format's limit, before float16 conversion.
     FroxelSourceOutput[id] = float4(min(source,65504),medium.Extinction);
 }
+#ifdef FROXEL_PREPARED_LIGHTING
+[numthreads(8,8,1)]
+void LightFroxels(uint3 id : SV_DispatchThreadID)
+{
+    if(id.x>=FroxelWidth || id.y>=FroxelHeight || id.z>=FroxelDepth) return;
+    ProjectionCamera camera=FroxelCamera();
+    float3 ray=ProjectionDirection(camera,(id.xy+.5)/float2(FroxelWidth,FroxelHeight));
+    float4 material=FroxelSource.Load(int4(id,0));
+    float3 source=0;
+    if(any(material.rgb>0))
+        source=EvaluateFroxelSegment(ProjectionPosition(camera,ray,FroxelSliceDepth(id.z)),
+            ProjectionPosition(camera,ray,FroxelSliceDepth(id.z+1)),material.rgb);
+    FroxelLightingOutput[id]=float4(min(source,65504),material.a);
+}
+#endif
 [numthreads(8,8,1)]
 void IntegrateFroxels(uint3 id : SV_DispatchThreadID)
 {
@@ -94,7 +120,15 @@ void IntegrateFroxels(uint3 id : SV_DispatchThreadID)
     {
         float next = FroxelSliceDepth(k+1);
         float distance = (next-previous)*rayScale;
+#ifdef FROXEL_PREPARED_LIGHTING
+        float4 source = FroxelLighting.Load(int4(id.xy,k,0));
+#else
         float4 source = FroxelSource.Load(int4(id.xy,k,0));
+#ifdef FROXEL_SEGMENT_SOURCE
+        source.rgb=EvaluateFroxelSegment(ProjectionPosition(camera,ray,previous),
+            ProjectionPosition(camera,ray,next),source.rgb);
+#endif
+#endif
         radiance += transmittance*source.rgb*FroxelSegmentWeight(source.a,distance);
         transmittance *= exp(-source.a*distance);
         FroxelIntegratedOutput[uint3(id.xy,k)] = float4(min(radiance,65504),transmittance);

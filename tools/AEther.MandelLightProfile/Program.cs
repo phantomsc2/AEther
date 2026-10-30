@@ -14,6 +14,9 @@ internal static partial class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Contains("--froxel4-infinite-compare")) { RunFroxel4InfiniteCompare(args); return; }
+        if (args.Contains("--froxel4")) { RunFroxel4Profile(args); return; }
+        if (args.Contains("--froxel3-review")) { RunFroxel3Review(args); return; }
         if (args.Contains("--froxel3")) { RunFroxel3Profile(args); return; }
         if (args.Contains("--froxel2")) { RunFroxel2Profile(args); return; }
         if (args.Contains("--froxel")) { RunFroxelProfile(args); return; }

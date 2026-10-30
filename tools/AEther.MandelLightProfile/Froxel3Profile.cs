@@ -8,36 +8,34 @@ internal static partial class Program
     {
         var positional=args.Where(x=>!x.StartsWith("--")).ToArray();
         string source=Path.GetFullPath(positional.ElementAtOrDefault(0) ?? "AEther.Vortice/Shaders");
-        string output=Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/froxel3");
+        string output=Path.GetFullPath(positional.ElementAtOrDefault(1) ?? "artifacts/froxel3-uniform");
         Directory.CreateDirectory(output);
         using var window=new Form {ClientSize=new(1280,720),ShowInTaskbar=false};
         var results=new List<object>();string adapter="";
-        foreach(int bands in new[] {16,128,512})
+        foreach(int bands in new[] {128})
         {
             var clock=new Clock();
             using var renderer=new Renderer(window.Handle,1280,720,bands,60,shaderDirectory:source,timeProvider:clock,initialScene:"Froxel3");
             adapter=renderer.AdapterDescription;
             var device=Field<ID3D11Device>(renderer,"device");var context=Field<ID3D11DeviceContext>(renderer,"context");
-            var effect=(Froxel3Effect)renderer.ActiveShader!.Effects[0];long row=0;
+            var effect=(Froxel3Effect)renderer.ActiveShader!.Effects[0];
             void Render()
             {
-                var samples=new double[8*bands];
-                for(int side=0;side<2;side++) for(int bin=0;bin<bands;bin++) for(int c=0;c<3;c++)
-                {
-                    double f=(bin+.5)/bands;
-                    samples[4*(side*bands+bin)+c]=.002+.045*Math.Pow(.5+.5*Math.Cos(18*f+side*1.7+c*2.094),12);
-                }
-                renderer.PostAudio(new(samples,4*bands,DateTime.UnixEpoch) {AnalysisRow=++row},2);renderer.Render(false);
+renderer.Render(false);
             }
             var configurations=new List<Froxel3Options> {new()};
             if(bands==128)
             {
                 configurations.AddRange(new[] {32,128}.Select(n=>new Froxel3Options(DepthSlices:n)));
-                configurations.AddRange(new[] {4,16,32}.Select(n=>new Froxel3Options(LightingArcs:n)));
                 configurations.AddRange(new[] {0,4096}.Select(n=>new Froxel3Options(Instances:n)));
             }
-            foreach(var options in configurations)
+            var workloads=args.Contains("--phase")
+                ? new[] {.2f,.5f,.8f,.95f}.Select(g=>(Options:new Froxel3Options(),Anisotropy:g))
+                : configurations.Select(o=>(Options:o,Anisotropy:.8f));
+            foreach(var workload in workloads)
             {
+                var options=workload.Options;
+                Set(renderer,"Medium.Anisotropy",workload.Anisotropy);
                 effect.CloudOptions=options;
                 for(int i=0;i<8;i++) {Render();renderer.ReadPixels(false);}
                 using var timer=new Timestamps(device,context);var frames=new List<Dictionary<string,double>>();
@@ -47,13 +45,16 @@ internal static partial class Program
                     timer.Begin();Render();timer.End();frames.Add(timer.Resolve());renderer.TransportPassMarker=null;
                 }
                 var medians=frames.SelectMany(x=>x.Keys).Distinct().ToDictionary(k=>k,k=>Median(frames.Select(v=>v.GetValueOrDefault(k))));
-                Console.WriteLine($"{bands} bands, {options}: "+string.Join(", ",medians.Select(v=>$"{v.Key}={v.Value:F3}ms")));
-                results.Add(new {bands,options,width=1280,height=720,milliseconds=medians});
-                Save(renderer.ReadPixels(false),1280,720,Path.Combine(output,$"ring-{bands}-depth{options.DepthSlices}-arcs{options.LightingArcs}-instances{options.Instances}.png"));
+                float g=2*workload.Anisotropy-1;
+                Console.WriteLine($"g={g:F2}, {options}: "+string.Join(", ",medians.Select(v=>$"{v.Key}={v.Value:F3}ms")));
+                results.Add(new {bands,options,g,width=1280,height=720,milliseconds=medians});
+                string phaseSuffix=args.Contains("--phase") ? FormattableString.Invariant($"-g{g:F2}") : "";
+                Save(renderer.ReadPixels(false),1280,720,Path.Combine(output,$"ring-{bands}-depth{options.DepthSlices}-instances{options.Instances}{phaseSuffix}.png"));
             }
             if(bands==128)
             {
                 effect.CloudOptions=new();
+                Set(renderer,"Medium.Anisotropy",.8f);
                 for(int i=0;i<180;i++) clock.Advance();Render();
                 Save(renderer.ReadPixels(false),1280,720,Path.Combine(output,"animated.png"));
                 Set(renderer,"Medium.Density",0);Render();

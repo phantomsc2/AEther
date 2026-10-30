@@ -13,14 +13,14 @@ internal sealed class FroxelRaster : IDisposable
     readonly ID3D11DepthStencilState depthState;
     readonly ID3D11RasterizerState rasterState;
     Target? color, depth;
-    internal FroxelRaster(ID3D11Device device, ID3D11DeviceContext context, string source, string file)
+    internal FroxelRaster(ID3D11Device device, ID3D11DeviceContext context, string source, string file, string[]? extraBindings = null)
     {
         this.device=device; this.context=context;
         try
         {
             Geometry=new(device,source,"FroxelGeometryVS",file,"vs_5_0");
             Surface=new(device,source,"FroxelSurfacePS",file);
-            var bindings=SceneEffect.FrameBindings.Concat(["FroxelConstants","FroxelLights","RingPrefix"]);
+            var bindings=SceneEffect.FrameBindings.Concat(["FroxelConstants","FroxelLights"]).Concat(extraBindings ?? []);
             Geometry.ValidateBindings(bindings); Surface.ValidateBindings(bindings);
             depthState=device.CreateDepthStencilState(new DepthStencilDescription {
                 DepthEnable=true,DepthWriteMask=DepthWriteMask.All,DepthFunc=ComparisonFunction.Less,StencilEnable=false });

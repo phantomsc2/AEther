@@ -14,18 +14,20 @@ public class FroxelEffect : SceneEffect
     public override object SizeOptions => Options;
     readonly ShaderProgram? lightsProgram;
     readonly ShaderProgram injectProgram, integrateProgram;
+    readonly ShaderProgram? lightingProgram;
     readonly FroxelRaster? raster;
     readonly bool customSource;
     readonly ID3D11Buffer constants;
     readonly ID3D11SamplerState sampler;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
-    Volume? source, integrated;
+    Volume? source, integrated, lighting;
     LightStorage? lights;
     internal (int Width, int Height, int Depth) Dimensions { get; private set; }
     internal ID3D11Texture3D IntegratedTexture => integrated!.Texture;
 
     internal FroxelEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file,
-        FroxelOptions options, bool customSource = false, bool enableRaster = false) : base(name, device, context, source, file)
+        FroxelOptions options, bool customSource = false, bool enableRaster = false,
+        bool preparedLighting = false, string[]? extraBindings = null) : base(name, device, context, source, file)
     {
         this.options = options; DefaultOptions = options; this.customSource = customSource;
         try
@@ -33,11 +35,13 @@ public class FroxelEffect : SceneEffect
             if (!customSource) lightsProgram = new(device, source, "PrepareFroxelLights", file, "cs_5_0");
             injectProgram = new(device, source, "InjectFroxels", file, "cs_5_0");
             integrateProgram = new(device, source, "IntegrateFroxels", file, "cs_5_0");
-            if (!customSource || enableRaster) raster = new(device, context, source, file);
+            if (preparedLighting) lightingProgram = new(device, source, "LightFroxels", file, "cs_5_0");
+            if (!customSource || enableRaster) raster = new(device, context, source, file, extraBindings);
             var available = FrameBindings.Concat(["FroxelConstants", "FroxelLights", "FroxelLightOutput",
-                "FroxelSource", "FroxelSourceOutput", "FroxelIntegrated", "FroxelIntegratedOutput", "FroxelSampler", "FroxelSurface", "FroxelSurfaceDepth", "RingPrefix"]);
-            foreach (var program in new[] { Display, lightsProgram, injectProgram, integrateProgram }.OfType<ShaderProgram>()) program.ValidateBindings(available);
-            Parameters = ShaderParameters.Merge(new[] { Display, lightsProgram, injectProgram, integrateProgram, raster?.Geometry, raster?.Surface }
+                "FroxelSource", "FroxelSourceOutput", "FroxelIntegrated", "FroxelIntegratedOutput", "FroxelSampler", "FroxelSurface", "FroxelSurfaceDepth",
+                "FroxelLighting", "FroxelLightingOutput"]).Concat(extraBindings ?? []);
+            foreach (var program in new[] { Display, lightsProgram, injectProgram, integrateProgram, lightingProgram }.OfType<ShaderProgram>()) program.ValidateBindings(available);
+            Parameters = ShaderParameters.Merge(new[] { Display, lightsProgram, injectProgram, integrateProgram, lightingProgram, raster?.Geometry, raster?.Surface }
                 .OfType<ShaderProgram>().Select(p => p.Parameters));
             constants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
             sampler = device.CreateSamplerState(new SamplerDescription
@@ -49,7 +53,6 @@ public class FroxelEffect : SceneEffect
         catch { Dispose(); throw; }
     }
     protected override void RestoreSizes(object? sizes) { if (sizes is FroxelOptions value) Options = value; }
-    protected virtual void ValidateOptions(FroxelOptions requested) { }
 
     void Unbind()
     {
@@ -59,9 +62,8 @@ public class FroxelEffect : SceneEffect
     }
     void Configure(FroxelOptions requested, int width, int height)
     {
-        ValidateOptions(requested);
         var dimensions = requested.Resolve(width, height);
-        Volume? nextSource = null, nextIntegrated = null;
+        Volume? nextSource = null, nextIntegrated = null, nextLighting = null;
         LightStorage? nextLights = null;
         try
         {
@@ -69,14 +71,16 @@ public class FroxelEffect : SceneEffect
             {
                 nextSource = new(Device, dimensions);
                 nextIntegrated = new(Device, dimensions);
+                if (lightingProgram != null) nextLighting = new(Device, dimensions);
             }
             if (!customSource && (lights == null || lights.Capacity != Math.Max(1, requested.PointLights)))
                 nextLights = new(Device, Math.Max(1, requested.PointLights));
         }
-        catch { nextSource?.Dispose(); nextIntegrated?.Dispose(); nextLights?.Dispose(); throw; }
+        catch { nextSource?.Dispose(); nextIntegrated?.Dispose(); nextLighting?.Dispose(); nextLights?.Dispose(); throw; }
         Unbind();
         if (nextSource != null) { source?.Dispose(); integrated?.Dispose(); source = nextSource; integrated = nextIntegrated; }
         if (nextLights != null) { lights?.Dispose(); lights = nextLights; }
+        if (nextLighting != null) { lighting?.Dispose(); lighting = nextLighting; }
         Dimensions = dimensions;
     }
     internal override void Prepare(EffectFrame frame, ShaderParameters? parameters,
@@ -106,11 +110,13 @@ public class FroxelEffect : SceneEffect
         if (lights != null) textures["FroxelLights"] = lights.View;
         textures["FroxelSource"] = source!.View;
         textures["FroxelIntegrated"] = integrated!.View;
+        if (lighting != null) { textures["FroxelLighting"] = lighting.View; outputs["FroxelLightingOutput"] = lighting.Output; }
         if (lights != null) outputs["FroxelLightOutput"] = lights.Output;
         outputs["FroxelSourceOutput"] = source.Output;
         outputs["FroxelIntegratedOutput"] = integrated.Output;
         if (lightsProgram != null) Run(lightsProgram, "Froxel lights", 1, 1, 1);
-        Run(injectProgram, customSource ? "Froxel ring injection" : "Froxel injection", (width+7)/8, (height+7)/8, depth);
+        Run(injectProgram, lightingProgram != null ? "Froxel material" : customSource ? "Froxel ring injection" : "Froxel injection", (width+7)/8, (height+7)/8, depth);
+        if (lightingProgram != null) Run(lightingProgram, "Froxel line lighting", (width+7)/8, (height+7)/8, depth);
         Run(integrateProgram, "Froxel integration", (width+7)/8, (height+7)/8, 1);
         raster?.Draw(frame, parameters, accepted.Instances, buffers, textures, samplers);
 
@@ -126,12 +132,12 @@ public class FroxelEffect : SceneEffect
     internal override void Deactivate()
     {
         base.Deactivate(); outputs.Clear(); raster?.Release();
-        source?.Dispose(); integrated?.Dispose(); lights?.Dispose();
-        source = null; integrated = null; lights = null; accepted = null; Dimensions = default;
+        source?.Dispose(); integrated?.Dispose(); lighting?.Dispose(); lights?.Dispose();
+        source = null; integrated = null; lighting = null; lights = null; accepted = null; Dimensions = default;
     }
     public override void Dispose()
     {
-        base.Dispose(); lightsProgram?.Dispose(); injectProgram?.Dispose(); integrateProgram?.Dispose();
+        base.Dispose(); lightsProgram?.Dispose(); injectProgram?.Dispose(); integrateProgram?.Dispose(); lightingProgram?.Dispose();
         constants?.Dispose(); sampler?.Dispose(); raster?.Dispose();
     }
     sealed class Volume : IDisposable

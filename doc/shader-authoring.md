@@ -259,10 +259,11 @@ sample counts show grain; raising quality costs GPU time.
 
 ## Froxel3 prototype
 
-`Froxel3` combines adaptive spectrum-ring lighting with heterogeneous fog and a
-slow procedural octahedron cloud. Fog and raster surfaces share a fixed arc
-budget, independent of spectrum width. See [Froxel3](froxel3.md) for the
-approximation, controls, GPU passes, and measurements.
+For a infinite-line-light tube driven directly by stereo spectrum bins, see
+[Froxel4](froxel4.md). It adds a parallel segment-lighting pass and a complete
+spherical shell of octahedra.
+
+`Froxel3` combines three homogeneous, orthogonal ring lights with heterogeneous fog and a slow octahedron cloud. It is independent of audio; fog uses closed-form ring integrals and surfaces use eight directional samples per ring. See [Froxel3](froxel3.md) for controls and measurements.
 
 ## Froxel2 prototype
 

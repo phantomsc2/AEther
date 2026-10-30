@@ -22,6 +22,7 @@ public sealed class SceneDefinition
         new("Froxel1", (d, c, s) => [new FroxelEffect("Froxel", d, c, s, "Froxel1.hlsl", new FroxelOptions())]),
         new("Froxel2", (d, c, s) => [new Froxel2Effect("Froxel", d, c, s, "Froxel2.hlsl")]),
         new("Froxel3", (d, c, s) => [new Froxel3Effect("Froxel", d, c, s, "Froxel3.hlsl")]),
+        new("Froxel4", (d, c, s) => [new Froxel4Effect("Froxel", d, c, s, "Froxel4.hlsl")]),
         new("MandelLight", (d, c, s) => [new RasterEffect("Raster", d, c, s, "MandelLight.hlsl",
             new RasterOptions(LookupWidth: 513, LookupHeight: 1025))]),
         new("MandelFluid", (d, c, s) => [new FluidEffect("Fluid", d, c, s, "MandelFluid.hlsl",

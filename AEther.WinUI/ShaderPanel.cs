@@ -114,7 +114,13 @@ public sealed class ShaderPanel : UserControl
                 }
                 if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
             }
-            if (effect is Froxel3Effect cloud)
+            if (effect is Froxel4Effect tube)
+            {
+                var editor = new OptionsEditor<Froxel4Options>(tube.CloudOptions, v => v with { }, tube.DefaultCloudOptions);
+                editor.Changed += (_, _) => tube.CloudOptions = editor.Options;
+                AddOptions(editor.Content);
+            }
+            else if (effect is Froxel3Effect cloud)
             {
                 var editor = new OptionsEditor<Froxel3Options>(cloud.CloudOptions, v => v with { }, cloud.DefaultCloudOptions);
                 editor.Changed += (_, _) => cloud.CloudOptions = editor.Options;

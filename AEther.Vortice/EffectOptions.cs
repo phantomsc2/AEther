@@ -3,10 +3,13 @@ using System.ComponentModel.DataAnnotations;
 
 namespace AEther.Vortice;
 
+public sealed record Froxel4Options(
+    [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 256,
+    [property: Category("Sizes"), Range(0, 65535), NumericScale(adaptive: true)] int Instances = 4096);
+
 public sealed record Froxel3Options(
-    [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 86,
-    [property: Category("Sizes"), Range(0, 65535), NumericScale(adaptive: true)] int Instances = 1024,
-    [property: Category("Sizes"), Range(4, 32), NumericScale(powersOfTwo: true)] int LightingArcs = 8);
+    [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 256,
+    [property: Category("Sizes"), Range(0, 65535), NumericScale(adaptive: true)] int Instances = 4096);
 
 public sealed record Froxel2Options(
     [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 86);

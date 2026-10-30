@@ -1,119 +1,108 @@
 # Froxel3
 
-Select `Froxel3` (or launch with `--scene=Froxel3`) for a stereo-spectrum ring
-illuminating heterogeneous fog and 1,024 slowly drifting, flat-shaded octahedra.
-The ring's emission mapping, medium, camera, and exposure conventions match
-[Froxel2](froxel2.md). Silence produces black output. The emitter has no visible
-core; the octahedra receive light and occlude camera rays, but cast no shadows.
+The current preset follows the October 30 screenshot: 256 depth slices, 4096
+objects, slower/tighter clouds, and the selected camera/albedo values. Actual
+g defaults to .6 following the subsequent request. See
+[performance review](froxel3-performance.md) for the current preset measurements
+and a proposed path toward 100 rings; older measurements below are historical.
 
-## Bounded lighting work
+Three homogeneous ring lights in the XY, YZ and ZX planes illuminate procedural
+heterogeneous fog and 4,096 slowly drifting octahedra. Select `Froxel3` or launch
+with `--scene=Froxel3`. The scene is independent of audio.
 
-The shader approximates the spectrum with a fixed number of adaptive arcs at
-each shading position, rather than summing all audio bins there. Two GPU threads
-build per-channel RGB prefix integrals once per frame in an RGBA32F texture of
-size `(bands+1) x 2`. Each thread scans one channel. Prefix differences give the
-exact angular average of the piecewise-constant spectrum over an arbitrary arc,
-including partial bins and the stereo seam. A direct bin fetch avoids prefix
-cancellation when an arc lies entirely inside one bin.
+Each ring has a fixed linear RGB color: orange (1,.18,.04), cyan (.04,.7,1),
+and violet (.45,.08,1). Squared sine intensity cycles have an eight-second
+period and phase offsets of one-third turn. `Ring.Speed` defaults to .5;
+zero freezes the cycles and one doubles their speed. Shared radius and softening
+default to 4.5 and .05 units. Gain defaults to about 6.6 intensity units per unit length
+at each ring's peak, with mapping `20*2^(16*(Gain-.5))`.
 
-The initial equal-geometric-mass partition was rejected after GPU comparison
-with V2: near a dark section of the ring, averaging a distant bright bin over a
-broad outer arc greatly overestimated illumination. V3 instead uses symmetric
-logarithmic angular spacing around the nearest ring point. This resolves both
-the near peak and the distant tail while retaining the fixed arc budget.
+## Lighting
+
+Uniform emission removes all spectrum textures, prefix sums, adaptive arcs and
+lighting-resolution controls. Each occupied froxel evaluates three closed forms:
 
 ```text
-rho = length(position.xy)
+rho = length(position.xy) in ring-local coordinates
 n = (R-rho)^2 + z^2 + a^2
 f = (R+rho)^2 + z^2 + a^2
-k = sqrt(n/f)
-s = 2*k
-theta(u) = sign(2*u-1) * s * ((1+pi/s)^abs(2*u-1) - 1)
-u = arc boundary index / arc count
+W = 2*pi*R / sqrt(n*f)
+source = scattering * sum(intensityRGB * W) / (4*pi)
 ```
 
-Here R is ring radius and a is positive source softening. Add the nearest-point
-angle to theta to obtain world ring angles. Each coarse arc uses V2's exact
-softened inverse-square geometric integral, multiplied by its average emission.
-Uniform emission remains exact for isotropic, unshadowed incident light (within
-floating-point precision). Arbitrary spectra are approximate: the average loses
-correlation between emission and distance within each coarse arc. Narrow bright
-bins contribute even when they fall between representative samples; they may
-still be spread or misweighted. Increasing LightingArcs improves resolution.
+This is the exact uniform-ring integral for the softened inverse-square model
+and isotropic phase. It does not include light-path attenuation or shadows.
+`Medium.Anisotropy` exposes the full HG range using the app's normalized control:
+0 maps to g=-1, .5 to g=0, and 1 to g=+1. The default is .8 (g=.6). Positive g favors forward
+light propagation, negative g backward scattering. Endpoints evaluate at
+g=+/-0.9999 because exact +/-1 are delta distributions.
 
-Surface lighting uses the same arcs, with one Lambert cosine per arc evaluated
-at its geometric-mass midpoint. This additionally approximates angular variation
-and horizon clipping within each arc. Neutral diffuse albedo varies from 0.35 to
-0.7 across instances. No specular, light-path attenuation, cast shadows, or
-multiple scattering is evaluated.
+For nonzero g, phase is averaged over the same eight inverse-square-weighted
+ring directions used by surface lighting. Each local segment evaluates this
+factor near closest approach and multiplies its analytic distance-peak integral.
+The HG factor is normalized relative to isotropic scattering; the existing
+1/(4*pi) remains applied once. g=0 bypasses angular evaluation. Surface Lambert
+lighting does not depend on medium anisotropy. Large |g| intentionally exposes
+the limits of this approximation: eight directions can miss narrow lobes or
+produce sharp brightness changes, and phase may vary across a local segment.
+The existing FP16 radiance clamp still applies to extreme peaks.
+Camera extinction still follows the sampled heterogeneous density.
+The medium has no spherical boundary or radial fade. Rendering still integrates
+only the camera grid's forward-depth range of 0..64 world units.
 
-## Rendering and controls
+Lighting is now integrated across each camera segment. A local tangent to each
+ring isolates the narrow `1/sqrt(distance^2+a^2)` term, whose segment integral
+uses an asinh difference. The far-distance factor is evaluated near closest
+approach. Curvature triggers 1..8 local pieces; this is a bounded approximation,
+not exact curved-ring ray integration. Scattering density is sampled once per
+froxel and held constant, as is extinction; the averaged lighting is multiplied
+by the existing exponential segment weight. Correlation between attenuation
+and lighting within a segment remains approximate. Raster composition evaluates
+the same integral over the visible partial segment. The source volume now
+stores material coefficients rather than pre-multiplied point lighting for V3.
 
-The existing volume injection and camera-column integration operate at
-`ceil(width/8) x ceil(height/8) x DepthSlices`. Material and lighting use the same
-animated depth sample. There is no temporal history. Full-resolution HDR raster
-color and depth are composited using integrated fog up to the surface, including
-analytic reconstruction of the final partial segment. Background pixels use the
-complete fog integral. The result is `fog + transmittance * surface`.
+This removes depth-jitter variation from lighting in a constant medium. Animated
+noise in heterogeneous density and the 8x screen grid can still produce grain.
+Softening is unchanged. New defaults use density .36 (mean extinction .07776),
+RGB albedo (.888,.840,.716), camera distance .232 (10.816 units), yaw .523 and pitch .561. Ring.Gain
+is .40: lower light gain balances the denser fog to preserve facet contrast.
 
-`Froxel3Effect.CloudOptions` / `Froxel3Options` expose:
+Surfaces approximate the Lambert cosine with eight equal-geometric-weight
+samples per ring. Inverse-CDF directions use precomputed tangent constants and
+rational identities; no runtime trigonometry is needed in that sample loop.
+This remains an approximation near horizons or sharp directional variations.
+There are no specular reflections, cast shadows, or visible emitter cores.
 
-| Control | Default / range |
-| --- | --- |
-| DepthSlices | 86 / 8..256 |
-| Instances | 1024 / 0..65535 |
-| LightingArcs | 8 / 4, 8, 16, 32 |
+## Geometry and controls
 
-Cloud shader controls use normalized 0..1 values, all defaulting to 0.5:
+The octahedra are distributed equally among three toroidal clouds around the
+rings. Their default orbit speeds are .08..16 radians/second and independent
+spins .15..4 radians/second. Full-resolution raster color/depth is composited
+with fog up to each surface, including the partial final volume segment.
 
-| Control | Mapping |
-| --- | --- |
-| Cloud.Speed | 0..2 times default motion; zero freezes geometry |
-| Cloud.Spread | Torus tube radius 0..3 world units, default 1.5 |
-| Cloud.Size | 0..2 times default object size (0.055..0.13 units) |
+`Froxel3Options` now contains only DepthSlices (8..256, default 256) and Instances
+(0..65535, default 4096). Screen resolution is reduced eightfold per axis for
+fog. The medium retains procedural noise and animated depth
+jitter without history. Cloud.Speed, Cloud.Spread and Cloud.Size retain their
+0..1 controls. Defaults are Speed=.057, Spread=.174 (tube radius .522), Size=.5 (sizes .055..13).
 
-The cloud follows the ring radius. Default orbital speeds are 0.08..0.16 rad/s,
-tube motion 0.12..0.22 rad/s, and spin 0.15..0.4 rad/s. Camera, medium, and ring
-controls retain V2's defaults. All motion is procedural, independent of audio
-amplitude; audio determines illumination.
+## Validation and profiling
 
-## Validation and timing
-
-GPU tests compare adaptive illumination with V2 for uniform light, a single
-narrow bin, alternating colors, and stereo imbalance, at 8 and 31 bands/channel.
-They cover near-ring points, the axis, the angular seam, linear intensity,
-convergence, and surface directions against independent Lambert quadrature.
-Lifecycle tests cover silence, motion, zero density, zero instances, invalid
-option rollback, audio resizing, canvas resizing, hot reload, and deactivation.
-Existing V1/V2 tests exercise the shared integration and composition paths.
+GPU tests compare the scalar ring integral with independent numerical
+integration, surface lighting with Lambert quadrature, and check intensity phase
+offsets, frozen lighting, audio independence, resize, invalid-option rollback,
+hot reload and deactivation. V1/V2 remain available as references.
 
 ```powershell
 dotnet build AEther.sln --no-restore
-dotnet run --project tools/AEther.MandelLightProfile -- --froxel3 AEther.Vortice/Shaders artifacts/froxel3
+dotnet run --project tools/AEther.MandelLightProfile -- --froxel3 AEther.Vortice/Shaders artifacts/froxel3-uniform
 ```
 
-Initial Intel Arc measurements at **1280x720**, eight warmup frames and medians
-of 21 GPU timestamp samples:
-
-| Configuration (otherwise 128 bands, 86 slices, 8 arcs, 1024 objects) | Total GPU ms |
-| --- | ---: |
-| Default | 1.65 |
-| 32 depth slices | 1.09 |
-| 128 depth slices | 2.06 |
-| 4 lighting arcs | 1.36 |
-| 16 lighting arcs | 2.02 |
-| 32 lighting arcs | 2.85 |
-| No objects | 1.30 |
-| 4096 objects | 2.15 |
-| 16 spectrum bands/channel | 1.82 |
-| 512 spectrum bands/channel | 1.87 |
-
-At the default, injection was about 0.46 ms, integration 0.54 ms, rasterization
-0.34 ms, and prefix preparation 0.013 ms. Prefix preparation rose to 0.041 ms
-at 512 bands. Totals include audio upload, composition, and output, excluding
-Present/readback. Clock variation and different spectrum patterns affect these
-measurements; they are not fixed performance guarantees.
-
-Preparation scales with spectrum width. Lighting scales with froxels or shaded
-fragments times LightingArcs, integration with froxel count, and geometry with
-instance count. V1 and the exact V2 source remain available for comparison.
+The profiler varies depth (32/86/128) and instances (0/1024/4096) at 1280x720.
+It uses eight warmup frames and medians of 21 GPU timestamp samples, excludes
+Present/readback and includes output composition. Initial Intel Arc default
+measurement was 1.87 ms total, with .70 ms injection, .57 ms integration and
+.28 ms rasterization. Clock variation was substantial across the matrix;
+these measurements do not establish a speedup over the former one-ring scene.
+With integrated peaks and close-up defaults, a later 720p run measured 1.62 ms total (.39 ms injection, .63 ms integration, .26 ms raster). Clock variation prevents direct speed comparisons. Lighting costs up to eight local pieces per ring and cell, independent of audio width;
+integration scales with froxel count and raster work with shaded fragments.
