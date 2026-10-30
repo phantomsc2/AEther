@@ -4,7 +4,6 @@ using System.ComponentModel.DataAnnotations;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Globalization.NumberFormatting;
 
 namespace AEther.WinUI;
 
@@ -126,7 +125,7 @@ internal sealed class OptionsEditor<T> where T : class
             Minimum = min, Maximum = max, Value = initial,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             SmallChange = powers ? initial / 2 : step, LargeChange = powers ? initial : step * 10,
-            NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : (property.Attributes[typeof(NumericPrecisionAttribute)] as NumericPrecisionAttribute)?.FractionDigits ?? 3 },
+            NumberFormatter = NumericEditor.Formatter(integral),
         };
         var slider = new Slider
         {

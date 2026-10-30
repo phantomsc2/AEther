@@ -3,6 +3,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace AEther.Vortice;
 
+public sealed record Froxel2Options(
+    [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 86);
+
 public sealed record FroxelOptions(
     [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 64,
     [property: Category("Sizes"), Range(0, 64), NumericScale(adaptive: true)] int PointLights = 4,

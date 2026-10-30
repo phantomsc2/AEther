@@ -10,6 +10,9 @@ FroxelLight EvaluateFroxelLight(uint index);
 FroxelMedium EvaluateFroxelMedium(float3 world);
 float FroxelLightTransmittance(float3 world, float3 light);
 float FroxelSourceRadius();
+#ifdef FROXEL_CUSTOM_SOURCE
+float3 EvaluateFroxelSource(float3 world, FroxelMedium medium);
+#endif
 
 RWStructuredBuffer<FroxelLight> FroxelLightOutput;
 StructuredBuffer<FroxelLight> FroxelLights;
@@ -51,10 +54,18 @@ void InjectFroxels(uint3 id : SV_DispatchThreadID)
     float3 ray = ProjectionDirection(camera, (id.xy+.5)/float2(FroxelWidth,FroxelHeight));
     float lo = FroxelSliceDepth(id.z), hi = FroxelSliceDepth(id.z+1);
     uint seed = id.x + 0x9e3779b9*id.y + 0x85ebca6b*id.z;
-    float z = lerp(lo,hi,FroxelRandom(seed));
+    float jitter = FroxelRandom(seed);
+#ifdef FROXEL_CUSTOM_SOURCE
+    // Low-discrepancy temporal rotation, no previous-frame image or persistent state.
+    jitter = frac(jitter + frac(floor(T*60)*.61803398875));
+#endif
+    float z = lerp(lo,hi,jitter);
     float3 world = ProjectionPosition(camera,ray,z);
     FroxelMedium medium = EvaluateFroxelMedium(world);
     float3 source = 0;
+#ifdef FROXEL_CUSTOM_SOURCE
+    if (any(medium.Scattering > 0)) source = EvaluateFroxelSource(world,medium);
+#else
     if (any(medium.Scattering > 0))
     [loop] for (uint i=0; i<FroxelLightCount; ++i)
     {
@@ -66,6 +77,7 @@ void InjectFroxels(uint3 id : SV_DispatchThreadID)
         source += medium.Scattering * FroxelPhase(cosine,medium.Anisotropy)
             * light.Intensity * FroxelLightTransmittance(world,light.Position) / (r2+radius*radius);
     }
+#endif
     // Saturate only at the storage format's limit, before float16 conversion.
     FroxelSourceOutput[id] = float4(min(source,65504),medium.Extinction);
 }
@@ -93,5 +105,7 @@ float3 FroxelRadiance(float2 uv)
 {
     return FroxelIntegrated.SampleLevel(FroxelSampler,float3(uv,1-.5/FroxelDepth),0).rgb;
 }
+#ifndef FROXEL_CUSTOM_SOURCE
 #include "FroxelRaster.hlsl"
+#endif
 #endif

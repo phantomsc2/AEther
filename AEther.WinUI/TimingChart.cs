@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -58,17 +59,44 @@ internal sealed class TimingChart : UserControl
         layout.Children.Add(plot);
         var legend = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) };
         legend.Children.Add(new TextBlock { Text = title, TextAlignment = TextAlignment.Center, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
-        foreach (var d in definitions)
+        var tokens = new TokenView { SelectionMode = ListViewSelectionMode.Multiple, IsWrapped = true,
+            CanRemoveTokens = false, HorizontalAlignment = HorizontalAlignment.Stretch };
+        for (int i = 0; i < definitions.Length; i++)
         {
-            var label = new TextBlock { Text = d.Name, FontSize = 11, TextAlignment = TextAlignment.Center, Foreground = new SolidColorBrush(d.Color) };
-            ToolTipService.SetToolTip(label, d.Description);
-            legend.Children.Add(label);
+            var d = definitions[i];
+            var label = new TextBlock { Text = d.Name, FontSize = 11 };
+            var token = new TokenItem { Content = label, Tag = i, Width = 88, IsRemoveable = false };
+            var fill = new SolidColorBrush(d.Color);
+            token.Resources["TokenItemBackgroundSelected"] = fill;
+            token.Resources["TokenItemBackgroundPointerOverSelected"] = fill;
+            token.Resources["TokenItemBackgroundPressedSelected"] = fill;
+            token.Resources["TokenItemBorderBrushSelected"] = fill;
+            token.Resources["TokenItemBorderBrushPointerOverSelected"] = fill;
+            token.Resources["TokenItemBorderBrushPressedSelected"] = fill;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(token, d.Name);
+            ToolTipService.SetToolTip(token, d.Description);
+            tokens.Items.Add(token);
+            tokens.SelectedItems.Add(token);
         }
+        tokens.SelectionChanged += (_, e) =>
+        {
+            foreach (TokenItem token in e.RemovedItems) SetVisible((int)token.Tag, false);
+            foreach (TokenItem token in e.AddedItems) SetVisible((int)token.Tag, true);
+        };
+        legend.Children.Add(tokens);
         Grid.SetColumn(legend, 2);
         layout.Children.Add(legend);
         Content = layout;
         plot.SizeChanged += (_, _) => { dirty = true; UpdateLabels(); };
         ActualThemeChanged += (_, _) => dirty = true;
+    }
+
+    void SetVisible(int index, bool visible)
+    {
+        traces[index].Visible = visible;
+        if (cache == null) return;
+        cache.SetVisible(index, visible);
+        if (!dirty) Render();
     }
 
     internal void Attach(PipelineProfile? next, long timestamp)
@@ -195,8 +223,12 @@ internal sealed class TimingChart : UserControl
         if (dirty || cache == null)
         {
             if (cache == null)
+            {
                 cache = new ScatterCache(width, height, LowerLimit ?? -3, UpperLimit ?? 2,
                     HistorySeconds, traces.Select(t => t.Color).ToArray(), ticks);
+                for (int i = 0; i < traces.Length; i++)
+                    if (!traces[i].Visible) cache.SetVisible(i, false);
+            }
             else cache.Reset(LowerLimit ?? -3, UpperLimit ?? 2, ticks);
             for (int i = 0; i < traces.Length; i++)
                 foreach (var point in traces[i].Points) cache.Add(i, point);
@@ -222,5 +254,6 @@ internal sealed class TimingChart : UserControl
         internal List<TimingSample> Incoming { get; } = new();
         internal TimingHistory? History;
         internal long Cursor;
+        internal bool Visible = true;
     }
 }

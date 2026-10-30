@@ -1,7 +1,6 @@
 using AEther.Vortice;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Globalization.NumberFormatting;
 
 namespace AEther.WinUI;
 
@@ -115,7 +114,13 @@ public sealed class ShaderPanel : UserControl
                 }
                 if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
             }
-            if (effect is FroxelEffect froxel)
+            if (effect is Froxel2Effect ring)
+            {
+                var editor = new OptionsEditor<Froxel2Options>(ring.DepthOptions, v => v with { }, ring.DefaultDepthOptions);
+                editor.Changed += (_, _) => ring.DepthOptions = editor.Options;
+                group.Children.Add(editor.Content);
+            }
+            else if (effect is FroxelEffect froxel)
             {
                 var editor = new OptionsEditor<FroxelOptions>(froxel.Options, v => v with { }, froxel.DefaultOptions);
                 editor.Changed += (_, _) => froxel.Options = editor.Options;
@@ -186,7 +191,7 @@ public sealed class ShaderPanel : UserControl
             Minimum = 0, Maximum = 1, SmallChange = .01, LargeChange = .1,
             Value = values.GetFloat(parameter),
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            NumberFormatter = new DecimalFormatter { FractionDigits = 3 },
+            NumberFormatter = NumericEditor.Formatter(),
         };
         var slider = new Slider { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = values.GetFloat(parameter) };
         bool updating = false;

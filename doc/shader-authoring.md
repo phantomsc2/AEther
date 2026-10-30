@@ -257,6 +257,14 @@ survive hot reload; use Reset defaults to load the complete new reference preset
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
 sample counts show grain; raising quality costs GPU time.
 
+## Froxel2 prototype
+
+`Froxel2` uses analytic continuous ring-arc lighting from the current stereo
+spectrum: left/right semicircles, low frequencies at the bottom, and RGB from
+S/T/B. It renders only scattered heterogeneous fog, with animated depth jitter,
+86 slices by default, and no surfaces. See [Froxel2](froxel2.md) for the source
+model, approximation boundaries, controls and profiling.
+
 ## Froxel1 prototype
 
 `Froxel1` is an audio-independent camera-aligned volumetric fog POC with animated

@@ -10,6 +10,7 @@ internal sealed class ScatterCache
     readonly double seconds;
     readonly int[] colors, background;
     readonly int[][] counts, halos;
+    readonly bool[] visible;
     internal int[] Pixels { get; }
 
     internal ScatterCache(int width, int height, double lower, double upper, double seconds, int[] colors, double[] ticks)
@@ -20,6 +21,8 @@ internal sealed class ScatterCache
         background = new int[height];
         counts = new int[colors.Length][];
         halos = new int[colors.Length][];
+        visible = new bool[colors.Length];
+        Array.Fill(visible, true);
         for (int i = 0; i < counts.Length; i++)
         {
             counts[i] = new int[Pixels.Length];
@@ -46,6 +49,15 @@ internal sealed class ScatterCache
     internal void Add(int trace, ScatterPoint point) => Change(trace, point, 1);
     internal void Remove(int trace, ScatterPoint point) => Change(trace, point, -1);
 
+    internal void SetVisible(int trace, bool value)
+    {
+        if (visible[trace] == value) return;
+        visible[trace] = value;
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                Compose(y * width + x, y);
+    }
+
     void Change(int trace, ScatterPoint point, int delta)
     {
         if (!double.IsFinite(point.Time) || !double.IsFinite(point.LogMilliseconds)
@@ -66,11 +78,16 @@ internal sealed class ScatterCache
         int count = occupancy[trace][index] + delta;
         if (count < 0) throw new InvalidOperationException("Expired scatter sample was not cached.");
         occupancy[trace][index] = count;
+        if (visible[trace]) Compose(index, y);
+    }
+
+    void Compose(int index, int y)
+    {
         // An opaque center always wins over any halo, including later traces.
         for (int i = counts.Length - 1; i >= 0; i--)
-            if (counts[i][index] != 0) { Pixels[index] = colors[i]; return; }
+            if (visible[i] && counts[i][index] != 0) { Pixels[index] = colors[i]; return; }
         for (int i = halos.Length - 1; i >= 0; i--)
-            if (halos[i][index] != 0)
+            if (visible[i] && halos[i][index] != 0)
             {
                 Pixels[index] = ScatterRaster.HaloOver(colors[i], background[y]);
                 return;

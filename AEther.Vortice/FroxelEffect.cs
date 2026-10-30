@@ -5,15 +5,17 @@ using Vortice.DXGI;
 namespace AEther.Vortice;
 
 /// <summary>Camera-aligned participating media, with independent lighting and column integration.</summary>
-public sealed class FroxelEffect : SceneEffect
+public class FroxelEffect : SceneEffect
 {
     FroxelOptions options;
     FroxelOptions? accepted;
     public FroxelOptions Options { get => Volatile.Read(ref options); set => Volatile.Write(ref options, value); }
     public FroxelOptions DefaultOptions { get; }
     public override object SizeOptions => Options;
-    readonly ShaderProgram lightsProgram, injectProgram, integrateProgram;
-    readonly FroxelRaster raster;
+    readonly ShaderProgram? lightsProgram;
+    readonly ShaderProgram injectProgram, integrateProgram;
+    readonly FroxelRaster? raster;
+    readonly bool customSource;
     readonly ID3D11Buffer constants;
     readonly ID3D11SamplerState sampler;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
@@ -23,19 +25,20 @@ public sealed class FroxelEffect : SceneEffect
     internal ID3D11Texture3D IntegratedTexture => integrated!.Texture;
 
     internal FroxelEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file,
-        FroxelOptions options) : base(name, device, context, source, file)
+        FroxelOptions options, bool customSource = false) : base(name, device, context, source, file)
     {
-        this.options = options; DefaultOptions = options;
+        this.options = options; DefaultOptions = options; this.customSource = customSource;
         try
         {
-            lightsProgram = new(device, source, "PrepareFroxelLights", file, "cs_5_0");
+            if (!customSource) lightsProgram = new(device, source, "PrepareFroxelLights", file, "cs_5_0");
             injectProgram = new(device, source, "InjectFroxels", file, "cs_5_0");
             integrateProgram = new(device, source, "IntegrateFroxels", file, "cs_5_0");
-            raster = new(device, context, source, file);
+            if (!customSource) raster = new(device, context, source, file);
             var available = FrameBindings.Concat(["FroxelConstants", "FroxelLights", "FroxelLightOutput",
                 "FroxelSource", "FroxelSourceOutput", "FroxelIntegrated", "FroxelIntegratedOutput", "FroxelSampler", "FroxelSurface", "FroxelSurfaceDepth"]);
-            foreach (var program in new[] { Display, lightsProgram, injectProgram, integrateProgram }) program.ValidateBindings(available);
-            Parameters = ShaderParameters.Merge(new[] { Display, lightsProgram, injectProgram, integrateProgram, raster.Geometry, raster.Surface }.Select(p => p.Parameters));
+            foreach (var program in new[] { Display, lightsProgram, injectProgram, integrateProgram }.OfType<ShaderProgram>()) program.ValidateBindings(available);
+            Parameters = ShaderParameters.Merge(new[] { Display, lightsProgram, injectProgram, integrateProgram, raster?.Geometry, raster?.Surface }
+                .OfType<ShaderProgram>().Select(p => p.Parameters));
             constants = device.CreateBuffer(16, BindFlags.ConstantBuffer);
             sampler = device.CreateSamplerState(new SamplerDescription
             {
@@ -65,7 +68,7 @@ public sealed class FroxelEffect : SceneEffect
                 nextSource = new(Device, dimensions);
                 nextIntegrated = new(Device, dimensions);
             }
-            if (lights == null || lights.Capacity != Math.Max(1, requested.PointLights))
+            if (!customSource && (lights == null || lights.Capacity != Math.Max(1, requested.PointLights)))
                 nextLights = new(Device, Math.Max(1, requested.PointLights));
         }
         catch { nextSource?.Dispose(); nextIntegrated?.Dispose(); nextLights?.Dispose(); throw; }
@@ -98,16 +101,16 @@ public sealed class FroxelEffect : SceneEffect
         Context.UpdateSubresource(new Vector4(Bits(width), Bits(height), Bits(depth), Bits(count)), constants);
         buffers["FroxelConstants"] = constants;
         samplers["FroxelSampler"] = sampler;
-        textures["FroxelLights"] = lights!.View;
+        if (lights != null) textures["FroxelLights"] = lights.View;
         textures["FroxelSource"] = source!.View;
         textures["FroxelIntegrated"] = integrated!.View;
-        outputs["FroxelLightOutput"] = lights.Output;
+        if (lights != null) outputs["FroxelLightOutput"] = lights.Output;
         outputs["FroxelSourceOutput"] = source.Output;
         outputs["FroxelIntegratedOutput"] = integrated.Output;
-        Run(lightsProgram, "Froxel lights", 1, 1, 1);
-        Run(injectProgram, "Froxel injection", (width+7)/8, (height+7)/8, depth);
+        if (lightsProgram != null) Run(lightsProgram, "Froxel lights", 1, 1, 1);
+        Run(injectProgram, customSource ? "Froxel ring injection" : "Froxel injection", (width+7)/8, (height+7)/8, depth);
         Run(integrateProgram, "Froxel integration", (width+7)/8, (height+7)/8, 1);
-        raster.Draw(frame, parameters, accepted.Instances, buffers, textures, samplers);
+        raster?.Draw(frame, parameters, accepted.Instances, buffers, textures, samplers);
 
         void Run(ShaderProgram program, string marker, int x, int y, int z)
         {

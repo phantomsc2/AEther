@@ -33,6 +33,10 @@ Allocation defaults and live values are typed C# options, outside HLSL Parameter
 PointLights is 0..64 (default four). Width and height always follow the canvas,
 rounded upward after division by eight. See [Froxel1](froxel1.md).
 
+`Froxel2Effect.DepthOptions` accepts `Froxel2Options` with only DepthSlices
+(8..256, default 86). It shares the volume allocator but has no point-light or
+surface resources. Spectrum width supplies the ring's arc count automatically.
+
 | Option | Meaning/default |
 | --- | --- |
 | Fluid Width/Height | Velocity, material and pressure grid; 512x512 |

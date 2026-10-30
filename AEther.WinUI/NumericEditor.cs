@@ -1,11 +1,22 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Windows.Globalization.NumberFormatting;
 
 namespace AEther.WinUI;
 
 internal static class NumericEditor
 {
+    public static DecimalFormatter Formatter(bool integral = false) => new()
+    {
+        FractionDigits = integral ? 0 : 3,
+        NumberRounder = new IncrementNumberRounder
+        {
+            Increment = integral ? 1 : 0.001,
+            RoundingAlgorithm = RoundingAlgorithm.RoundHalfUp,
+        },
+    };
+
     public static Grid Create(string name, NumberBox number, Slider slider)
     {
         var row = new Grid { ColumnSpacing = 8 };
