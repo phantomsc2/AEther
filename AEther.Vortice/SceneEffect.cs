@@ -106,6 +106,7 @@ public sealed class FluidEffect : SceneEffect
     FluidOptions options;
     FluidOptions? accepted;
     public FluidOptions Options { get => Volatile.Read(ref options); set => Volatile.Write(ref options, value); }
+    public FluidOptions DefaultOptions { get; }
     public override object SizeOptions => Options;
     internal FluidSimulation? Simulation { get; private set; }
     internal FluidSimulation.Programs Programs { get; }
@@ -114,6 +115,7 @@ public sealed class FluidEffect : SceneEffect
         FluidOptions options, params Format[] materials) : base(name, device, context, source, file)
     {
         this.options = options;
+        DefaultOptions = options;
         try
         {
             Programs = new(device, source, file, Display, materials);
@@ -164,6 +166,7 @@ public sealed class RasterEffect : SceneEffect
     RasterOptions options;
     RasterOptions? accepted;
     public RasterOptions Options { get => Volatile.Read(ref options); set => Volatile.Write(ref options, value); }
+    public RasterOptions DefaultOptions { get; }
     public override object SizeOptions => Options;
     internal RasterLight? Raster { get; private set; }
     readonly RasterLight.Programs programs;
@@ -172,6 +175,7 @@ public sealed class RasterEffect : SceneEffect
         RasterOptions options) : base(name, device, context, source, file)
     {
         this.options = options;
+        DefaultOptions = options;
         try
         {
             programs = new(device, source, file);

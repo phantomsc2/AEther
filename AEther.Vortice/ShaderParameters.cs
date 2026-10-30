@@ -126,6 +126,22 @@ public sealed class ShaderParameters
         }
     }
     public void Reset() { lock (SyncRoot) { defaults.CopyTo(Data, 0); version++; } }
+    public void Reset(ShaderParameter parameter)
+    {
+        lock (SyncRoot)
+        {
+            bool changed = false;
+            foreach (var leaf in Leaves([parameter]))
+            {
+                var value = defaults.AsSpan(leaf.Offset, 4);
+                var target = Data.AsSpan(leaf.Offset, 4);
+                if (value.SequenceEqual(target)) continue;
+                value.CopyTo(target);
+                changed = true;
+            }
+            if (changed) version++;
+        }
+    }
     internal static IEnumerable<ShaderParameter> Leaves(IEnumerable<ShaderParameter> items) =>
         items.SelectMany(p => p.Children.Count == 0 ? [p] : Leaves(p.Children));
     public void Restore(ShaderParameters previous)

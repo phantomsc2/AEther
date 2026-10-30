@@ -100,13 +100,13 @@ public sealed class ShaderPanel : UserControl
             var group = new StackPanel { Spacing = 4 };
             if (effect is FluidEffect fluid)
             {
-                var editor = new OptionsEditor<FluidOptions>(fluid.Options, v => v with { });
+                var editor = new OptionsEditor<FluidOptions>(fluid.Options, v => v with { }, fluid.DefaultOptions);
                 editor.Changed += (_, _) => fluid.Options = editor.Options;
                 group.Children.Add(editor.Content);
             }
             if (effect is RasterEffect raster)
             {
-                var editor = new OptionsEditor<RasterOptions>(raster.Options, v => v with { });
+                var editor = new OptionsEditor<RasterOptions>(raster.Options, v => v with { }, raster.DefaultOptions);
                 editor.Changed += (_, _) => raster.Options = editor.Options;
                 group.Children.Add(editor.Content);
             }
@@ -137,6 +137,11 @@ public sealed class ShaderPanel : UserControl
             var checkbox = new CheckBox { Content = parameter.Name, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
             checkbox.Checked += (_, _) => values.SetBoolean(parameter, true);
             checkbox.Unchecked += (_, _) => values.SetBoolean(parameter, false);
+            ParameterMenu.Attach(checkbox, () =>
+            {
+                values.Reset(parameter);
+                checkbox.IsChecked = values.GetBoolean(parameter);
+            });
             return checkbox;
         }
         var number = new NumberBox
@@ -144,7 +149,7 @@ public sealed class ShaderPanel : UserControl
             Minimum = 0, Maximum = 1, SmallChange = .01, LargeChange = .1,
             Value = values.GetFloat(parameter),
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            NumberFormatter = new DecimalFormatter { FractionDigits = 4 },
+            NumberFormatter = new DecimalFormatter { FractionDigits = 3 },
         };
         var slider = new Slider { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = values.GetFloat(parameter) };
         bool updating = false;
@@ -164,6 +169,13 @@ public sealed class ShaderPanel : UserControl
         };
         var row = NumericEditor.Create(parameter.Name, number, slider);
         row.Tag = parameter.Path;
+        ParameterMenu.Attach(row, () =>
+        {
+            values.Reset(parameter);
+            updating = true;
+            try { number.Value = slider.Value = values.GetFloat(parameter); }
+            finally { updating = false; }
+        });
         return row;
     }
 }

@@ -26,6 +26,7 @@ public sealed class MainWindow : Window
     readonly SemaphoreSlim sessionGate = new(1, 1);
     readonly DispatcherTimer reloadTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly DispatcherTimer timingTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    readonly DispatcherTimer analyzerEditTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     readonly Func<SampleSource>? createSource;
     readonly string? shaderDirectory;
     readonly SettingsStore? settingsStore;
@@ -132,9 +133,18 @@ public sealed class MainWindow : Window
             }
         };
         settings.InputChanged += async (_, _) => await RestartCoreAsync(preserveGraphics: true);
-        audio.SettingsChanged += async (_, _) =>
+        audio.SettingsChanged += (_, _) =>
         {
             analyzerSettingsDirty = true;
+            // Invalidate queued restarts and prevent an older generation from saving
+            // over edits that are still settling in the controls.
+            restartVersion++;
+            analyzerEditTimer.Stop();
+            analyzerEditTimer.Start();
+        };
+        analyzerEditTimer.Tick += async (_, _) =>
+        {
+            analyzerEditTimer.Stop();
             await RestartCoreAsync(preserveGraphics: true);
         };
         graphics.SettingsChanged += (_, _) =>
@@ -245,6 +255,7 @@ public sealed class MainWindow : Window
 
     async Task RestartCoreAsync(bool preserveGraphics)
     {
+        analyzerEditTimer.Stop();
         if (closing || !loaded) return;
         var version = ++restartVersion;
         await sessionGate.WaitAsync();
@@ -550,6 +561,7 @@ public sealed class MainWindow : Window
     {
         if (closing) return;
         closing = true;
+        analyzerEditTimer.Stop();
         UpdateRendering();
         timingTimer.Stop();
         await sessionGate.WaitAsync();

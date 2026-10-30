@@ -10,13 +10,13 @@ namespace AEther.WinUI;
 public sealed class FrameTimeView : UserControl
 {
     internal const int HistorySeconds = 7;
-    readonly TimingChart processing = new(
+    readonly TimingChart processing = new("Processing",
     [
         ("analysis.processing_ms", "Analysis", Color.FromArgb(255, 70, 185, 140), "One batch from processing entry through completed output preparation, before subscriber callbacks."),
         ("render.draw_cpu_ms", "Render", Color.FromArgb(255, 170, 115, 225), "Frame preparation and draw submission before Present."),
         ("gpu.frame_ms", "GPU", Color.FromArgb(255, 235, 170, 60), "Execution measured by GPU timestamps, placed at the original frame time."),
     ]);
-    readonly TimingChart scheduling = new(
+    readonly TimingChart scheduling = new("Scheduling",
     [
         ("render.frame_interval_ms", "Frame", Color.FromArgb(255, 70, 160, 230), "Interval between render starts."),
         ("capture.queue_ms", "Queue", Color.FromArgb(255, 70, 185, 140), "Capture callback handoff entry through input copying and queue wait to analyzer dequeue, once per packet."),
@@ -45,11 +45,11 @@ public sealed class FrameTimeView : UserControl
     public FrameTimeView(Window owner)
     {
         this.owner = owner;
-        var grid = new Grid();
+        var grid = new Grid { RowSpacing = 8 };
         grid.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
-        AddPanel(processing, "Processing", 0);
-        AddPanel(scheduling, "Scheduling", 1);
+        AddPanel(processing, 0);
+        AddPanel(scheduling, 1);
         Content = grid;
         refresh.Tick += (_, _) =>
         {
@@ -62,16 +62,10 @@ public sealed class FrameTimeView : UserControl
         Loaded += (_, _) => refresh.Start();
         Unloaded += (_, _) => refresh.Stop();
 
-        void AddPanel(TimingChart chart, string title, int row)
+        void AddPanel(TimingChart chart, int row)
         {
-            var panel = new Grid();
-            panel.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            panel.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
-            panel.Children.Add(new TextBlock { Text = title, Margin = new Thickness(8, 2, 0, 0) });
-            Grid.SetRow(chart, 1);
-            panel.Children.Add(chart);
-            Grid.SetRow(panel, row);
-            grid.Children.Add(panel);
+            Grid.SetRow(chart, row);
+            grid.Children.Add(chart);
         }
     }
 

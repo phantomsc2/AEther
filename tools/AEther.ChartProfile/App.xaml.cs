@@ -27,6 +27,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        if (Environment.GetCommandLineArgs().Contains("--precision-check")) { PrecisionProbe.Start(this); return; }
         if (Environment.GetCommandLineArgs().Contains("--hub"))
         {
             new HubProfile(this).Start();

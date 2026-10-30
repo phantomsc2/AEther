@@ -21,6 +21,7 @@ internal sealed class TimingChart : UserControl
     readonly Canvas secondBars = new() { IsHitTestVisible = false };
     readonly Grid plot = new();
     readonly string metric;
+    readonly TimingScale scaleBounds = new();
     WriteableBitmap? bitmap;
     int[] pixels = [];
     ScatterCache? cache;
@@ -40,7 +41,7 @@ internal sealed class TimingChart : UserControl
     internal long UpdateCount { get; private set; }
     internal long CompletedUpdates { get; private set; }
 
-    internal TimingChart((string Metric, string Name, Color Color, string Description)[] definitions)
+    internal TimingChart(string title, (string Metric, string Name, Color Color, string Description)[] definitions)
     {
         traces = definitions.Select(d => new Trace(d.Metric, d.Name, d.Color)).ToArray();
         metric = definitions[0].Name == "Analysis" ? "chart.processing_update_ms" : "chart.scheduling_update_ms";
@@ -55,10 +56,11 @@ internal sealed class TimingChart : UserControl
         plot.Children.Add(image);
         Grid.SetColumn(plot, 1);
         layout.Children.Add(plot);
-        var legend = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+        var legend = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) };
+        legend.Children.Add(new TextBlock { Text = title, TextAlignment = TextAlignment.Center, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
         foreach (var d in definitions)
         {
-            var label = new TextBlock { Text = d.Name, FontSize = 11, Foreground = new SolidColorBrush(d.Color) };
+            var label = new TextBlock { Text = d.Name, FontSize = 11, TextAlignment = TextAlignment.Center, Foreground = new SolidColorBrush(d.Color) };
             ToolTipService.SetToolTip(label, d.Description);
             legend.Children.Add(label);
         }
@@ -77,6 +79,7 @@ internal sealed class TimingChart : UserControl
         lost = 0;
         latestTime = 0;
         LowerLimit = UpperLimit = null;
+        scaleBounds.Reset();
         ticks = [];
         foreach (var trace in traces)
         {
@@ -92,7 +95,7 @@ internal sealed class TimingChart : UserControl
     {
         long start = Stopwatch.GetTimestamp();
         bool received = false;
-        double min = LowerLimit ?? double.PositiveInfinity, max = UpperLimit ?? double.NegativeInfinity;
+        double min = double.PositiveInfinity, max = double.NegativeInfinity;
         for (int traceIndex = 0; traceIndex < traces.Length; traceIndex++)
         {
             var trace = traces[traceIndex];
@@ -108,8 +111,7 @@ internal sealed class TimingChart : UserControl
                 var point = new ScatterPoint(time, Math.Log10(sample.Milliseconds));
                 trace.Points.Add(point);
                 cache?.Add(traceIndex, point);
-                min = Math.Min(min, point.LogMilliseconds);
-                max = Math.Max(max, point.LogMilliseconds);
+
             }
             if (unordered) trace.Points.Sort((a, b) => a.Time.CompareTo(b.Time));
             int expired = 0;
@@ -122,19 +124,20 @@ internal sealed class TimingChart : UserControl
                 trace.Points.RemoveRange(0, expired);
             }
         }
+        foreach (var trace in traces)
+            foreach (var point in trace.Points)
+            {
+                min = Math.Min(min, point.LogMilliseconds);
+                max = Math.Max(max, point.LogMilliseconds);
+            }
         if (!received && !dirty && traces.All(t => t.Points.Count == 0)) return;
         latestTime = now;
-        if (double.IsFinite(min))
+        if (scaleBounds.Update(min, max, now))
         {
-            double lower = Math.Floor(min), upper = Math.Ceiling(max);
-            if (upper <= lower) upper = lower + 1;
-            if (lower != LowerLimit || upper != UpperLimit)
-            {
-                LowerLimit = lower; UpperLimit = upper;
-                dirty = true;
-                ticks = Enumerable.Range((int)lower, (int)(upper - lower) + 1).Select(i => (double)i).ToArray();
-                UpdateLabels();
-            }
+            LowerLimit = scaleBounds.Lower; UpperLimit = scaleBounds.Upper;
+            dirty = true;
+            ticks = TimingScale.Ticks(LowerLimit!.Value, UpperLimit!.Value);
+            UpdateLabels();
         }
         profile?.Elapsed(metric.Replace("_update_ms", "_prepare_ms"), start);
         long rasterStart = Stopwatch.GetTimestamp();
@@ -158,9 +161,9 @@ internal sealed class TimingChart : UserControl
             int step = Math.Max(1, (int)Math.Ceiling(ticks.Length / Math.Max(2, height / 18)));
             for (int i = 0; i < ticks.Length; i += step)
             {
-                var label = new TextBlock { Text = Math.Pow(10, ticks[i]).ToString("G3", CultureInfo.CurrentCulture), FontSize = 11 };
+                var label = new TextBlock { Text = Math.Pow(10, ticks[i]).ToString("G3", CultureInfo.CurrentCulture), FontSize = 11, Width = 60, TextAlignment = TextAlignment.Center };
                 Canvas.SetTop(label, Math.Clamp((upper - ticks[i]) / (upper - lower) * height - 7, 0, Math.Max(0, height - 14)));
-                Canvas.SetLeft(label, 4);
+                Canvas.SetLeft(label, 0);
                 yLabels.Children.Add(label);
             }
         }
@@ -191,8 +194,10 @@ internal sealed class TimingChart : UserControl
         }
         if (dirty || cache == null)
         {
-            cache = new ScatterCache(width, height, LowerLimit ?? -3, UpperLimit ?? 2,
-                HistorySeconds, traces.Select(t => t.Color).ToArray(), ticks);
+            if (cache == null)
+                cache = new ScatterCache(width, height, LowerLimit ?? -3, UpperLimit ?? 2,
+                    HistorySeconds, traces.Select(t => t.Color).ToArray(), ticks);
+            else cache.Reset(LowerLimit ?? -3, UpperLimit ?? 2, ticks);
             for (int i = 0; i < traces.Length; i++)
                 foreach (var point in traces[i].Points) cache.Add(i, point);
         }

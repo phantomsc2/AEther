@@ -198,10 +198,23 @@ internal static partial class Program
                                 audioScroll.ChangeView(null, audioScroll.ScrollableHeight, null, true);
                                 shaderScroll.ChangeView(null, shaderScroll.ScrollableHeight, null, true);
                                 var number = Descendants(shaderPanel.Content).OfType<NumberBox>().First();
-                                number.Value = .75;
+                                if (((Windows.Globalization.NumberFormatting.DecimalFormatter)number.NumberFormatter).FractionDigits != 3)
+                                    throw new Exception("Shader numeric controls must use three fractional digits.");
                                 var row = (FrameworkElement)VisualTreeHelper.GetParent(VisualTreeHelper.GetParent(number));
-                                editedPath = (string)row.Tag;
                                 var values = current.Renderer.ActiveShader!.Effects[0].Parameters!;
+                                var parameter = Find(values, (string)row.Tag);
+                                var defaultValue = values.GetFloat(parameter);
+                                number.Value = defaultValue == .75f ? .25 : .75;
+                                ResetParameter(row);
+                                if (values.GetFloat(parameter) != defaultValue || number.Value != defaultValue
+                                    || LogicalChildren(row).OfType<Slider>().Single().Value != defaultValue)
+                                    throw new Exception("Shader reset must restore the compiled default and both numeric controls.");
+                                number.Value = .3125;
+                                if (values.GetFloat(Find(values, (string)row.Tag)) != .3125f)
+                                    throw new Exception("Shader parameter lost precision during editing.");
+                                if (number.Value != .3125) throw new Exception("Shader numeric formatting changed the underlying precise value.");
+                                number.Value = .75;
+                                editedPath = (string)row.Tag;
                                 if (values.GetFloat(Find(values, (string)row.Tag)) != .75f)
                                     throw new Exception("Numeric editor did not update the shader.");
                                 var scenes = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
@@ -223,6 +236,10 @@ internal static partial class Program
                                 var spectrum = current.Renderer.ActiveShader!.Effects[0].Parameters!;
                                 if (spectrum.GetBoolean(Find(spectrum, "ShowS")))
                                     throw new Exception("Checkbox did not update the shader.");
+                                ResetParameter(checkbox);
+                                if (checkbox.IsChecked != true || !spectrum.GetBoolean(Find(spectrum, "ShowS")))
+                                    throw new Exception("Shader boolean reset must use the compiled default.");
+                                checkbox.IsChecked = false; // Retain a non-default value for the restart checks below.
                                 beforeWatch = current.Renderer.ActiveShader;
                                 if (added != null) File.WriteAllText(added, "float4 PS(PSin i):SV_TARGET { return float4(0.2,0.3,0.4,1); }");
                                 canvasWindow.AppWindow.Resize(new SizeInt32(800, 600));
@@ -284,10 +301,17 @@ internal static partial class Program
                                 eventLog.Toggle();
                                 stage++;
                                 if (added != null) File.Delete(added);
-                                Descendants(settings.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "Input gain (dB)").Value += 1;
+                                var gainEditor = Descendants(settings.Content).OfType<NumberBox>()
+                                    .Single(n => AutomationProperties.GetName(n) == "Input gain (dB)");
+                                gainEditor.Value += 1;
+                                gainEditor.Value += 1;
+                                gainEditor.Value += 1;
+                                if (started != 1) throw new Exception("Rapid numeric edits must wait for the settling interval.");
                                 break;
                             case 5:
                                 if (started != 2 || Field<RenderWorker?>("renderWorker") == null) return;
+                                if (current.Analyzer.Options.InputGainDb != audio.Options.InputGainDb)
+                                    throw new Exception("Coalesced audio edits must apply the latest value in a single restart.");
                                 if (added != null && current.Renderer.Scenes.Any(s => s.Name == "WatcherProbe")) return;
                                 if (added != null && Descendants(settings.Content).OfType<ComboBox>()
                                     .Single(c => c.Name == "Scene").Items.Contains("WatcherProbe"))
@@ -413,8 +437,8 @@ internal static partial class Program
 
     static void CheckResourceSizeEditors()
     {
-        var fluid = new OptionsEditor<AEther.Vortice.FluidOptions>(new(), v => v with { });
-        var raster = new OptionsEditor<AEther.Vortice.RasterOptions>(new(), v => v with { });
+        var fluid = new OptionsEditor<AEther.Vortice.FluidOptions>(new(), v => v with { }, new());
+        var raster = new OptionsEditor<AEther.Vortice.RasterOptions>(new(), v => v with { }, new());
         void Check(DependencyObject root, string name, double value, double expectedSlider)
         {
             var row = LogicalChildren(root).OfType<Grid>().Single(g => g.Tag as string == name);

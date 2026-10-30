@@ -9,7 +9,7 @@ public sealed class AudioPanel : UserControl
     public event EventHandler? SettingsChanged;
     public AudioPanel(AnalyzerOptions? options = null)
     {
-        editor = new(options?.Copy() ?? new(), value => value.Copy());
+        editor = new(options?.Copy() ?? new(), value => value.Copy(), new());
         Content = editor.Content;
         editor.Changed += (_, _) => SettingsChanged?.Invoke(this, EventArgs.Empty);
     }

@@ -12,13 +12,13 @@ namespace AEther.WinUI;
 internal sealed class OptionsEditor<T> where T : class
 {
     readonly Func<T, T> copy;
-    readonly List<Action> refresh = [];
+    readonly Dictionary<PropertyDescriptor, Action> refresh = [];
     bool refreshing;
     public T Options { get; private set; }
     public StackPanel Content { get; } = new() { Spacing = 4 };
     public event EventHandler? Changed;
 
-    public OptionsEditor(T options, Func<T, T> copy)
+    public OptionsEditor(T options, Func<T, T> copy, T defaults)
     {
         Options = options;
         this.copy = copy;
@@ -32,6 +32,8 @@ internal sealed class OptionsEditor<T> where T : class
             editor.Tag = property.Name;
             AutomationProperties.SetName(editor, property.DisplayName);
             if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
+            var defaultValue = property.GetValue(defaults)!;
+            ParameterMenu.Attach(editor, () => Set(property, defaultValue));
             return editor;
         }
         foreach (var property in groups.Where(g => g.Key == defaultCategory).SelectMany(g => g))
@@ -61,15 +63,20 @@ internal sealed class OptionsEditor<T> where T : class
         if (refreshing || Equals(property.GetValue(Options), value)) return;
         var next = copy(Options);
         property.SetValue(next, value);
+        // Include aliases changed by a setter, without rewriting unrelated controls.
+        var changed = refresh.Where(pair => !Equals(pair.Key.GetValue(Options), pair.Key.GetValue(next)))
+            .Select(pair => pair.Value).ToArray();
         Options = next;
-        Refresh();
+        Refresh(changed);
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    void Refresh()
+    void Refresh() => Refresh(refresh.Values);
+
+    void Refresh(IEnumerable<Action> actions)
     {
         refreshing = true;
-        try { foreach (var action in refresh) action(); }
+        try { foreach (var action in actions) action(); }
         finally { refreshing = false; }
     }
 
@@ -79,7 +86,7 @@ internal sealed class OptionsEditor<T> where T : class
         {
             var toggle = new ToggleSwitch { IsOn = (bool)property.GetValue(Options)! };
             toggle.Toggled += (_, _) => Set(property, toggle.IsOn);
-            refresh.Add(() => toggle.IsOn = (bool)property.GetValue(Options)!);
+            refresh.Add(property, () => toggle.IsOn = (bool)property.GetValue(Options)!);
             return LabeledControl.Create(property.DisplayName, toggle);
         }
         if (property.PropertyType.IsEnum)
@@ -96,7 +103,7 @@ internal sealed class OptionsEditor<T> where T : class
             {
                 if (combo.SelectedItem is ComboBoxItem item) Set(property, item.Tag);
             };
-            refresh.Add(() => combo.SelectedItem = combo.Items.OfType<ComboBoxItem>()
+            refresh.Add(property, () => combo.SelectedItem = combo.Items.OfType<ComboBoxItem>()
                 .FirstOrDefault(item => Equals(item.Tag, property.GetValue(Options))));
             return LabeledControl.Create(property.DisplayName, combo);
         }
@@ -119,7 +126,7 @@ internal sealed class OptionsEditor<T> where T : class
             Minimum = min, Maximum = max, Value = initial,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             SmallChange = powers ? initial / 2 : step, LargeChange = powers ? initial : step * 10,
-            NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : 12 },
+            NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : (property.Attributes[typeof(NumericPrecisionAttribute)] as NumericPrecisionAttribute)?.FractionDigits ?? 3 },
         };
         var slider = new Slider
         {
@@ -139,13 +146,14 @@ internal sealed class OptionsEditor<T> where T : class
             }
             finally { updating = false; }
         }
-        refresh.Add(() => Display(Convert.ToDouble(property.GetValue(Options))));
+        refresh.Add(property, () => Display(Convert.ToDouble(property.GetValue(Options))));
         void Apply(double value)
         {
             if (updating || refreshing || !double.IsFinite(value)) return;
             value = Normalize(value);
-            Display(value);
-            Set(property, Convert.ChangeType(value, property.PropertyType));
+            var normalized = Convert.ChangeType(value, property.PropertyType);
+            if (Equals(property.GetValue(Options), normalized)) Display(value);
+            else Set(property, normalized);
         }
         SliderCommit.Bind(slider, value =>
         {

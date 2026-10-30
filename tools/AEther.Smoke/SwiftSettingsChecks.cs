@@ -9,10 +9,21 @@ using AEther.WinUI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 
 internal static partial class Program
 {
+    static void ResetParameter(FrameworkElement row)
+    {
+        var item = ((MenuFlyout)row.ContextFlyout).Items.OfType<MenuFlyoutItem>().Single();
+        if (item.Text != "Reset to default" || item.Icon is not SymbolIcon)
+            throw new Exception("Parameters must expose the native reset command with an icon.");
+        var peer = new MenuFlyoutItemAutomationPeer(item);
+        ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
+    }
+
     sealed class CategoryProbeOptions
     {
         [Category("Zebra")] public bool Grouped { get; set; }
@@ -69,7 +80,7 @@ internal static partial class Program
             {
                 try
                 {
-                    var categoryEditor = new OptionsEditor<CategoryProbeOptions>(new(), value => value.Copy());
+                    var categoryEditor = new OptionsEditor<CategoryProbeOptions>(new(), value => value.Copy(), new());
                     var categoryChildren = categoryEditor.Content.Children.ToArray();
                     var topLevel = categoryChildren.Take(2).Select(AutomationProperties.GetName).ToArray();
                     if (!topLevel.ToHashSet().SetEquals(new[] { "Plain", "ExplicitMisc" }))
@@ -92,11 +103,20 @@ internal static partial class Program
                         .Single(n => AutomationProperties.GetName(n) == "SWIFT width (octaves)");
                     if (restoredWidth.Value != 1 || restored.Options.SwiftWidthScale != 2)
                         throw new Exception("Restored analyzer settings were not reflected in the editor.");
+                    var restoredRow = LogicalChildren((DependencyObject)restored.Content).OfType<Grid>()
+                        .Single(g => g.Tag as string == "SwiftWidthOctaves");
+                    int restoredChanges = 0;
+                    restored.SettingsChanged += (_, _) => restoredChanges++;
+                    ResetParameter(restoredRow);
+                    if (restoredWidth.Value != 0 || restored.Options.SwiftWidthScale != 1 || restoredChanges != 1)
+                        throw new Exception("Reset must restore the declared default, not the loaded session value.");
+                    ResetParameter(restoredRow);
+                    if (restoredChanges != 1) throw new Exception("Resetting an unchanged value must not publish an edit.");
                     var elements = LogicalChildren((DependencyObject)settings.Content).ToArray();
                     var graphics = new GraphicsPanel();
                     var graphicsRows = ((StackPanel)graphics.Content).Children.ToArray();
-                    if (graphicsRows.Length != 2 || graphicsRows.Any(row => row is Expander)
-                        || !graphicsRows.Select(AutomationProperties.GetName).ToHashSet().SetEquals(new[] { "HistorySeconds", "Peak emphasis" }))
+                    if (graphicsRows.Length != 3 || graphicsRows.Any(row => row is Expander)
+                        || !graphicsRows.Select(AutomationProperties.GetName).ToHashSet().SetEquals(new[] { "HistorySeconds", "Peak emphasis", "Exposure" }))
                         throw new Exception("Graphics options must be top-level controls.");
                     var graphicsElements = LogicalChildren((DependencyObject)graphics.Content).ToArray();
                     var history = graphicsElements.OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "HistorySeconds");
@@ -169,6 +189,15 @@ internal static partial class Program
                     toggle.IsOn = true;
                     if (!settings.Options.UseSwift)
                         throw new Exception("Backend toggle did not update its option.");
+                    toggle.IsOn = false;
+                    ResetParameter(elements.OfType<Grid>().Single(g => g.Tag as string == "UseSwift"));
+                    if (!settings.Options.UseSwift || !toggle.IsOn)
+                        throw new Exception("Reset must synchronize boolean options and controls.");
+                    window.SelectedIndex = (window.SelectedIndex + 1) % window.Items.Count;
+                    ResetParameter(elements.OfType<Grid>().Single(g => g.Tag as string == "WindowFunction"));
+                    if (settings.Options.WindowFunction != new AEther.AnalyzerOptions().WindowFunction
+                        || ((ComboBoxItem)window.SelectedItem).Tag is not AEther.DFTWindow.Hann)
+                        throw new Exception("Reset must synchronize enum options and controls.");
                     finished = true;
                 }
                 catch (Exception error) { failure = error; }

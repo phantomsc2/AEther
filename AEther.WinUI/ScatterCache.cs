@@ -6,7 +6,8 @@ namespace AEther.WinUI;
 internal sealed class ScatterCache
 {
     readonly int width, height;
-    readonly double lower, upper, seconds;
+    double lower, upper;
+    readonly double seconds;
     readonly int[] colors, background;
     readonly int[][] counts, halos;
     internal int[] Pixels { get; }
@@ -24,6 +25,16 @@ internal sealed class ScatterCache
             counts[i] = new int[Pixels.Length];
             halos[i] = new int[Pixels.Length];
         }
+        Reset(lower, upper, ticks);
+    }
+
+    internal void Reset(double lower, double upper, double[] ticks)
+    {
+        this.lower = lower; this.upper = upper;
+        Array.Clear(Pixels);
+        Array.Clear(background);
+        foreach (var row in counts) Array.Clear(row);
+        foreach (var row in halos) Array.Clear(row);
         foreach (double tick in ticks)
         {
             int y = Math.Clamp((int)((upper - tick) / (upper - lower) * (height - 1)), 0, height - 1);

@@ -10,7 +10,7 @@ public sealed class GraphicsPanel : UserControl
     public event EventHandler? SettingsChanged;
     public GraphicsPanel()
     {
-        editor = new(new GraphicsOptions(), value => value with { });
+        editor = new(new GraphicsOptions(), value => value with { }, new());
         Content = editor.Content;
         editor.Changed += (_, _) => SettingsChanged?.Invoke(this, EventArgs.Empty);
     }
