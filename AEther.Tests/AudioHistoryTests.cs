@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using AEther.Vortice;
 using NUnit.Framework;
@@ -7,6 +8,59 @@ namespace AEther.Tests;
 
 public class AudioHistoryTests
 {
+    [TestCase(50), TestCase(150)]
+    public void HandoffRecordsEveryAcceptedRowBeforePresentationDelay(long renderMs)
+    {
+        var clock = new HistoryClock { Milliseconds = 30 };
+        var profile = new PipelineProfile();
+        var timings = profile.Track("render.analysis_handoff_ms", 16);
+        var history = new AudioHistory(1, 100, presentationDelay: .2, timeProvider: clock) { Profile = profile };
+        history.Post(LiveRow(0, 10, 15, 30), 1);
+        clock.Milliseconds = 35;
+        history.Post(LiveRow(1, 20, 25, 35), 1);
+        clock.Milliseconds = renderMs;
+        history.Advance(renderMs / 1000.0);
+        var samples = new List<TimingSample>();
+        long cursor = 0;
+        timings.ReadSince(ref cursor, samples);
+        Assert.That(samples.Select(sample => sample.Milliseconds),
+            Is.EqualTo(new double[] { renderMs - 30, renderMs - 35 }).Within(1e-6));
+        Assert.That(samples.Select(sample => sample.Timestamp), Is.All.EqualTo(AudioClock.Now(clock)));
+        Assert.That(history.LatestSourceTimestamp, Is.Null, "Presentation scheduling must not postpone handoff samples.");
+        clock.Milliseconds = 300;
+        history.Advance(.25);
+        timings.ReadSince(ref cursor, samples);
+        Assert.That(samples, Is.Empty, "Existing rows must not repeat handoff points.");
+    }
+
+    [Test]
+    public void HandoffSkipsRejectedOfflineMissingAndFutureCompletionRows()
+    {
+        var clock = new HistoryClock { Milliseconds = 50 };
+        var profile = new PipelineProfile();
+        var timings = profile.Track("render.analysis_handoff_ms", 16);
+        var history = new AudioHistory(1, 100, timeProvider: clock) { Profile = profile };
+        history.Post(LiveRow(1, 50, 50, 0), 1); // Missing completion.
+        history.Post(LiveRow(0, 10, 15, 20), 1); // Rejected out-of-order row.
+        history.Post(LiveRow(2, 60, 50, 55), 1); // Future completion.
+        history.Post(new(new double[4], 4, DateTime.UnixEpoch) { AnalysisRow = 3, AnalysisTimestamp = 1 }, 1);
+        history.Advance(.05);
+        var samples = new List<TimingSample>();
+        long cursor = 0;
+        timings.ReadSince(ref cursor, samples);
+        Assert.That(samples, Is.Empty);
+    }
+    static SampleEvent<double> LiveRow(long row, long endMs, long captureMs, long completedMs) =>
+        new(new double[4], 4, DateTime.UnixEpoch)
+        {
+            AnalysisRow = row,
+            SampleStartTimestamp = AudioClock.ConvertTimestamp(endMs - 10, 1000),
+            SampleEndTimestamp = AudioClock.ConvertTimestamp(endMs, 1000),
+            CaptureTimestamp = AudioClock.ConvertTimestamp(captureMs, 1000),
+            AnalysisTimestamp = AudioClock.ConvertTimestamp(completedMs, 1000),
+            TimestampQuality = AudioTimestampQuality.Estimated,
+        };
+
     [TestCase(0), TestCase(.5), TestCase(1)]
     public void DiagnosticChannelsFollowSpectrumAggregationAndExpiry(double aggregation)
     {

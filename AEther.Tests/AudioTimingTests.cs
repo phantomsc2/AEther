@@ -12,8 +12,14 @@ public class AudioTimingTests
     sealed class Clock : TimeProvider
     {
         public double Milliseconds = 1000;
+        public double ReadStep;
         public override long TimestampFrequency => 10_000_000;
-        public override long GetTimestamp() => (long)Math.Round(Milliseconds * 10000);
+        public override long GetTimestamp()
+        {
+            var timestamp = (long)Math.Round(Milliseconds * 10000);
+            Milliseconds += ReadStep;
+            return timestamp;
+        }
     }
     static long Ms(double value) => AudioClock.ConvertTimestamp((long)Math.Round(value * 10000), 10_000_000);
     static readonly SampleFormat Format = new(SampleType.Float32.Instance, 8000, 1);
@@ -29,6 +35,39 @@ public class AudioTimingTests
         var result = new List<SampleEvent<double>>();
         analyzer.SamplesAnalyzed += (_, e) => result.Add(e with { Samples = e.Samples.AsSpan(0, e.SampleCount).ToArray() });
         return result;
+    }
+
+    [Test]
+    public async Task NativeProcessingAndQueueSamplesUseHostClockBeforeSubscribersWithoutRenderer()
+    {
+        var clock = new Clock();
+        var analyzer = new Analyzer(Format, Options(), clock);
+        var processing = analyzer.Profile.Track("analysis.processing_ms");
+        var queue = analyzer.Profile.Track("capture.queue_ms");
+        var completed = new List<long>();
+        analyzer.SamplesAnalyzed += (_, output) =>
+        {
+            completed.Add(output.AnalysisTimestamp);
+            clock.Milliseconds += 100; // Slow subscriber must not inflate batch processing.
+        };
+        analyzer.PostSampleSpan(Audio(80));
+        analyzer.PostSampleSpan(Audio(160));
+        clock.Milliseconds = 1050;
+        clock.ReadStep = .25;
+        analyzer.Stop();
+        await analyzer.Completion;
+        long cursor = 0;
+        var samples = new List<TimingSample>();
+        processing.ReadSince(ref cursor, samples);
+        Assert.That(samples, Has.Count.EqualTo(3), "One sample per analysis batch, without a renderer.");
+        Assert.That(samples.Select(sample => sample.Timestamp), Is.EqualTo(completed));
+        Assert.That(samples.Select(sample => sample.Milliseconds), Is.All.InRange(.25, 10));
+        cursor = 0;
+        queue.ReadSince(ref cursor, samples);
+        Assert.That(samples, Has.Count.EqualTo(2), "One sample per input packet.");
+        Assert.That(samples.Select(sample => sample.Milliseconds),
+            Is.EqualTo(samples.Select(sample => AudioClock.Seconds(sample.Timestamp - Ms(1000)) * 1000)).Within(.001));
+        Assert.That(samples[1].Milliseconds, Is.GreaterThan(samples[0].Milliseconds + 100));
     }
 
     [Test]

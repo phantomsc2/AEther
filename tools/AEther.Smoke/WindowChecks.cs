@@ -178,7 +178,9 @@ internal static partial class Program
                                     throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
                                 if (current.Analyzer.Progress.Latest.Gpu == null) return;
                                 if (!settings.Columns.Children.Contains(backlog) || Grid.GetColumn(backlog) != 2 || Grid.GetRow(backlog) != 0
-                                    || !backlog.CurveNames.SequenceEqual(new[] { "Total", "CPU", "GPU", "Input" }))
+                                    || !backlog.CurveNames.SequenceEqual(new[] { "Analysis", "Render", "GPU", "Frame", "Queue", "Handoff", "Pacing" })
+                                    || Math.Abs(backlog.Processing.ActualHeight - backlog.Scheduling.ActualHeight) > 1
+                                    || backlog.Content is not Grid timingRows || timingRows.RowDefinitions.Count != 2)
                                     throw new Exception("The frame-time graph must occupy the right live-view pane.");
                                 var shaderGroups = LogicalChildren((DependencyObject)shaderPanel.Content).OfType<Expander>().ToArray();
                                 if (!shaderGroups.Any(g => g.Header?.ToString() == "Geometry"))

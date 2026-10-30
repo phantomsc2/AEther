@@ -197,7 +197,8 @@ namespace AEther
                 await foreach (var packet in Input.Reader.ReadAllAsync())
                 {
                     var input = packet.Event;
-                    Profile.Record("capture.queue_ms", AudioClock.Seconds(AudioClock.Now(Clock) - packet.Arrival) * 1000);
+                    var dequeued = AudioClock.Now(Clock);
+                    Profile.Record("capture.queue_ms", AudioClock.Seconds(dequeued - packet.Arrival) * 1000, dequeued);
                     try
                     {
                         var offset = 0;
@@ -355,6 +356,7 @@ namespace AEther
         void AnalyzeBatch(DateTime time, long row, long captureTimestamp, long? start, long? end,
             AudioTimestampQuality quality, AudioStreamClock? streamClock, SourceWatermark? progress)
         {
+            var processingStart = AudioClock.Now(Clock);
             using var totalTiming = Profile.Measure("analysis.total_ms");
             var samples = RentEvent<double>(BatchSize, Format.ChannelCount, time);
             var spectrum = RentEvent<Complex>(Domain.Length, Format.ChannelCount, time);
@@ -423,9 +425,12 @@ namespace AEther
                     SampleIndex = row * BatchSize, AnalysisRow = row,
                     StreamClock = streamClock,
                     SourceWatermark = progress,
-                    CaptureTimestamp = captureTimestamp, AnalysisTimestamp = AudioClock.Now(Clock),
+                    CaptureTimestamp = captureTimestamp,
                     SampleStartTimestamp = start, SampleEndTimestamp = end, TimestampQuality = quality,
                     DiscontinuityGeneration = Interlocked.Read(ref generation) };
+                var completed = AudioClock.Now(Clock);
+                output = output with { AnalysisTimestamp = completed };
+                Profile.Record("analysis.processing_ms", AudioClock.Seconds(completed - processingStart) * 1000, completed);
                 Profile.Record("analysis.capture_to_completion_ms", AudioClock.Seconds(AudioClock.Now(Clock) - captureTimestamp) * 1000);
                 if (end.HasValue) Profile.Record("analysis.source_age_ms", AudioClock.Seconds(AudioClock.Now(Clock) - end.Value) * 1000);
                 if (lastQuality != quality) Profile.Describe("Timestamp quality", quality.ToString());

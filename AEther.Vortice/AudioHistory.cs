@@ -245,6 +245,13 @@ public sealed class AudioHistory
             // Upload rows as soon as they arrive, even ahead of a delayed presentation
             // cursor. Visibility and live envelopes are selected separately below.
             if (!Store(row)) continue;
+            // One native sample per accepted row, before presentation scheduling.
+            if (row.Completed != 0)
+            {
+                long accepted = AudioClock.Now(timeProvider);
+                if (accepted >= row.Completed)
+                    Profile?.Record("render.analysis_handoff_ms", AudioClock.Seconds(accepted - row.Completed) * 1000, accepted);
+            }
             scheduled.Enqueue(row);
             while (scheduled.Count > handoffRows) { scheduled.Dequeue(); DropRows(1); }
         }

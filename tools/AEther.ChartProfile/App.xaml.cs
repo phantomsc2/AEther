@@ -52,7 +52,7 @@ public partial class App : Application
         window.AppWindow.ResizeClient(new SizeInt32(1280, 720));
         view.Attach(profile);
         const double inputRate = 60;
-        long generated = 0;
+        long generated = 0, analyzed = 0;
         var origin = Stopwatch.GetTimestamp() - (long)(windowSeconds * Stopwatch.Frequency);
         void GenerateUntil(long timestamp)
         {
@@ -63,8 +63,16 @@ public partial class App : Application
                 profile.Record("render.frame_interval_ms", duration, time);
                 profile.Record("render.draw_cpu_ms", .6 + .15 * Math.Sin(generated * .17), time);
                 profile.Record("gpu.frame_ms", 2.5 + .5 * Math.Sin(generated * .13), time);
-                profile.Record("capture.input_age_ms", 12 + 3 * Math.Sin(generated * .11), time);
+                profile.Record("capture.queue_ms", .02 + .01 * Math.Sin(generated * .11), time);
+                profile.Record("render.pacing_wait_ms", 12 + 3 * Math.Sin(generated * .11), time);
                 generated++;
+            }
+            while (origin + (long)(analyzed * Stopwatch.Frequency / 1000.0) <= timestamp)
+            {
+                var time = origin + (long)(analyzed * Stopwatch.Frequency / 1000.0);
+                profile.Record("analysis.processing_ms", analyzed % 2000 == 0 ? 3 : .08 + .02 * Math.Sin(analyzed * .17), time);
+                profile.Record("render.analysis_handoff_ms", .3 + .1 * Math.Sin(analyzed * .11), time);
+                analyzed++;
             }
         }
         GenerateUntil(Stopwatch.GetTimestamp());
@@ -93,9 +101,17 @@ public partial class App : Application
                 var seconds = watch.Elapsed.TotalSeconds - 3;
                 if (view.PointCount < windowSeconds * 60 - 5 || view.LostSamples != 0 || view.CompletedUpdates - initialUpdates < Math.Max(1, 5 * refreshRate))
                     throw new Exception($"Chart stalled or lost samples: {view.PointCount} points, {view.CompletedUpdates} draws, {view.LostSamples} lost.");
-                if (view.CpuPointCount != view.PointCount || view.GpuPointCount != view.PointCount
-                    || view.InputLagPointCount != view.PointCount)
-                    throw new Exception("CPU, GPU and input-lag series must retain every synthetic frame sample.");
+                if (view.RenderPointCount != view.PointCount || view.GpuPointCount != view.PointCount
+                    || view.AnalysisPointCount < windowSeconds * 1000 - 20
+                    || view.SchedulingPointCounts[2] != view.AnalysisPointCount
+                    || view.SchedulingPointCounts.Where((count, index) => index != 2).Any(count => count != view.PointCount))
+                    throw new Exception("All native frame and 1000 Hz analysis/handoff samples must be retained, including sub-millisecond values.");
+                if (!view.CurveNames.SequenceEqual(new[] { "Analysis", "Render", "GPU", "Frame", "Queue", "Handoff", "Pacing" })
+                    || Math.Abs(view.Processing.ActualHeight - view.Scheduling.ActualHeight) > 1
+                    || view.Processing.PresentTime != view.Scheduling.PresentTime
+                    || view.Processing.LowerLimit >= -1 || view.Scheduling.LowerLimit >= -1
+                    || view.Processing.UpperLimit < Math.Log10(3) || view.Scheduling.UpperLimit < Math.Log10(40))
+                    throw new Exception("Expected equal-height aligned charts with automatic sub-millisecond ranges and retained spike ranges.");
                 if (layout && (analysis!.ActualWidth > settings!.ActualWidth * .6 || view.ActualWidth < 100
                     || settings.AudioColumn.TransformToVisual(settings).TransformPoint(default).Y < analysis.ActualHeight))
                     throw new Exception("Expected audio/video views above their respective control columns.");
@@ -104,7 +120,7 @@ public partial class App : Application
                 profile.Describe("Chart DIPs", $"{view.ActualWidth:0}x{view.ActualHeight:0}");
                 profile.Describe("Rasterization scale", view.XamlRoot.RasterizationScale.ToString());
                 profile.Describe("Library", "LiveCharts2 2.0.4, default CPU Skia rendering");
-                profile.Describe("Workload", $"{windowSeconds} seconds; synthetic 60 Hz frame intervals with periodic spikes; chart updates at {refreshRate} Hz");
+                profile.Describe("Workload", $"{windowSeconds} seconds; synthetic 60 Hz frames and 1000 Hz analysis/handoff with periodic spikes; chart updates at {refreshRate} Hz");
                 profile.Describe("Points", view.PointCount.ToString());
                 profile.Describe("Plotted points", view.PlottedPointCount.ToString());
                 profile.Describe("Completed chart updates/s", ((view.CompletedUpdates - initialUpdates) / seconds).ToString("F2"));
@@ -123,6 +139,12 @@ public partial class App : Application
                 encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
                     (uint)image.PixelWidth, (uint)image.PixelHeight, 96, 96, pixels.ToArray());
                 await encoder.FlushAsync();
+                view.Attach(new PipelineProfile());
+                if (view.PlottedPointCount != 0 || view.LostSamples != 0
+                    || view.Processing.LowerLimit != null || view.Processing.UpperLimit != null
+                    || view.Scheduling.LowerLimit != null || view.Scheduling.UpperLimit != null
+                    || view.Processing.PresentTime != 0 || view.Scheduling.PresentTime != 0)
+                    throw new Exception("Profile replacement must reset both charts and their expanded ranges.");
                 window.Close();
                 Exit();
             }
