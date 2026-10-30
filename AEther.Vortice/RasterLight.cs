@@ -12,7 +12,7 @@ internal sealed class RasterLight : IDisposable
     {
         readonly List<IDisposable> owned = [];
         internal readonly ShaderProgram Lights, Surface, Airlight, LookupPrepare, LookupBuild, LookupCommit;
-        internal readonly RasterGeometry.Programs Geometry;
+        internal readonly ShaderProgram Geometry;
         internal Programs(ID3D11Device device, string source, string file)
         {
             try
@@ -23,11 +23,15 @@ internal sealed class RasterLight : IDisposable
                 Lights = Own(new ShaderProgram(device, source, "PreparePointLights", file, "cs_5_0"));
                 Surface = Own(new ShaderProgram(device, source, "RasterSurfacePS", file));
                 Airlight = Own(new ShaderProgram(device, source, "RasterAirlightPS", file));
-                Geometry = Own(new RasterGeometry.Programs(device, source, file));
+                Geometry = Own(new ShaderProgram(device, source, "RasterGeometryVS", file, "vs_5_0"));
+                var available = SceneEffect.FrameBindings.Concat(["RasterConstants", "PointLights", "PointLightOutput",
+                    "RasterSurface", "RasterDepth", "RasterAirlight", "RasterAirlightLut", "RasterLookupState",
+                    "RasterLutSampler", "RasterLookupOutput", "RasterLookupOutputState"]);
+                foreach (var shader in owned.OfType<ShaderProgram>()) shader.ValidateBindings(available);
             }
             catch { Dispose(); throw; }
         }
-        internal IEnumerable<ShaderParameters?> ParameterLayouts => owned.OfType<ShaderProgram>().Select(p => p.Parameters).Append(Geometry.Vertex.Parameters);
+        internal IEnumerable<ShaderParameters?> ParameterLayouts => owned.OfType<ShaderProgram>().Select(p => p.Parameters);
         T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
         public void Dispose() { for (int i = owned.Count - 1; i >= 0; i--) owned[i].Dispose(); owned.Clear(); }
     }
@@ -37,6 +41,7 @@ internal sealed class RasterLight : IDisposable
     AirlightLookup? lookup;
     readonly List<IDisposable> owned = [];
 
+    readonly ID3D11Buffer constants;
     readonly ID3D11DepthStencilState depthState;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [], lookupOutputs = [];
     readonly Dictionary<string, ID3D11ShaderResourceView> textures = [];
@@ -49,13 +54,14 @@ internal sealed class RasterLight : IDisposable
     Programs? lookupPrograms;
     internal Action<string, bool>? PassMarker { get; set; }
     internal ID3D11SamplerState LookupSampler => lookup!.Sampler;
-    internal SceneSizes AllocatedSizes { get; private set; }
+    internal RasterOptions AllocatedSizes { get; private set; } = new();
 
     internal RasterLight(ID3D11Device device, ID3D11DeviceContext context)
     {
         this.device = device; this.context = context;
         try
         {
+            constants = Own(device.CreateBuffer(16, BindFlags.ConstantBuffer));
             depthState = Own(device.CreateDepthStencilState(new DepthStencilDescription
             {
                 DepthEnable = true, DepthWriteMask = DepthWriteMask.All,
@@ -67,7 +73,7 @@ internal sealed class RasterLight : IDisposable
     }
     T Own<T>(T resource) where T : IDisposable { owned.Add(resource); return resource; }
 
-    internal void Configure(SceneSizes sizes)
+    internal void Configure(RasterOptions sizes)
     {
         if (lights != null && sizes == AllocatedSizes) return;
         LightBuffer? nextLights = null;
@@ -102,6 +108,7 @@ internal sealed class RasterLight : IDisposable
         LightCount = sizes.PointLights;
         AllocatedSizes = sizes;
         outputs["PointLightOutput"] = lights!.Output;
+        context.UpdateSubresource(new System.Numerics.Vector4(BitConverter.UInt32BitsToSingle(LightCount), 0, 0, 0), constants);
     }
 
     sealed class LightBuffer : IDisposable
@@ -137,6 +144,7 @@ internal sealed class RasterLight : IDisposable
         IReadOnlyDictionary<string, ID3D11SamplerState> sceneSamplers)
     {
         passBuffers.Clear(); foreach (var pair in buffers) passBuffers[pair.Key] = pair.Value;
+        passBuffers["RasterConstants"] = constants;
         textures.Clear(); foreach (var pair in sceneTextures) textures[pair.Key] = pair.Value;
         textures["PointLights"] = lights!.View;
         textures["RasterAirlightLut"] = lookup!.View;
@@ -173,14 +181,18 @@ internal sealed class RasterLight : IDisposable
         context.CSSetUnorderedAccessView(0, null); context.CSSetUnorderedAccessView(1, null);
         context.CSSetShaderResources(0, ShaderProgram.EmptyViews); context.CSSetShader(null);
         Mark("Raster lights prepare", false);
-        program.Geometry.Vertex.Bind(context, p, passBuffers, textures, samplers);
+        program.Geometry.Bind(context, p, passBuffers, textures, samplers);
         program.Surface.Bind(context, p, passBuffers, textures, samplers);
         context.OMSetBlendState(null); context.OMSetDepthStencilState(depthState);
         context.RSSetViewport(0, 0, surface!.Width, surface.Height);
         context.ClearRenderTargetView(surface!.Color!, new(0, 0, 0, 0));
         context.ClearDepthStencilView(depth!.Depth!, DepthStencilClearFlags.Depth, 1, 0);
         context.OMSetRenderTargets(surface.Color!, depth.Depth);
-        Mark("Raster surface", true); RasterGeometry.Draw(context, AllocatedSizes.Vertices, AllocatedSizes.Instances); Mark("Raster surface", false);
+        Mark("Raster surface", true);
+        context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+        if (AllocatedSizes.Vertices != 0 && AllocatedSizes.Instances != 0)
+            context.DrawInstanced(AllocatedSizes.Vertices, AllocatedSizes.Instances, 0, 0);
+        Mark("Raster surface", false);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         context.OMSetDepthStencilState(null);
         textures["RasterDepth"] = depth.View;
@@ -188,6 +200,8 @@ internal sealed class RasterLight : IDisposable
         sceneTextures["RasterAirlight"] = air!.View; sceneTextures["PointLights"] = lights!.View;
         sceneTextures["RasterAirlightLut"] = lookup!.View; sceneTextures["RasterLookupState"] = lookup!.State;
     }
+    internal ID3D11Buffer Constants => constants;
+
     internal void IntegrateAirlight(Programs program, ShaderParameters? p)
     {
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);

@@ -26,10 +26,10 @@ internal static partial class Program
     static void CheckShaderAuthoring(IntPtr window, string shaders, string output)
     {
         using var renderer = new Renderer(window, 320, 180, 64, 256, shaderDirectory: shaders);
-        var expected = Directory.GetFiles(Path.Combine(shaders, "Scenes"), "*.hlsl")
-            .Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal);
+        var expected = SceneDefinition.Defaults.Where(d => File.Exists(Path.Combine(shaders, "Scenes", d.Name + ".hlsl")))
+            .Select(d => d.Name).Order(StringComparer.Ordinal);
         if (!renderer.Scenes.Select(s => s.Name).Order(StringComparer.Ordinal).SequenceEqual(expected))
-            throw new Exception("Discovered scenes do not match the scene files.");
+            throw new Exception("Registered scenes do not match the available sources.");
         foreach (var scene in renderer.Scenes)
         {
             renderer.SelectScene(scene.Name); Seed(renderer); renderer.Render(false);
@@ -41,7 +41,8 @@ internal static partial class Program
         if (renderer.ReadPixels().Length != 300 * 170 * 4) throw new Exception("Resize failed.");
 
         // No source parser: nested defaults, bool storage, vector packing and binding slots are all reflected.
-        var path = Path.Combine(shaders, "Scenes", "AuthoringProbe.hlsl");
+        var path = Path.Combine(shaders, "Scenes", "Spectrum.hlsl");
+        var originalSource = File.ReadAllText(path);
         const string initial = """
             struct Settings { float Gain; bool Enabled; float3 Tint; };
             cbuffer Parameters : register(b7) { Settings Controls = { 0.25, true, float3(0.2, 0.4, 0.6) }; };
@@ -49,8 +50,8 @@ internal static partial class Program
             """;
         File.WriteAllText(path, initial);
         if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-        renderer.SelectScene("AuthoringProbe");
-        var parameters = renderer.ActiveShader!.Parameters!;
+        renderer.SelectScene("Spectrum");
+        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         if (Math.Abs(parameters.GetFloat(Find(parameters, "Controls.Gain")) - .25f) > 1e-6
             || !parameters.GetBoolean(Find(parameters, "Controls.Enabled"))) throw new Exception("Reflected defaults are incorrect.");
         parameters.SetFloat(Find(parameters, "Controls.Gain"), .75f);
@@ -65,7 +66,7 @@ internal static partial class Program
         File.WriteAllText(path, initial.Replace("float Gain; bool Enabled; float3 Tint;", "float3 Tint; bool Enabled; float Gain;")
             .Replace("0.25, true, float3(0.2, 0.4, 0.6)", "float3(0.2, 0.4, 0.6), true, 0.25").Replace("register(b7)", "register(b4)"));
         if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-        parameters = renderer.ActiveShader!.Parameters!;
+        parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         if (parameters.GetFloat(Find(parameters, "Controls.Gain")) != .75f) throw new Exception("Reordering lost parameter values.");
         renderer.Render(false);
         if (!visible.SequenceEqual(renderer.ReadPixels(false))) throw new Exception("Reordered buffer changed rendering.");
@@ -84,12 +85,14 @@ internal static partial class Program
         }
         File.WriteAllText(path, initial);
         if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
-        parameters = renderer.ActiveShader!.Parameters!; parameters.Reset();
+        parameters = renderer.ActiveShader!.Effects[0].Parameters!; parameters.Reset();
         if (parameters.GetFloat(Find(parameters, "Controls.Gain")) != .25f) throw new Exception("Reset did not use source defaults.");
         File.Delete(path);
-        if (!renderer.ReloadShaders() || renderer.Scenes.Any(s => s.Name == "AuthoringProbe") || renderer.ActiveShader != null)
+        if (!renderer.ReloadShaders() || renderer.Scenes.Any(s => s.Name == "Spectrum") || renderer.ActiveShader != null)
             throw new Exception("Deleting the active scene failed to clear selection.");
-        Console.WriteLine("Shader authoring: scene discovery, GPU output, nested defaults, vectors, bools, nonstandard slots, reordered layout, reload rollback, reset, add/remove and resize passed.");
+        File.WriteAllText(path, originalSource);
+        if (!renderer.ReloadShaders()) throw new Exception(renderer.ShaderError);
+        Console.WriteLine("Shader authoring: explicit scene setup, GPU output, nested defaults, vectors, bools, nonstandard slots, reordered layout, reload rollback, reset, source removal and resize passed.");
     }
 
 }

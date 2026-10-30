@@ -1,8 +1,8 @@
 # Procedural raster geometry
 
-RasterGeometry submits one non-indexed triangle-list DrawInstanced call.
-The scene declares default (vertices per instance, instance count) in
-`uint2 Parameters.Sizes.Geometry`; the backend owns the live counts.
+The raster effect submits one non-indexed triangle-list DrawInstanced call.
+C# RasterOptions declares default vertices per instance and instance count;
+the owning effect maintains live counts.
 See [resource sizes](resource-sizes.md).
 
 Include Common/RasterGeometry.hlsl and implement:

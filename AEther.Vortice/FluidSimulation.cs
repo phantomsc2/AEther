@@ -46,18 +46,20 @@ internal sealed class FluidSimulation : IDisposable
         internal readonly Dictionary<Pass, ShaderProgram> Shaders = [];
         internal readonly Format[] MaterialFormats;
         internal readonly Settings Configuration;
-        internal Programs(ID3D11Device device, string source, string file, ShaderProgram display)
+        internal Programs(ID3D11Device device, string source, string file, ShaderProgram display, Format[] materialFormats)
         {
             try
             {
-                bool material = MaterialNames.Any(display.Uses);
+                bool material = materialFormats.Length != 0;
                 foreach (var pass in Enum.GetValues<Pass>())
                 {
                     if (!material && pass is Pass.PredictMaterial or Pass.UpdateMaterial) continue;
                     Shaders.Add(pass, new ShaderProgram(device, source, pass.ToString(), file));
                 }
                 Configuration = new(display.Parameters ?? Shaders.Values.Select(p => p.Parameters).FirstOrDefault(p => p != null));
-                MaterialFormats = material ? ReadLayout(Shaders[Pass.UpdateMaterial]) : [];
+                MaterialFormats = materialFormats;
+                if (material && !MaterialFormats.SequenceEqual(ReadLayout(Shaders[Pass.UpdateMaterial])))
+                    throw new InvalidOperationException($"{file}: material outputs must match the explicit attachment formats.");
                 if (material && (!MaterialFormats.SequenceEqual(ReadLayout(Shaders[Pass.PredictMaterial]))
                     || !Shaders[Pass.UpdateMaterial].Outputs.OrderBy(o => o.SemanticIndex).Select(o => o.UsageMask)
                         .SequenceEqual(Shaders[Pass.PredictMaterial].Outputs.OrderBy(o => o.SemanticIndex).Select(o => o.UsageMask))))
@@ -66,6 +68,11 @@ internal sealed class FluidSimulation : IDisposable
                     for (int i = MaterialFormats.Length; i < 8; i++)
                         if (shader.Uses(MaterialNames[i]) || shader.Uses(PredictionNames[i]))
                             throw new InvalidOperationException($"{file}: material attachment {i} has no matching SV_Target output.");
+                var available = SceneEffect.FrameBindings.Concat(MaterialNames.Take(materialFormats.Length))
+                    .Concat(PredictionNames.Take(materialFormats.Length))
+                    .Concat(["FluidConstants", "FluidVelocity", "Velocity", "Advected", "Pressure", "Rhs", "Correction",
+                        "FluidSampler", "ClampFluid", "PressureSampler"]);
+                foreach (var shader in Shaders.Values) shader.ValidateBindings(available);
                 if (material && PredictionNames.Any(Shaders[Pass.PredictMaterial].Uses))
                     throw new InvalidOperationException($"{file}: PredictMaterial cannot read its own FluidPredicted outputs.");
             }
@@ -164,16 +171,16 @@ internal sealed class FluidSimulation : IDisposable
 
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
     Surface Create(int w, int h, Format format) => Own(new Surface(device, w, h, format));
-    internal bool CompatibleWith(Programs next, SceneSizes sizes) => Width == sizes.FluidWidth && Height == sizes.FluidHeight
+    internal bool CompatibleWith(Programs next, FluidOptions sizes) => Width == sizes.Width && Height == sizes.Height
         && materialFormats.SequenceEqual(next.MaterialFormats);
 
-    internal FluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, Programs programs, SceneSizes sizes)
+    internal FluidSimulation(ID3D11Device device, ID3D11DeviceContext context, int width, int height, Programs programs, FluidOptions sizes)
     {
         this.device = device; this.context = context; this.programs = programs;
         Aspect = width / (float)height;
 
         materialFormats = programs.MaterialFormats;
-        int w = sizes.FluidWidth, h = sizes.FluidHeight;
+        int w = sizes.Width, h = sizes.Height;
         try
         {
             constants = Own(device.CreateBuffer(48, BindFlags.ConstantBuffer));

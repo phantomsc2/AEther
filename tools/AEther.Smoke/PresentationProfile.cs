@@ -92,7 +92,7 @@ internal static partial class Program
                         renderer.FixedFluidMaterialCadence = args.Contains("--fixed-fluid-material");
                         if (args.Contains("--fast") && scene == "MandelFluid")
                         {
-                            var parameters = renderer.ActiveShader!.Parameters!;
+                            var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
                             var fluid = parameters.Items.Single(p => p.Name == "Fluid");
                             foreach (var setting in new[] { ("EmissionVelocity", 1f), ("VelocityGain", .75f), ("Curl", .75f) })
                                 parameters.SetFloat(fluid.Children.Single(p => p.Name == setting.Item1), setting.Item2);

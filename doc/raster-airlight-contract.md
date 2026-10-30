@@ -1,6 +1,6 @@
 # Raster geometry, point lights and airlight
 
-`RasterGeometry` and `RasterLight` are the single procedural raster system.
+`RasterEffect` owns the procedural raster system and its `RasterLight` backend.
 MandelLight uses it. Geometry, camera and point-light construction belong to
 scene HLSL; C# owns allocations, bindings, dispatches and draws.
 
@@ -13,13 +13,12 @@ PointLight EvaluateLight(uint index);
 // PointLight: float3 Position; float3 Intensity;
 ```
 
-The final PS requests the backend by sampling `RasterSurface`. It can also use
-`RasterDepth` and `RasterAirlight`. No separate light backend or shadow capability
-is selected. `Sizes.PointLights` supplies the authoritative total count.
-PreparePointLights writes that many 24-byte records in groups of 64. The CPU
-submits geometry directly using Sizes.Geometry. Surface and integration entry
-points are RasterSurfacePS and RasterAirlightPS.
-See [resource sizes](resource-sizes.md).
+C# scene setup explicitly constructs the raster effect. Its final PS can sample
+`RasterSurface`, `RasterDepth` and `RasterAirlight`. RasterOptions.PointLights is
+the authoritative count, uploaded as `PointLightCount` in `RasterConstants`.
+PreparePointLights writes 24-byte records in groups of 64. The CPU submits geometry
+using RasterOptions.Vertices/Instances. Surface and integration entry points are
+RasterSurfacePS and RasterAirlightPS. See [resource sizes](resource-sizes.md).
 
 ## Medium
 
@@ -46,7 +45,7 @@ camera ray using the same extinction and depth distance.
 | `RasterSurface` | RGBA32F unattenuated surface radiance |
 | `RasterDepth` | R32F camera depth, cleared to one |
 | `RasterAirlight` | RGBA32F homogeneous single-scattering radiance |
-| `PointLights` | GPU point records; count is a reflected setup value |
+| `PointLights` | GPU point records; count comes from C# options |
 | `RasterAirlightLut`, `RasterLutSampler` | Shared RGB integral table and sampler |
 | `RasterLookupState` | GPU coefficient key and rebuild flag |
 

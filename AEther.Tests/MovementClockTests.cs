@@ -13,8 +13,8 @@ public partial class ShaderRenderingTests
         using var shaders = new SceneShaders("MandelFluid");
         File.WriteAllText(Path.Combine(shaders.Path,"Scenes","MandelFluid.hlsl"),"""
             struct FluidSettings { bool PeriodicBoundary; float Viscosity; };
-            struct ResourceSizes { uint2 FluidVelocity; };
-            cbuffer Parameters { ResourceSizes Sizes = { uint2(128,128) }; FluidSettings Fluid = { true, 0 }; };
+
+            cbuffer Parameters { FluidSettings Fluid = { true, 0 }; };
             #include "../Common/FluidSimulation.hlsl"
             float2 FluidApplyBoundary(int2 cell, float2 v) { return v; }
             Texture2D<float2> FluidVelocity;
@@ -27,8 +27,8 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         using var otherWindow = new HiddenWindow();
         var clock = new RenderClock();
-        using var fluid = new Renderer(window.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"MandelFluid");
-        using var plain = new Renderer(otherWindow.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"Clock");
+        using var fluid = new Renderer(window.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"MandelFluid",sceneDefinitions:[FluidDefinition(),SceneDefinition.Fullscreen("Clock")]);
+        using var plain = new Renderer(otherWindow.Handle,64,36,1,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:"Clock",sceneDefinitions:[SceneDefinition.Fullscreen("Clock")]);
         for (int frame=0;frame<60;frame++)
         {
             if(frame==20) fluid.SelectScene("Clock");

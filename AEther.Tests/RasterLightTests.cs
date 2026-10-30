@@ -11,10 +11,10 @@ public partial class ShaderRenderingTests
     const string RasterProbe = """
         #include "../Common/Projection.hlsl"
         struct MediumSettings { float Density; float3 Scattering; float3 Absorption; };
-        struct ResourceSizes { uint PointLights; uint2 Geometry; uint2 RasterAirlightLut; };
+
         cbuffer Parameters
         {
-            ResourceSizes Sizes = { 1, uint2(6,1), uint2(513,1025) };
+
             MediumSettings Medium = { 0, float3(1,1,1), float3(0,0,0) };
         };
         ProjectionCamera SceneCamera()
@@ -44,7 +44,7 @@ public partial class ShaderRenderingTests
         string file = Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl");
         File.WriteAllText(file,RasterProbe);
         using var window = new HiddenWindow();
-        using var renderer = new Renderer(window.Handle,64,36,8,60,shaderDirectory:shaders.Path,initialScene:"Spectrum");
+        using var renderer = new Renderer(window.Handle,64,36,8,60,shaderDirectory:shaders.Path,initialScene:"Spectrum",sceneDefinitions:[new SceneDefinition("Spectrum",(d,c,s)=>[new RasterEffect("Raster",d,c,s,"Spectrum.hlsl",new RasterOptions(PointLights:1,Vertices:6,Instances:1,LookupWidth:513,LookupHeight:1025))])]);
         bool integrated=false;
         renderer.TransportPassMarker=(name,begin)=> { if(name=="Raster airlight" && begin) integrated=true; };
         renderer.Render(false);
@@ -57,17 +57,18 @@ public partial class ShaderRenderingTests
             double r=Math.Sqrt(dx*dx+dy*dy+64), light=.5*100*8/(Math.PI*r*r*r);
             Assert.That(pixels[4*(y*64+x)],Is.EqualTo(255*Srgb(1-Math.Exp(-light))).Within(1));
         }
-        foreach (string counts in new[] { "uint2(0,1)", "uint2(6,0)" })
+        foreach (var counts in new[] { (0u,1u), (6u,0u) })
         {
-            File.WriteAllText(file,RasterProbe.Replace("uint2(6,1)",counts));
+            SetRasterOptions(renderer, RasterSettings(renderer) with { Vertices=counts.Item1, Instances=counts.Item2 });
             Assert.That(renderer.ReloadShaders(),Is.True,renderer.ShaderError);
-            renderer.ActiveShader!.Parameters!.Reset();
+            renderer.ActiveShader!.Effects[0].Parameters!.Reset();
             renderer.Render(false);
             Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero);
         }
+        SetRasterOptions(renderer, RasterSettings(renderer) with { Vertices=6, Instances=1 });
         File.WriteAllText(file,RasterProbe);
         Assert.That(renderer.ReloadShaders(),Is.True,renderer.ShaderError);
-        renderer.ActiveShader!.Parameters!.Reset();
+        renderer.ActiveShader!.Effects[0].Parameters!.Reset();
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(pixels));
         File.WriteAllText(file,RasterProbe.Replace("return .3*Medium.Density*Medium.Density*(Medium.Scattering+Medium.Absorption);","return MissingMedium;"));
@@ -75,14 +76,14 @@ public partial class ShaderRenderingTests
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(pixels));
 
-        // Medium callbacks can be constant; only the Sizes contract is required.
+        // Medium callbacks can be constant; allocation settings remain in C#.
         string constant=System.Text.RegularExpressions.Regex.Replace(RasterProbe,
             @"struct MediumSettings[^\n]*\n| +MediumSettings Medium[^\n]*\n", "");
         constant=constant.Replace("return .3*Medium.Density*Medium.Density*Medium.Scattering;","return 0;")
             .Replace("return .3*Medium.Density*Medium.Density*(Medium.Scattering+Medium.Absorption);","return 0;");
         File.WriteAllText(file,constant);
         Assert.That(renderer.ReloadShaders(),Is.True,renderer.ShaderError);
-        Assert.That(renderer.ActiveShader!.Parameters!.Items.Select(p => p.Name), Is.EqualTo(new[] { "Sizes" }));
+        Assert.That(renderer.ActiveShader!.Effects[0].Parameters, Is.Null);
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false),Is.EqualTo(pixels));
     }

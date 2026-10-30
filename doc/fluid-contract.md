@@ -1,14 +1,10 @@
 # Fluid scenes in plain HLSL
 
-Fluid scenes use one host backend, `FluidSimulation`, and the shared
-velocity/pressure passes in `Shaders/Common/FluidSimulation.hlsl`. The host does
-not select a solver by scene name, macro or source-text search. No manifest is
-required.
-
-The final `PS` requests fluid support by using `FluidVelocity` or one of
-`FluidMaterial0` through `FluidMaterial7`. These are compiled resource bindings:
-an unused declaration that the compiler removes does not activate simulation.
-Scenes include the shared solver explicitly after declaring their parameters.
+A C# scene definition explicitly constructs a `FluidEffect` with grid defaults and
+material attachment formats. Each instance owns a `FluidSimulation`, its programs,
+parameters and storage. Shared numerical passes live in
+`Shaders/Common/FluidSimulation.hlsl`; scenes include these after their parameters.
+Referencing a fluid texture does not activate a backend automatically.
 
 ## Host settings
 
@@ -20,10 +16,8 @@ struct FluidSettings
     bool PeriodicBoundary;
     float Viscosity;
 };
-struct ResourceSizes { uint2 FluidVelocity; };
 cbuffer Parameters
 {
-    ResourceSizes Sizes = { uint2(512,512) };
     FluidSettings Fluid = { true, 0 };
 };
 #include "../Common/FluidSimulation.hlsl"
@@ -37,7 +31,7 @@ not use `Parameters`.
 
 - `PeriodicBoundary` selects periodic addressing instead of the existing wall/
   open-material-edge behavior. Changing it preserves simulation state.
-- Sizes.FluidVelocity selects independent power-of-two axes (16..2048).
+- FluidOptions Width/Height selects independent power-of-two axes (16..2048).
   MandelFluid defaults to 512x512. Grid edits recreate simulation state.
   See [resource sizes](resource-sizes.md).
 - `Viscosity` is normalized; shared HLSL maps it to `0.1 * value^3`. Zero skips
@@ -72,7 +66,7 @@ passes entirely.
 
 ## Shader-defined material
 
-When the final shader samples material, implement two pixel entry points:
+When C# setup declares material attachments, implement two pixel entry points:
 
 ```hlsl
 struct Material
@@ -87,12 +81,12 @@ Material UpdateMaterial(PSin input);
 
 The field and struct names have no host meaning. Both functions must expose the
 same contiguous floating-point outputs `SV_Target0..N`, with one to eight
-attachments. Scalar and float2 outputs allocate R32F and RG32F; float3/float4
-allocate RGBA32F, with float3 padded to four storage channels. Prediction and
+attachments. C# declares R32F for scalar, RG32F for float2, and RGBA32F for
+float3/float4, with float3 padded to four storage channels. Prediction and
 update output widths must match. All storage is FP32, preserving v4 precision.
 
-The host allocates current, predicted and next textures from this reflected
-signature. Each display update executes prediction, then update, then swaps the
+The host validates both shader signatures against explicit C# formats, then
+allocates current, predicted and next textures from that configuration. Each display update executes prediction, then update, then swaps the
 current and next textures. It does not clamp, fade, mix or otherwise interpret
 the material channels.
 
@@ -137,7 +131,7 @@ fading afterglow. The old camera-flow carrier, distributed turbulence,
 vorticity confinement, material diffusion/dilution, material-cutting sink and
 edge sink are removed. `Flight.HalfLife` controls its shader-defined decay;
 `Flight.Flow` retains its role in procedural projection. Flight defaults to the
-128 grid and can select 512 with the Sizes.FluidVelocity controls.
+128 grid and can select 512 with the FluidOptions Width/Height controls.
 
 Material lifetime and display illumination are independent. The ring scenes
 retain v4's decay; other payloads can persist and choose their own lighting.

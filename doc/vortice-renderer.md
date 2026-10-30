@@ -68,7 +68,8 @@ Scenes supply PS and include the central modules they need: FluidSimulation,
 RasterGeometry, Projection and RasterLight. GPU LUT construction is part of
 RasterLight. Common/Postprocessing.hlsl and Present.hlsl handle final output.
 Bindings and parameter layouts come from each compiled entry point's reflection;
-capabilities are activated by the final PS's compiled resources.
+C# scene setup explicitly constructs effect instances and declares their storage formats.
+Each effect owns its parameters, bindings, programs and persistent resources.
 
 Repository launches use the source shader tree; deployed apps use the copied
 Shaders directory. Shader reload builds candidate programs before replacing
@@ -125,7 +126,7 @@ dotnet test AEther.Tests
 dotnet run --project tools/AEther.Smoke -- .
 ```
 
-The default smoke check exercises discovered scenes, reflected controls,
+The default smoke check exercises registered scenes, reflected controls,
 reload/rollback, resize and shader-window behavior using synthetic audio.
 `--output-only` checks presentation and export; `--fluid-only` checks the
 shared solver and ring materials. Captures go to the ignored artifacts directory.

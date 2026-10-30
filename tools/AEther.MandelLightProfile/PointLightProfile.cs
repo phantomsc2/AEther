@@ -34,7 +34,7 @@ internal static partial class Program
             (Name:"stb", Scene:"MandelLight", S:.02, T:.02, B:.02),
         })
         {
-            renderer.SelectScene(item.Scene); renderer.ActiveShader!.Parameters!.Reset();
+            renderer.SelectScene(item.Scene); renderer.ActiveShader!.Effects[0].Parameters!.Reset();
             Set(renderer, "View.CameraSpeed", 0); Set(renderer, "Shape.Speed", 0);
             clock.Reset();
             void Render()

@@ -13,8 +13,8 @@ public partial class ShaderRenderingTests
     const string FluidContractSource = """
         // A comment with #define RING_FLUID must have no special host meaning.
         struct FluidSettings { bool PeriodicBoundary; float Viscosity; };
-        struct ResourceSizes { uint2 FluidVelocity; };
-        cbuffer Parameters { ResourceSizes Sizes = { uint2(128,128) }; FluidSettings Fluid = { true, 0 }; };
+
+        cbuffer Parameters { FluidSettings Fluid = { true, 0 }; };
         #include "../Common/FluidSimulation.hlsl"
         float2 FluidApplyBoundary(int2 cell, float2 velocity) { return velocity; }
         struct Payload
@@ -63,9 +63,9 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene, sceneDefinitions: [FluidDefinition(global::Vortice.DXGI.Format.R32_Float, global::Vortice.DXGI.Format.R32G32_Float, global::Vortice.DXGI.Format.R32G32B32A32_Float)]);
         for (int frame = 0; frame < 8; frame++) { clock.Advance(); renderer.Render(false); }
-        var fluid = renderer.Fluid;
+        var fluid = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
         Assert.That(fluid.MaterialCount, Is.EqualTo(3));
         Assert.That(Enumerable.Range(0, 3).Select(fluid.MaterialChannels), Is.EqualTo(new[] { 1, 2, 4 }));
         Assert.That(fluid.ReadMaterial(0), Is.All.EqualTo(-8f / 60).Within(1e-6), "The engine must not clamp or decay an arbitrary payload.");
@@ -83,8 +83,8 @@ public partial class ShaderRenderingTests
         using var shaders = new SceneShaders("MandelFluid");
         File.WriteAllText(Path.Combine(shaders.Path, "Scenes", "MandelFluid.hlsl"), """
             struct FluidSettings { bool PeriodicBoundary; float Viscosity; };
-            struct ResourceSizes { uint2 FluidVelocity; };
-            cbuffer Parameters { ResourceSizes Sizes = { uint2(128,128) }; FluidSettings Fluid = { true, 0 }; };
+
+            cbuffer Parameters { FluidSettings Fluid = { true, 0 }; };
             #include "../Common/FluidSimulation.hlsl"
             float2 FluidApplyBoundary(int2 cell, float2 velocity) { return float2(.5, 0); }
             Texture2D<float2> FluidVelocity;
@@ -98,15 +98,15 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene, sceneDefinitions: [FluidDefinition()]);
         renderer.Render(false);
-        Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(2), "Initialize shader-defined flow without waiting for audio.");
-        Assert.That(renderer.Fluid.ReadVelocity().Where((_, i) => i % 2 == 0), Is.All.EqualTo(.5f));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastSteps, Is.EqualTo(2), "Initialize shader-defined flow without waiting for audio.");
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity().Where((_, i) => i % 2 == 0), Is.All.EqualTo(.5f));
         for (int frame = 0; frame < 3; frame++) { clock.Advance(); renderer.Render(false); }
-        Assert.That(renderer.Fluid.MaterialCount, Is.Zero);
-        Assert.That(renderer.Fluid.LastMaterialSteps, Is.Zero);
-        Assert.That(renderer.Fluid.ReadVelocity().Where((_, i) => i % 2 == 0), Is.All.EqualTo(.5f));
-        Assert.That(renderer.Fluid.ReadVelocity().Where((_, i) => i % 2 == 1), Is.All.Zero);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.MaterialCount, Is.Zero);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastMaterialSteps, Is.Zero);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity().Where((_, i) => i % 2 == 0), Is.All.EqualTo(.5f));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity().Where((_, i) => i % 2 == 1), Is.All.Zero);
     }
 
     [Test, Category("GPU")]
@@ -118,9 +118,9 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 160, 90, Bands, 60,
-            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene, sceneDefinitions: [FluidDefinition(global::Vortice.DXGI.Format.R32_Float, global::Vortice.DXGI.Format.R32G32_Float, global::Vortice.DXGI.Format.R32G32B32A32_Float)]);
         clock.Advance(); renderer.Render(false);
-        var fluid = renderer.Fluid;
+        var fluid = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
         var before = fluid.ReadMaterial(0);
         // Change only the predictor's return type/body; UpdateMaterial keeps its
         // three-output layout so both shaders compile but their contract differs.
@@ -131,7 +131,7 @@ public partial class ShaderRenderingTests
         File.WriteAllText(path, invalid);
         Assert.That(renderer.ReloadActiveScene(), Is.False);
         Assert.That(renderer.ShaderError, Does.Contain("matching"));
-        Assert.That(renderer.Fluid, Is.SameAs(fluid));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(fluid));
         Assert.That(fluid.ReadMaterial(0), Is.EqualTo(before));
         clock.Advance(); renderer.Render(false);
         Assert.That(fluid.ReadMaterial(0).Min(), Is.LessThan(before.Min()));

@@ -88,9 +88,10 @@ with thinner bands when the window is too short. It remains live with the
 canvas closed; hiding or minimizing the hub stops its drawing work. An explicit
 `--scene=Name` argument opts into launching a scene on startup.
 
-Scenes are the top-level files in `AEther.Vortice/Shaders/Scenes/*.hlsl`. Shared code
-lives in `Shaders/Common`. Save source files in the IDE to reload without a .NET build;
-adding or deleting a scene updates the shader selector. Failed reloads retain the
+Scenes are registered by short C# setup in `SceneDefinition.Defaults`, with HLSL
+sources in `AEther.Vortice/Shaders/Scenes`. Shared code lives in `Shaders/Common`.
+Save HLSL source files to reload without a .NET build. Adding a scene requires
+a C# registration; deleting a registered source removes it from the selector. Failed reloads retain the
 previous programs and controls, with diagnostics in the shader panel and event log. Published apps
 use the `Shaders` tree beside the executable.
 
@@ -98,7 +99,8 @@ Editable values are reflected from `cbuffer Parameters`; nested structs become g
 bools become checkboxes, and floats/float vectors use linked [0, 1] sliders and numeric
 inputs. Analyzer options are grouped by category using expanders, numeric inputs,
 switches and enum selectors. Names are displayed
-unchanged. Defaults live in HLSL. Values survive compatible reloads and session restarts
+unchanged. Ordinary shader defaults live in HLSL; allocation defaults live in typed
+C# effect options and use the shared settings panel generator. Values survive compatible reloads and session restarts
 within the process; they are not saved between app launches. See
 [shader authoring](doc/shader-authoring.md) for the input contract, examples, mappings,
 and current limitations.

@@ -124,9 +124,10 @@ public partial class ShaderRenderingTests
                 return float4((depth>=1 || error>.003).xxx+RasterSurface.Load(int3(pixel,0)).rgb,1);
             }
             """;
-        File.WriteAllText(file,source.Replace("uint2(36,128)", "uint2(6,1)"));
+        File.WriteAllText(file,source);
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,width,height,32,60,shaderDirectory:shaders.Path,initialScene:"MandelLight");
+        SetRasterOptions(renderer, RasterSettings(renderer) with { Vertices=6, Instances=1 });
         renderer.Render(false);
         Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero);
     }
@@ -137,7 +138,7 @@ public partial class ShaderRenderingTests
         using var shaders=new SceneShaders(scene);
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,96,54,32,60,shaderDirectory:shaders.Path,timeProvider:new PointClock(),initialScene:scene);
-        PointSet(renderer,"Sizes.Geometry.y",0u);
+        SetRasterOptions(renderer, RasterSettings(renderer) with { Instances = 0u });
         PointRender(renderer,()=>PointFeed(renderer,0));
         byte[] original=renderer.ReadPixels(false);
         Assert.That(original.Where((_,i)=>i%4!=3).Any(x=>x>0),Is.True);

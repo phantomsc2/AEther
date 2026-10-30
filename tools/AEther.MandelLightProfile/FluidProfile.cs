@@ -37,8 +37,7 @@ internal static partial class Program
             using var renderer = new Renderer(window.Handle, width, height, 97, 1000, shaderDirectory: tree,
                 timeProvider: clock);
             renderer.SelectScene("MandelFluid");
-            SetSize(renderer, "Sizes.FluidVelocity.x", item.Low ? 128u : 512u);
-            SetSize(renderer, "Sizes.FluidVelocity.y", item.Low ? 128u : 512u);
+            ((FluidEffect)renderer.ActiveShader!.Effects[0]).Options = new FluidOptions(item.Low ? 128 : 512, item.Low ? 128 : 512);
             Set(renderer, "Fluid.PeriodicBoundary", item.Periodic);
             Set(renderer, "Fluid.Viscosity", item.Viscosity);
             if (args.Contains("--filaments"))
@@ -85,8 +84,8 @@ internal static partial class Program
                 timer.End(); renderer.TransportPassMarker = null;
                 var result = timer.Resolve();
                 result["CPU submission"] = cpu; result["Allocated bytes"] = allocated;
-                result["Simulation steps"] = renderer.Fluid.LastSteps;
-                result["Simulation draws"] = renderer.Fluid.LastDraws;
+                result["Simulation steps"] = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastSteps;
+                result["Simulation draws"] = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastDraws;
                 return result;
             }
             var startup = Tick();
@@ -99,7 +98,7 @@ internal static partial class Program
             var pixels = renderer.ReadPixels(false);
             File.WriteAllBytes(Path.Combine(output, item.Name + ".rgba"), pixels);
             Save(pixels, width, height, Path.Combine(output, item.Name + ".png"));
-            var projection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
+            var projection = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.CheckProjection(((FluidEffect)renderer.ActiveShader!.Effects[0]).Programs);
             results.Add(new { item.Name, Adapter = renderer.AdapterDescription, Width = width, Height = height, Rate = rate,
                 Frames = count, Startup = startup, Timing = summaries, Samples = samples,
                 ProjectionBefore = projection.Before, ProjectionAfter = projection.After, projection.CurlError });

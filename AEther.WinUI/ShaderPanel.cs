@@ -10,7 +10,7 @@ public sealed class ShaderPanel : UserControl
     readonly Grid layout = new() { RowSpacing = 8 };
     readonly StackPanel parameters = new() { Spacing = 4 };
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Visibility = Visibility.Collapsed };
-    readonly Dictionary<string, ShaderParameters> saved = new(StringComparer.Ordinal);
+    readonly Dictionary<string, IReadOnlyDictionary<string, EffectSettings>> saved = new(StringComparer.Ordinal);
     Renderer? renderer;
     // Allows restarting a preview after renderer changes without losing its scene.
     public string? SelectedScene { get; private set; } = Environment.GetCommandLineArgs()
@@ -33,13 +33,13 @@ public sealed class ShaderPanel : UserControl
         {
             renderer.ShadersChanged -= ShadersChanged;
             foreach (var scene in renderer.Scenes)
-                if (renderer.GetSceneParameters(scene.Name) is { } parameters) saved[scene.Name] = parameters;
+                if (renderer.GetSceneSettings(scene.Name) is { } parameters) saved[scene.Name] = parameters;
         }
         renderer = value;
         if (renderer != null)
         {
             foreach (var scene in renderer.Scenes)
-                if (saved.TryGetValue(scene.Name, out var previous)) renderer.RestoreSceneParameters(scene.Name, previous);
+                if (saved.TryGetValue(scene.Name, out var previous)) renderer.RestoreSceneSettings(scene.Name, previous);
             if (renderer.Scenes.Any(s => s.Name == SelectedScene)) renderer.SelectScene(SelectedScene);
             renderer.ShadersChanged += ShadersChanged;
         }
@@ -51,10 +51,10 @@ public sealed class ShaderPanel : UserControl
         SelectedScene = name;
         if (renderer == null) return;
         if (name == null) { renderer.SelectScene(null); RefreshScene(); return; }
-        bool firstCompilation = renderer.Scenes.Single(scene => scene.Name == name).Parameters == null;
+        bool firstCompilation = renderer.Scenes.Single(scene => scene.Name == name).Effects.Count == 0;
         renderer.SelectScene(name);
         if (firstCompilation && saved.TryGetValue(name, out var previous))
-            renderer.ActiveShader?.Parameters?.Restore(previous);
+            renderer.ActiveShader?.RestoreSettings(previous);
         RefreshScene();
     }
 
@@ -83,7 +83,7 @@ public sealed class ShaderPanel : UserControl
         {
             SelectedScene = renderer.SceneName;
             // Retain visited scenes even when a reload leaves them uncompiled.
-            if (SelectedScene != null && renderer.ActiveShader?.Parameters is { } values) saved[SelectedScene] = values;
+            if (SelectedScene != null && renderer.GetSceneSettings(SelectedScene) is { } values) saved[SelectedScene] = values;
             SetStatus(renderer.ShaderError ?? "");
         }
         else SetStatus("No active rendering session.");
@@ -94,65 +94,30 @@ public sealed class ShaderPanel : UserControl
     public void RefreshParameters()
     {
         parameters.Children.Clear();
-        if (renderer?.ActiveShader?.Parameters is not { } values)
+        if (renderer?.ActiveShader is not { } scene) return;
+        foreach (var effect in scene.Effects)
         {
-            parameters.Children.Add(new TextBlock { Text = "This shader has no editable parameters.", TextWrapping = TextWrapping.Wrap });
-            return;
-        }
-        foreach (var parameter in values.Items) parameters.Children.Add(Editor(values, parameter));
-    }
-
-    static UIElement SizeEditor(ShaderParameters values, ShaderParameter parameter)
-    {
-        bool fluid = parameter.Path.StartsWith("Sizes.FluidVelocity.", StringComparison.Ordinal);
-        double maximum = parameter.Path == "Sizes.PointLights" ? 64u * 65535
-            : parameter.Path.StartsWith("Sizes.Geometry.", StringComparison.Ordinal) ? uint.MaxValue
-            : fluid ? 2048 : 16384;
-        double minimum = fluid ? 16 : parameter.Path is "Sizes.PointLights" || parameter.Path.StartsWith("Sizes.Geometry.", StringComparison.Ordinal) ? 0
-            : parameter.Path.StartsWith("Sizes.RasterAirlightLut.", StringComparison.Ordinal) ? 2 : 1;
-        double initial = values.GetUnsigned(parameter);
-        double Encode(double n) => fluid ? Math.Log2(Math.Max(16, n)) : n;
-        double Decode(double n) => fluid ? Math.Pow(2, Math.Round(n)) : Math.Round(n);
-        var number = new NumberBox
-        {
-            Minimum = minimum, Maximum = maximum, Value = initial,
-            SmallChange = fluid ? initial / 2 : 1, LargeChange = fluid ? initial : 10,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            NumberFormatter = new DecimalFormatter { FractionDigits = 0 },
-        };
-        var slider = new Slider
-        {
-            Minimum = Encode(minimum), Maximum = Encode(fluid ? maximum : Math.Min(maximum, Math.Max(16, initial * 4))),
-            StepFrequency = 1, Value = Encode(initial),
-        };
-        bool updating = false;
-        void Display(double value)
-        {
-            if (updating) return;
-            updating = true;
-            try
+            var group = new StackPanel { Spacing = 4 };
+            if (effect is FluidEffect fluid)
             {
-                number.Value = value;
-                slider.Maximum = Math.Max(slider.Maximum, Encode(value));
-                slider.Value = Encode(value);
+                var editor = new OptionsEditor<FluidOptions>(fluid.Options, v => v with { });
+                editor.Changed += (_, _) => fluid.Options = editor.Options;
+                group.Children.Add(editor.Content);
             }
-            finally { updating = false; }
+            if (effect is RasterEffect raster)
+            {
+                var editor = new OptionsEditor<RasterOptions>(raster.Options, v => v with { });
+                editor.Changed += (_, _) => raster.Options = editor.Options;
+                group.Children.Add(editor.Content);
+            }
+            if (effect.Parameters is { } values)
+                foreach (var parameter in values.Items) group.Children.Add(Editor(values, parameter));
+            parameters.Children.Add(new Expander
+            {
+                Header = effect.Name, Content = group, IsExpanded = true,
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            });
         }
-        SliderCommit.Bind(slider, n => Display(Decode(n)), n =>
-        {
-            if (!updating) values.SetUnsigned(parameter, (uint)Decode(n));
-        });
-        number.ValueChanged += (_, e) =>
-        {
-            if (updating || !double.IsFinite(e.NewValue)) return;
-            double n = Math.Clamp(Math.Round(e.NewValue), minimum, maximum);
-            if (fluid) n = Decode(Encode(n));
-            Display(n);
-            values.SetUnsigned(parameter, (uint)n);
-        };
-        var row = NumericEditor.Create(parameter.Name, number, slider);
-        row.Tag = parameter.Path;
-        return row;
     }
 
     static UIElement Editor(ShaderParameters values, ShaderParameter parameter)
@@ -167,7 +132,6 @@ public sealed class ShaderPanel : UserControl
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
         }
-        if (parameter.IsUnsigned) return SizeEditor(values, parameter);
         if (parameter.IsBoolean)
         {
             var checkbox = new CheckBox { Content = parameter.Name, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };

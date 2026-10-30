@@ -21,7 +21,7 @@ public class HistoryUploadTests
         renderer.PostAudio(Input(2, 10), 2);
         renderer.Render(false);
         var audio = renderer.Audio;
-        var program = renderer.ActiveShader!.Program.Pixel;
+        var program = renderer.ActiveShader!.Effects[0].Display.Pixel;
         var ready = renderer.FrameReady;
         var views = (Array)typeof(Renderer).GetField("views", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(renderer)!;
         var originalViews = views.Cast<object>().ToArray();
@@ -35,7 +35,7 @@ public class HistoryUploadTests
         renderer.PostAudio(Input(2, 11), 2); // Pending input must survive reconfiguration.
         renderer.SetGraphicsOptions(new(seconds));
         Assert.That(renderer.Audio, Is.SameAs(audio));
-        Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
+        Assert.That(renderer.ActiveShader.Effects[0].Display.Pixel, Is.SameAs(program));
         Assert.That(renderer.FrameReady, Is.SameAs(ready));
         Assert.That(views.GetValue(0), Is.SameAs(originalViews[0]));
         Assert.That(views.GetValue(1), Is.SameAs(originalViews[1]));

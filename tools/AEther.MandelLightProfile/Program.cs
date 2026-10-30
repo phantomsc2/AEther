@@ -25,14 +25,13 @@ internal static partial class Program
     static double Median(IEnumerable<double> values) { var a = values.Order().ToArray(); return a[a.Length / 2]; }
     static ShaderParameter Find(Renderer renderer, string path)
     {
-        var items = renderer.ActiveShader!.Parameters!.Items;
+        var items = renderer.ActiveShader!.Effects[0].Parameters!.Items;
         ShaderParameter result = null!;
         foreach (var part in path.Split('.')) { result = items.Single(p => p.Name == part); items = result.Children; }
         return result;
     }
-    static void Set(Renderer renderer, string path, float value) => renderer.ActiveShader!.Parameters!.SetFloat(Find(renderer, path), value);
-    static void SetSize(Renderer renderer, string path, uint value) => renderer.ActiveShader!.Parameters!.SetUnsigned(Find(renderer, path), value);
-    static void Set(Renderer renderer, string path, bool value) => renderer.ActiveShader!.Parameters!.SetBoolean(Find(renderer, path), value);
+    static void Set(Renderer renderer, string path, float value) => renderer.ActiveShader!.Effects[0].Parameters!.SetFloat(Find(renderer, path), value);
+    static void Set(Renderer renderer, string path, bool value) => renderer.ActiveShader!.Effects[0].Parameters!.SetBoolean(Find(renderer, path), value);
     static void Save(byte[] rgba, int width, int height, string path)
     {
         var bgra = (byte[])rgba.Clone();

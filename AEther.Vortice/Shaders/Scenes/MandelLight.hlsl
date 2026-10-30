@@ -6,10 +6,8 @@ struct ShapeSettings { float Seed; float Size; float Spread; float Speed; float3
 struct AirSettings { float Density; float3 Scattering; float3 Absorption; };
 struct LightSettings { float Radius; float Gain; };
 struct ViewSettings { float CameraDistance; float CameraSpeed; float HorizontalOffset; };
-struct ResourceSizes { uint PointLights; uint2 Geometry; uint2 RasterAirlightLut; };
 cbuffer Parameters : register(b1)
 {
-    ResourceSizes Sizes = { 180, uint2(36,128), uint2(513,1025) };
     ShapeSettings Shape = { .25, .45, .75, .1, float3(.65,.7,.75) };
     AirSettings Air = { .65, float3(1,1,1), float3(.03,.05,.08) };
     LightSettings Lights = { .57, .66666667 };
@@ -54,7 +52,7 @@ GeometryVertex EvaluateGeometry(uint vertex, uint instance)
 static const float SceneLightGain = exp2(-.6);
 PointLight EvaluateLight(uint index)
 {
-    uint total=Sizes.PointLights;
+    uint total=PointLightCount;
     uint first=(total+2)/3, second=(total+1)/3;
     uint ring=index<first ? 0 : index<first+second ? 1 : 2;
     uint start=ring==0 ? 0 : ring==1 ? first : first+second;

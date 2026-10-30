@@ -95,7 +95,7 @@ public partial class ShaderRenderingTests
         foreach (var scene in renderer.Scenes)
         {
             renderer.SelectScene(scene.Name);
-            Assert.That(scene.Parameters == null || !ShaderParameters.Leaves(scene.Parameters.Items).Any(x => x.Name == "Exposure"),
+            Assert.That(scene.Effects[0].Parameters == null || !ShaderParameters.Leaves(scene.Effects[0].Parameters.Items).Any(x => x.Name == "Exposure"),
                 Is.True, scene.Name);
         }
     }

@@ -18,6 +18,7 @@ public sealed partial class Renderer : IDisposable
     public ILogger Logger { get; private set; }
     bool initializing = true;
     Exception? shaderException;
+    string? sizeError;
     readonly Lock graphicsGate = new();
     readonly List<IDisposable> resources = [];
     ID3D11Device device = null!;
@@ -26,26 +27,14 @@ public sealed partial class Renderer : IDisposable
     GpuProfiler gpu = null!;
     ID3D11VertexShader vertex = null!;
     Dictionary<string, ShaderScene> scenes = new(StringComparer.Ordinal);
-    readonly Dictionary<string, ShaderParameters> savedParameters = new(StringComparer.Ordinal);
+    readonly Dictionary<string, IReadOnlyDictionary<string, EffectSettings>> savedSettings = new(StringComparer.Ordinal);
     readonly Dictionary<string, ID3D11Buffer> namedBuffers = new(StringComparer.Ordinal);
     readonly Dictionary<string, ID3D11ShaderResourceView> namedTextures = new(StringComparer.Ordinal);
     readonly Dictionary<string, ID3D11SamplerState> namedSamplers = new(StringComparer.Ordinal);
 
     ID3D11PixelShader outputPixel = null!;
 
-    FluidSimulation? fluid;
-
-    RasterLight? rasterLight;
-
-    ShaderParameters? snapshotSource, frameParameters, workingParameters;
-    string? workingScene;
-    long snapshotVersion = -1;
-    string? sizeError;
-    SceneSizes? requestedSizes;
-    int requestedWidth, requestedHeight;
-    string? previousScene;
-    internal FluidSimulation Fluid => fluid!;
-    internal FluidSimulation.Programs FluidPrograms => scenes[SceneName!].Fluid!;
+    readonly IReadOnlyList<SceneDefinition> sceneDefinitions;
     ID3D11Buffer frameBuffer = null!;
     readonly ID3D11Texture2D[] textures = new ID3D11Texture2D[4];
     readonly ID3D11ShaderResourceView[] views = new ID3D11ShaderResourceView[4];
@@ -69,19 +58,19 @@ public sealed partial class Renderer : IDisposable
     public IReadOnlyCollection<ShaderScene> Scenes { get { lock (graphicsGate) return scenes.Values.ToArray(); } }
     public ShaderScene? ActiveShader { get { lock (graphicsGate) return SceneName == null ? null : scenes.GetValueOrDefault(SceneName); } }
     public event EventHandler? ShadersChanged;
-    public ShaderParameters? GetSceneParameters(string name)
+    public IReadOnlyDictionary<string, EffectSettings>? GetSceneSettings(string name)
     {
-        lock (graphicsGate) return scenes.GetValueOrDefault(name)?.Parameters ?? savedParameters.GetValueOrDefault(name);
+        lock (graphicsGate) return scenes.GetValueOrDefault(name) is { ProgramReady: true } scene
+            ? scene.CaptureSettings() : savedSettings.GetValueOrDefault(name);
     }
 
-    /// <summary>Restore visited scene values, including programs that are still compiled lazily.</summary>
-    public void RestoreSceneParameters(string name, ShaderParameters parameters)
+    public void RestoreSceneSettings(string name, IReadOnlyDictionary<string, EffectSettings> settings)
     {
         lock (graphicsGate)
         {
             if (!scenes.TryGetValue(name, out var scene)) return;
-            savedParameters[name] = parameters;
-            scene.Parameters?.Restore(parameters);
+            savedSettings[name] = settings;
+            scene.RestoreSettings(settings);
         }
     }
 
@@ -89,13 +78,13 @@ public sealed partial class Renderer : IDisposable
     {
         lock (graphicsGate)
         {
-            if (name == null) { SceneName = null; previousScene = null; return; }
+            if (name == null) { ActiveShader?.Deactivate(); SceneName = null; return; }
             if (!scenes.TryGetValue(name, out var scene)) throw new ArgumentException("Unknown scene.", nameof(name));
             bool firstCompilation = !scene.ProgramReady;
             scene.EnsureCompiled();
-            if (firstCompilation && scene.Parameters != null && savedParameters.TryGetValue(name, out var saved))
-                scene.Parameters.Restore(saved);
+            if (firstCompilation && savedSettings.TryGetValue(name, out var saved)) scene.RestoreSettings(saved);
             if (!scene.ProgramReady) throw new InvalidOperationException($"Scene '{name}' did not compile.");
+            if (SceneName != name) ActiveShader?.Deactivate();
             SceneName = name;
         }
     }
@@ -107,7 +96,7 @@ public sealed partial class Renderer : IDisposable
     /// <summary>Swap-chain readiness gate. Wait before sampling frame inputs even with compositor pacing. Owned by the renderer.</summary>
     public WaitHandle FrameReady => output.FrameReady;
     public string AdapterDescription { get; } = string.Empty;
-    public string FluidWork => fluid == null || ActiveShader?.Fluid == null ? "inactive"
+    public string FluidWork => ActiveShader?.Effects.OfType<FluidEffect>().FirstOrDefault()?.Simulation is not { } fluid ? "inactive"
         : $"{fluid.Width}x{fluid.Height}, {fluid.LastSteps} velocity / {fluid.LastMaterialSteps} material steps, {fluid.LastDraws} draws";
     public long SkippedGpuTimingFrames => gpu.SkippedFrames;
     public long InvalidGpuTimingFrames => gpu.InvalidFrames;
@@ -126,9 +115,9 @@ public sealed partial class Renderer : IDisposable
 
     public Renderer(IntPtr window, int width, int height, AnalysisOutput input,
         string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null,
-        string? initialScene = null, PipelineProfile? profile = null, GraphicsOptions? graphicsOptions = null, ILogger? logger = null)
+        string? initialScene = null, PipelineProfile? profile = null, GraphicsOptions? graphicsOptions = null, ILogger? logger = null, IReadOnlyList<SceneDefinition>? sceneDefinitions = null)
         : this(window, width, height, input.Domain.Length, input.AnalysisRate, graphicsOptions?.HistorySeconds ?? 2,
-            shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile, logger: logger)
+            shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile, logger: logger, sceneDefinitions: sceneDefinitions)
     {
         Input = input;
         if (graphicsOptions != null) SetGraphicsOptions(graphicsOptions);
@@ -137,8 +126,9 @@ public sealed partial class Renderer : IDisposable
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
         double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
         Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null,
-        string? initialScene = null, PipelineProfile? profile = null, ILogger? logger = null)
+        string? initialScene = null, PipelineProfile? profile = null, ILogger? logger = null, IReadOnlyList<SceneDefinition>? sceneDefinitions = null)
     {
+        this.sceneDefinitions = sceneDefinitions ?? SceneDefinition.Defaults;
         Logger = (logger ?? Log.Logger).ForContext<Renderer>();
         using var startup = profile?.Measure("startup.gpu_ms");
         Options = new(historySeconds);
@@ -244,17 +234,16 @@ public sealed partial class Renderer : IDisposable
             if (!scenes.TryGetValue(name, out var scene)) return false;
             try
             {
-                if (!scene.ProgramReady) scene.EnsureCompiled();
+                if (!scene.ProgramReady)
+                {
+                    scene.EnsureCompiled();
+                    if (savedSettings.TryGetValue(name, out var saved)) scene.RestoreSettings(saved);
+                }
                 else
                 {
                     var replacement = scene.Recompile();
                     scene.ReplaceWith(replacement);
                     replacement.Dispose();
-                }
-                if (scene.Parameters != null && savedParameters.TryGetValue(name, out var old)) scene.Parameters.Restore(old);
-                if (StringComparer.Ordinal.Equals(SceneName, name))
-                {
-                    fluid?.Dispose(); fluid = null;
                 }
                 ShaderError = null;
                 ShadersChanged?.Invoke(this, EventArgs.Empty);
@@ -305,19 +294,15 @@ public sealed partial class Renderer : IDisposable
     {
         var common = ShaderSource.IncludeFile(shaderDirectory, "Common/Inputs.hlsl");
         var source = common + ShaderSource.IncludeFile(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
-        var replacement = new ShaderScene(device, name, source, compileImmediately: false);
+        var replacement = new ShaderScene(device, context, sceneDefinitions.Single(d => d.Name == name), source);
         if (StringComparer.Ordinal.Equals(SceneName, name))
         {
             replacement.EnsureCompiled();
-            if (scene.Parameters is { } old && replacement.Parameters is { } parameters) parameters.Restore(old);
+            replacement.RestoreSettings(scene.CaptureSettings());
         }
-        else if (scene.Parameters is { } old) savedParameters[name] = old;
+        else if (scene.ProgramReady) savedSettings[name] = scene.CaptureSettings();
         scenes[name] = replacement;
         scene.Dispose();
-        if (StringComparer.Ordinal.Equals(SceneName, name))
-        {
-            fluid?.Dispose(); fluid = null;
-        }
         ShaderError = null;
         Logger.Information("Scene {Scene} reloaded", name);
         ShadersChanged?.Invoke(this, EventArgs.Empty);
@@ -334,26 +319,23 @@ public sealed partial class Renderer : IDisposable
             var common = ShaderSource.IncludeFile(shaderDirectory, "Common/Inputs.hlsl");
             nextVertex = device.CreateVertexShader(ShaderSource.Compile(common, "VS", "Inputs.hlsl", "vs_5_0").Span);
             nextOutput = device.CreatePixelShader(ShaderSource.Compile(common + ShaderSource.IncludeFile(shaderDirectory, "Common/Present.hlsl"), "PS", "Present.hlsl", "ps_5_0").Span);
-            foreach (var path in Directory.EnumerateFiles(Path.Combine(shaderDirectory, "Scenes"), "*.hlsl").Order(StringComparer.Ordinal))
+            foreach (var definition in sceneDefinitions.Where(d => File.Exists(Path.Combine(shaderDirectory, "Scenes", d.Name + ".hlsl"))))
             {
-                var name = Path.GetFileNameWithoutExtension(path);
+                var name = definition.Name;
                 var source = common + ShaderSource.IncludeFile(shaderDirectory, Path.Combine("Scenes", name + ".hlsl"));
                 if (name == SceneName)
                 {
-                    var scene = new ShaderScene(device, name, source, compileImmediately: false);
+                    var scene = new ShaderScene(device, context, sceneDefinitions.Single(d => d.Name == name), source);
                     scene.EnsureCompiled();
-                    if (scenes.GetValueOrDefault(name)?.Parameters is { } old && scene.Parameters is { } parameters)
-                        parameters.Restore(old);
+                    if (GetSceneSettings(name) is { } old) scene.RestoreSettings(old);
                     nextScenes.Add(name, scene);
                 }
-                else nextScenes.Add(name, new ShaderScene(device, name, source, compileImmediately: false));
+                else nextScenes.Add(name, new ShaderScene(device, context, sceneDefinitions.Single(d => d.Name == name), source));
             }
             var selected = SceneName == null ? null : nextScenes.GetValueOrDefault(SceneName);
-            if (selected?.Parameters != null && scenes.GetValueOrDefault(selected.Name)?.Parameters == null
-                && savedParameters.TryGetValue(selected.Name, out var saved)) selected.Parameters.Restore(saved);
             foreach (var scene in scenes.Values)
             {
-                if (scene.Parameters != null) savedParameters[scene.Name] = scene.Parameters;
+                if (scene.ProgramReady) savedSettings[scene.Name] = scene.CaptureSettings();
                 scene.Dispose();
             }
             scenes = nextScenes;
@@ -494,89 +476,21 @@ public sealed partial class Renderer : IDisposable
         namedTextures["Histogram0"] = views[2]; namedTextures["Histogram1"] = views[3];
         // Compatibility names refer to the core evidence, including in geometry stages.
         namedTextures["FilteredHistogram0"] = views[2]; namedTextures["FilteredHistogram1"] = views[3];
-        var source = active.Parameters;
-        bool parametersChanged = !ReferenceEquals(snapshotSource, source) || snapshotVersion != (source?.Version ?? 0);
-        if (parametersChanged)
-        {
-            requestedSizes = null;
-            snapshotSource = source;
-            frameParameters = source?.Snapshot();
-            snapshotVersion = frameParameters?.Version ?? 0;
-        }
-        var p = frameParameters;
-        SceneSizes sizes;
-        try
-        {
-            if (requestedWidth != width || requestedHeight != height) requestedSizes = null;
-            sizes = requestedSizes ?? SceneSizes.Resolve(p, active.Raster != null, active.Fluid != null, width, height);
-            requestedSizes = sizes; requestedWidth = width; requestedHeight = height;
-            if (active.Raster != null)
-            {
-                rasterLight ??= new(device, context);
-                rasterLight.Configure(sizes);
-            }
-            if (active.Fluid != null && (fluid == null || !fluid.CompatibleWith(active.Fluid, sizes) || fluid.Aspect != width / (float)height))
-            {
-                var nextFluid = new FluidSimulation(device, context, width, height, active.Fluid, sizes);
-                fluid?.Dispose(); fluid = nextFluid;
-            }
-            workingParameters = p; workingScene = active.Name;
-            if (parametersChanged)
-            {
-                if (sizeError != null && ShaderError == sizeError)
-                { ShaderError = null; ShadersChanged?.Invoke(this, EventArgs.Empty); }
-                sizeError = null;
-            }
-        }
-        catch (Exception error)
-        {
-            sizeError = ShaderError = error.Message;
-            ShaderFailed(error);
-            if (workingScene != active.Name || workingParameters == null) throw;
-            requestedSizes = null;
-            source!.RestoreSizes(workingParameters);
-            frameParameters = p = source.Snapshot();
-            snapshotVersion = p.Version;
-            sizes = SceneSizes.Resolve(p, active.Raster != null, active.Fluid != null, width, height);
-            ShadersChanged?.Invoke(this, EventArgs.Empty);
-        }
-        if (active.Raster != null)
-        {
-            rasterLight ??= new(device, context);
-            namedSamplers["RasterLutSampler"] = rasterLight.LookupSampler;
-            rasterLight.PassMarker = GpuMarker;
-            rasterLight.Prepare(active.Raster, p, width, height, namedBuffers, namedTextures, namedSamplers);
-            context.VSSetShader(vertex);
-            rasterLight.IntegrateAirlight(active.Raster, p);
-            context.RSSetViewport(0, 0, width, height);
-        }
-        if (active.Fluid != null)
-        {
-
-            fluid!.PassMarker = GpuMarker;
-            fluid.DrawMarker = gpu.Annotate;
-            if (previousScene != SceneName || dt > .5) fluid.Clear();
-            GpuMarker("Fluid", true);
-            fluid.Advance(dt, Audio.TimeScale / Audio.Seconds, active.Fluid,
-                p, namedBuffers, namedTextures, namedSamplers, !FixedFluidMaterialCadence);
-            GpuMarker("Fluid", false);
-            fluid.Publish(namedTextures);
-            namedSamplers["FluidSampler"] = fluid.Sampler;
-            context.RSSetViewport(0, 0, width, height);
-        }
-        previousScene = SceneName;
-        context.OMSetRenderTargets(output.SceneTarget!);
-        GpuMarker("Scene", true);
-        active.Program.Bind(context, p, namedBuffers, namedTextures, namedSamplers);
-        if (active.Raster != null) GpuMarker("Raster composite", true);
-
-        context.Draw(3, 0);
-        if (active.Raster != null) GpuMarker("Raster composite", false);
-
-        GpuMarker("Scene", false);
+        active.Draw(new EffectFrame(width, height, dt, Audio.TimeScale / Audio.Seconds,
+            vertex, output.SceneTarget!, namedBuffers, namedTextures, namedSamplers,
+            GpuMarker, gpu.Annotate, ReportSizeError, !FixedFluidMaterialCadence));
         GpuMarker("Output", true);
         output.Draw(outputPixel, now, Options.Exposure);
         GpuMarker("Output", false);
+    }
+
+    void ReportSizeError(string? error)
+    {
+        if (error == null && ShaderError != sizeError) return;
+        sizeError = error;
+        if (ShaderError == error) return;
+        ShaderError = error;
+        ShadersChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Display-encoded RGBA8 export; dithering avoids reintroducing bands in PNGs.</summary>
@@ -602,8 +516,6 @@ public sealed partial class Renderer : IDisposable
         DetachDebugOutput();
         vertex?.Dispose(); outputPixel?.Dispose();
 
-        fluid?.Dispose();
-        rasterLight?.Dispose();
         foreach (var scene in scenes.Values) scene.Dispose();
         for (var i = resources.Count - 1; i >= 0; i--) resources[i].Dispose();
     }

@@ -27,7 +27,7 @@ public partial class ShaderRenderingTests
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Debug");
         using var canvasReference = new Renderer(canvasReferenceWindow.Handle, 160, 90, 8, 60, 1,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Spectrum");
-        var canvasParameters = renderer.ActiveShader!.Parameters;
+        var canvasParameters = renderer.ActiveShader!.Effects[0].Parameters;
         renderer.AttachDebugOutput(debugWindow.Handle, 300, 80, lowCost: lowCost);
         renderer.Render(false);
         var initialCanvas = renderer.ReadPixels(false);
@@ -59,7 +59,7 @@ public partial class ShaderRenderingTests
             Assert.That(renderer.DebugOutputError, Is.Null);
             Assert.That(renderer.ReadDebugPixels(), Is.EqualTo(reference.ReadPixels(false)).Within(lowCost ? 1 : 0), $"shared audio frame {frame}");
             Assert.That(renderer.SceneName, Is.EqualTo("Spectrum"));
-            Assert.That(renderer.ActiveShader!.Parameters, Is.SameAs(canvasParameters));
+            Assert.That(renderer.ActiveShader!.Effects[0].Parameters, Is.SameAs(canvasParameters));
             if (!drawCanvas) Assert.That(renderer.ReadPixels(false), Is.EqualTo(initialCanvas));
             else Assert.That(renderer.ReadPixels(false), Is.EqualTo(canvasReference.ReadPixels(false)), "Debug must not alter canvas rendering.");
             if (frame == 20)
@@ -68,7 +68,7 @@ public partial class ShaderRenderingTests
                 foreach (var target in new[] { renderer })
                 {
                     target.CompileScene("Debug");
-                    var parameters = target.Scenes.Single(s => s.Name == "Debug").Parameters!;
+                    var parameters = target.Scenes.Single(s => s.Name == "Debug").Effects[0].Parameters!;
                     parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), true);
                 }
                 Assert.That(renderer.ReloadScene("Debug"), Is.True);
@@ -116,7 +116,7 @@ public partial class ShaderRenderingTests
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: "Histogram");
         foreach (var renderer in new[] { debug, history })
         {
-            var parameters = renderer.ActiveShader!.Parameters!;
+            var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
             parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CombinedLevel"), combined);
         }
         long row = 0;
@@ -233,7 +233,7 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, width, height, Bands, 100,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         renderer.SelectScene("Spectrum");
-        var parameters = renderer.ActiveShader!.Parameters!;
+        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CompareSmoothers"), true);
         var output = new double[Bands * 4];
         for (int k = 0; k < Bands; k++) output[k * 4] = .25;
@@ -265,7 +265,7 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, Width, Height, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         renderer.SelectScene("Spectrum");
-        var parameters = renderer.ActiveShader!.Parameters!;
+        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         string[] names = ["ShowS", "ShowT", "ShowB", "ShowR"];
         for (int layer = 0; layer < names.Length; layer++)
             parameters.SetBoolean(parameters.Items.Single(p => p.Name == names[layer]), (layers & (1 << layer)) != 0);
@@ -359,15 +359,15 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Frame = 1; renderer.Render(false);
-        var fluid = renderer.Fluid;
+        var fluid = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
         fluid.SeedFilamentsForCheck(speed: 2);
         var dye = fluid.ReadDye();
         var material = fluid.ReadAge();
         var velocity = fluid.ReadVelocity();
-        var program = renderer.ActiveShader!.Program.Pixel;
+        var program = renderer.ActiveShader!.Effects[0].Display.Pixel;
         renderer.SetGraphicsOptions(new(.5));
-        Assert.That(renderer.Fluid, Is.SameAs(fluid));
-        Assert.That(renderer.ActiveShader.Program.Pixel, Is.SameAs(program));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(fluid));
+        Assert.That(renderer.ActiveShader.Effects[0].Display.Pixel, Is.SameAs(program));
         Assert.That(fluid.ReadDye(), Is.EqualTo(dye));
         Assert.That(fluid.ReadAge(), Is.EqualTo(material));
         Assert.That(fluid.ReadVelocity(), Is.EqualTo(velocity));
@@ -383,12 +383,12 @@ public partial class ShaderRenderingTests
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-        var parameters = renderer.ActiveShader!.Parameters!;
+        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
             .Single(p => p.Name == "PeriodicBoundary"), periodic);
         clock.Advance(); renderer.Render(false);
-        Assert.That(renderer.Fluid.Width, Is.EqualTo(512));
-        var check = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, Is.EqualTo(512));
+        var check = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.CheckProjection(((FluidEffect)renderer.ActiveShader!.Effects[0]).Programs);
         TestContext.Progress.WriteLine($"V4 periodic={periodic}: divergence {check.Before:G6} -> {check.After:G6}, curl error {check.CurlError:G6}");
         Assert.That(check.After, Is.LessThan(.01 * check.Before));
         Assert.That(check.CurlError, Is.LessThan(1e-4));
@@ -409,8 +409,8 @@ public partial class ShaderRenderingTests
             renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { AnalysisRow = frame }, 1);
             clock.Frame = frame; renderer.Render(false);
             int expected = frame * 60 / rate - (frame - 1) * 60 / rate + (frame == 1 ? 2 : 0);
-            Assert.That(renderer.Fluid.LastSteps, Is.EqualTo(expected), $"Frame {frame}, {rate} Hz");
-            Assert.That(renderer.Fluid.LastMaterialSteps, Is.EqualTo(1), "Pigment must advance on every display frame.");
+            Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastSteps, Is.EqualTo(expected), $"Frame {frame}, {rate} Hz");
+            Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastMaterialSteps, Is.EqualTo(1), "Pigment must advance on every display frame.");
         }
         renderer.ReadPixels(false);
         renderer.PollGpuTimings();
@@ -446,18 +446,18 @@ public partial class ShaderRenderingTests
             }
             renderer.Render(false);
         }
-        Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True,
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True,
             "Ordinary capture/display delay must not disable the inlet velocity.");
-        Assert.That(renderer.Fluid.ReadDye().Where((_, i) => i % 4 == 3).Max(), Is.GreaterThan(.01),
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye().Where((_, i) => i % 4 == 3).Max(), Is.GreaterThan(.01),
             "Live S must emit material even when analysis rows are shorter than presentation latency.");
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Max(), Is.GreaterThan(10));
 
         // Once the last row is genuinely stale, fresh material and inlet forcing stop.
         clock.Frame += 100;
-        renderer.Fluid.Clear();
+        ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Clear();
         renderer.Render(false);
-        Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero);
-        Assert.That(renderer.Fluid.ReadDye(), Is.All.Zero);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity(), Is.All.Zero);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye(), Is.All.Zero);
     }
 
     sealed class FluidClock(int rate) : TimeProvider
@@ -476,16 +476,16 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 1000,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Frame = 1; renderer.Render(false);
-        renderer.Fluid.SeedFilamentsForCheck(speed: 10);
-        var previous = renderer.Fluid.ReadDye();
+        ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.SeedFilamentsForCheck(speed: 10);
+        var previous = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye();
         bool movedWithoutPressure = false;
         for (int frame = 2; frame <= 14; frame++)
         {
             clock.Frame = frame; renderer.Render(false);
-            Assert.That(renderer.Fluid.LastMaterialSteps, Is.EqualTo(1));
-            var current = renderer.Fluid.ReadDye();
+            Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastMaterialSteps, Is.EqualTo(1));
+            var current = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye();
             Assert.That(current.All(v => float.IsFinite(v) && v >= 0), Is.True);
-            if (renderer.Fluid.LastSteps == 0)
+            if (((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.LastSteps == 0)
             {
                 Assert.That(current.Zip(previous, (a, b) => Math.Abs(a - b)).Max(), Is.GreaterThan(.001),
                     "High-speed transport must not freeze on frames without a pressure solve.");
@@ -504,18 +504,18 @@ public partial class ShaderRenderingTests
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-        var parameters = renderer.ActiveShader!.Parameters!;
+        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         var fluid = parameters.Items.Single(p => p.Name == "Fluid");
         var samples = Enumerable.Repeat(.1, Bands * 4).ToArray();
         long row = 0;
         Tick();
-        Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True);
         parameters.SetFloat(fluid.Children.Single(p => p.Name == "EmissionVelocity"), 0);
-        renderer.Fluid.Clear(); Tick();
-        Assert.That(renderer.Fluid.ReadVelocity(), Is.All.Zero, "Live changes must reach cached pass parameters.");
+        ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Clear(); Tick();
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity(), Is.All.Zero, "Live changes must reach cached pass parameters.");
         parameters.Reset();
-        renderer.Fluid.Clear(); Tick();
-        Assert.That(renderer.Fluid.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True, "Reset must invalidate cached pass parameters.");
+        ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Clear(); Tick();
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity().Any(v => Math.Abs(v) > 1e-5), Is.True, "Reset must invalidate cached pass parameters.");
         void Tick()
         {
             renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { AnalysisRow = row++ }, 1);
@@ -531,7 +531,7 @@ public partial class ShaderRenderingTests
         var clock = new RenderClock();
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-        var parameters = renderer.ActiveShader!.Parameters!;
+        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
         foreach (var path in new[] { "Fluid.EmissionVelocity", "Fluid.VelocityGain", "Fluid.Curl",
             "Fluid.Viscosity", "Emitter.Rate", "Emitter.MaterialGain", "Emitter.Capacity" })
         {
@@ -545,9 +545,9 @@ public partial class ShaderRenderingTests
             renderer.PostAudio(new(samples, Bands * 4, DateTime.UnixEpoch) { AnalysisRow = frame }, 1);
             clock.Advance(); renderer.Render(false);
             if (frame % 30 != 29) continue;
-            var velocity = renderer.Fluid.ReadVelocity();
-            var dye = renderer.Fluid.ReadDye();
-            var age = renderer.Fluid.ReadAge();
+            var velocity = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity();
+            var dye = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye();
+            var age = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadAge();
             Assert.That(velocity.All(v => float.IsFinite(v) && Math.Abs(v) < 1e4), Is.True);
             Assert.That(dye.All(v => float.IsFinite(v) && v >= 0), Is.True);
             Assert.That(age.All(float.IsFinite), Is.True);
@@ -565,10 +565,10 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
         clock.Advance(); renderer.Render(false);
-        renderer.Fluid.SeedFilamentsForCheck();
+        ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.SeedFilamentsForCheck();
         for (int frame = 0; frame < 60; frame++) { clock.Advance(); renderer.Render(false); }
-        var dye = renderer.Fluid.ReadDye();
-        int width = renderer.Fluid.Width, height = renderer.Fluid.Height;
+        var dye = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye();
+        int width = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, height = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height;
         for (int y = height / 3; y < 2 * height / 3; y++)
         for (int x = width / 4 + 4; x < 3 * width / 4 - 4; x += 4)
         {

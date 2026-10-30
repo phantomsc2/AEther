@@ -52,7 +52,7 @@ public class TimedSessionTests
         using var window = new Window();
         var source = new Source { Emit = false };
         await using var session = new Session(window.Handle, 1280, 720, source, Options(),
-            shaderDirectory: shaders.Root, initialScene: "Probe", graphicsOptions: new(1, SpectrumAggregation: 0));
+            shaderDirectory: shaders.Root, initialScene: "Spectrum", graphicsOptions: new(1, SpectrumAggregation: 0));
         session.Start();
         Assert.That(session.Renderer.Audio.SpectrumAggregation, Is.EqualTo(0), "Apply initial graphics options.");
         var analyzer = session.Analyzer;
@@ -79,7 +79,7 @@ public class TimedSessionTests
         using var window = new Window();
         var source = new Source { Emit = false };
         await using var session = new Session(window.Handle, 1280, 720, source, Options(),
-            shaderDirectory: shaders.Root, initialScene: "Probe");
+            shaderDirectory: shaders.Root, initialScene: "Spectrum");
         session.Start();
         var renderer = session.Renderer;
         renderer.SetGraphicsOptions(new(3, SpectrumAggregation: 0));
@@ -94,13 +94,13 @@ public class TimedSessionTests
         Assert.That(rejectedSource.TimedSubscribers, Is.Zero);
         Assert.That(rejectedSource.Disposals, Is.Zero, "Failed replacement sources remain caller-owned.");
         rejectedSource.Dispose();
-        renderer.SelectScene("Other");
-        var other = renderer.ActiveShader.Program.Pixel;
-        renderer.SelectScene("Probe");
+        renderer.SelectScene("Histogram");
+        var other = renderer.ActiveShader.Effects[0].Display.Pixel;
+        renderer.SelectScene("Spectrum");
         var scene = renderer.ActiveShader;
-        var program = scene.Program.Pixel;
-        var parameter = scene.Parameters.Items.Single(p => p.Name == "Gain");
-        scene.Parameters.SetFloat(parameter, .75f);
+        var program = scene.Effects[0].Display.Pixel;
+        var parameter = scene.Effects[0].Parameters.Items.Single(p => p.Name == "Gain");
+        scene.Effects[0].Parameters.SetFloat(parameter, .75f);
         // Any attempt to reload source/recompile on settings changes now fails.
         foreach (string file in Directory.GetFiles(Path.Combine(shaders.Root, "Scenes")))
             File.WriteAllText(file, "INVALID SHADER SOURCE");
@@ -144,10 +144,10 @@ public class TimedSessionTests
             Assert.That(renderer.Audio.SpectrumAggregation, Is.EqualTo(0), edit.Name);
             Assert.That(renderer.Audio.Seconds, Is.EqualTo(3), edit.Name);
             Assert.That(renderer.ActiveShader, Is.SameAs(scene), edit.Name);
-            Assert.That(scene.Program.Pixel, Is.SameAs(program), edit.Name);
-            Assert.That(renderer.Scenes.Single(s => s.Name == "Other").Program.Pixel, Is.SameAs(other), edit.Name);
-            Assert.That(renderer.Scenes.Single(s => s.Name == "Lazy").Parameters, Is.Null, edit.Name);
-            Assert.That(scene.Parameters.GetFloat(parameter), Is.EqualTo(.75f), edit.Name);
+            Assert.That(scene.Effects[0].Display.Pixel, Is.SameAs(program), edit.Name);
+            Assert.That(renderer.Scenes.Single(s => s.Name == "Histogram").Effects[0].Display.Pixel, Is.SameAs(other), edit.Name);
+            Assert.That(renderer.Scenes.Single(s => s.Name == "Debug").Effects, Is.Empty, edit.Name);
+            Assert.That(scene.Effects[0].Parameters.GetFloat(parameter), Is.EqualTo(.75f), edit.Name);
             Assert.That(renderer.Audio, Is.Not.SameAs(oldAudio), edit.Name);
             Assert.That(renderer.Audio.Profile, Is.SameAs(session.Analyzer.Profile), edit.Name);
             Assert.That(renderer.ReadHistogram(0), Is.All.Zero, edit.Name);
@@ -178,7 +178,7 @@ public class TimedSessionTests
             }
             foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl" })
                 File.Copy(Path.Combine(common, file), Path.Combine(Root, "Common", file));
-            foreach (string name in new[] { "Probe", "Other", "Lazy" })
+            foreach (string name in new[] { "Spectrum", "Histogram", "Debug" })
                 File.WriteAllText(Path.Combine(Root, "Scenes", name + ".hlsl"), """
                     #include "../Common/Inputs.hlsl"
                     cbuffer Parameters { float Gain = .5; };
@@ -277,7 +277,7 @@ public class TimedSessionTests
         var id = events.BeginPipeline();
         var source = new Source { Emit = false };
         await using var session = new Session(window.Handle, 1280, 720, source, Options(),
-            shaderDirectory: shaders.Root, initialScene: "Probe", logger: logger.ForContext("PipelineId", id), pipelineId: id);
+            shaderDirectory: shaders.Root, initialScene: "Spectrum", logger: logger.ForContext("PipelineId", id), pipelineId: id);
         session.Start();
         Assert.That(session.IsRunning, Is.True);
         var rejected = new Source { Emit = false };
@@ -317,7 +317,7 @@ public class TimedSessionTests
             Assert.That(source, Is.Not.Null);
             foreach (string file in new[] { "Inputs.hlsl", "Present.hlsl", "Postprocessing.hlsl" })
                 File.Copy(Path.Combine(source, file), Path.Combine(root, "Common", file));
-            File.WriteAllText(Path.Combine(root, "Scenes", "TimedProbe.hlsl"), """
+            File.WriteAllText(Path.Combine(root, "Scenes", "Spectrum.hlsl"), """
                 #include "../Common/Inputs.hlsl"
                 float4 PS(PSin input) : SV_Target { return float4(Spectrum0.Load(int3(0,0,0)).rgb, 1); }
                 """);
@@ -325,7 +325,7 @@ public class TimedSessionTests
             var clock = new Clock { Milliseconds = 20 };
             using var renderer = new AEther.Vortice.Renderer(window.Handle, 1280, 720, 1, 100,
                 shaderDirectory: root, timeProvider: clock);
-            renderer.SelectScene("TimedProbe");
+            renderer.SelectScene("Spectrum");
             for (int row = 0; row < 2; row++)
             {
                 double value = row == 0 ? .2 : .8;

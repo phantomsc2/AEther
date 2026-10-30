@@ -123,8 +123,8 @@ internal static partial class Program
                 shaderDirectory: shaders, timeProvider: clock, initialScene: scene);
             if (renderer.ShaderError != null) throw new Exception(renderer.ShaderError);
             renderer.Render(false);
-            if (renderer.Fluid.ReadDye().Any(v => v != 0)) throw new Exception("Fluid emitted in silence.");
-            var projection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
+            if (((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye().Any(v => v != 0)) throw new Exception("Fluid emitted in silence.");
+            var projection = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.CheckProjection(((FluidEffect)renderer.ActiveShader!.Effects[0]).Programs);
             if (projection.After > .01 * projection.Before || projection.CurlError > 1e-4)
                 throw new Exception("Pressure projection changed divergence or circulation.");
             for (int frame = 1; frame <= 60; frame++)
@@ -133,11 +133,11 @@ internal static partial class Program
                 renderer.PostAudio(new(samples, 256, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
                 clock.Frame = frame; renderer.Render(false);
             }
-            var dye = renderer.Fluid.ReadDye();
+            var dye = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadDye();
             if (dye.Any(v => !float.IsFinite(v) || v < 0) || dye.Max() < .01)
                 throw new Exception("Live input failed to emit finite material.");
             string Hash(float[] values) => Convert.ToHexString(SHA256.HashData(MemoryMarshal.AsBytes(values.AsSpan())));
-            var state = Hash(dye) + Hash(renderer.Fluid.ReadAge()) + Hash(renderer.Fluid.ReadVelocity());
+            var state = Hash(dye) + Hash(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadAge()) + Hash(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.ReadVelocity());
             File.WriteAllText(Path.Combine(output, scene.ToLowerInvariant() + "-fluid-state.sha256"), state);
             if (reference != null && state != reference) throw new Exception($"{scene} differs from the shared fluid reference.");
             reference = state;
@@ -146,7 +146,7 @@ internal static partial class Program
             {
                 renderer.Resize(size.Width, size.Height);
                 renderer.Render(false);
-                if (renderer.Fluid.Width != 512 || renderer.Fluid.Height != 512)
+                if (((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width != 512 || ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height != 512)
                     throw new Exception("Shared fluid grid changed with viewport size.");
             }
             Console.WriteLine($"{scene}: shared fluid material, projection, silence and resize checks passed.");

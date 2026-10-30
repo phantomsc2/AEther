@@ -49,11 +49,11 @@ public partial class ShaderRenderingTests
         renderer.AttachDebugOutput(preview.Handle,64,36);
         renderer.Render(false,renderDebug:true);
         Assert.That(renderer.SceneName,Is.Null);
-        Assert.That(renderer.GetSceneParameters("Debug"),Is.Null,"Preview settings must remain private.");
+        Assert.That(renderer.GetSceneSettings("Debug"),Is.Null,"Preview settings must remain private.");
         var original=renderer.ReadDebugPixels();
         Assert.That(original[1],Is.EqualTo(255));
         renderer.SelectScene("Debug");
-        renderer.ActiveShader!.Parameters!.SetBoolean(renderer.ActiveShader.Parameters.Items.Single(),true);
+        renderer.ActiveShader!.Effects[0].Parameters!.SetBoolean(renderer.ActiveShader.Effects[0].Parameters.Items.Single(),true);
         renderer.Render(false,renderDebug:true);
         Assert.That(renderer.ReadPixels(false)[0],Is.EqualTo(255));
         Assert.That(renderer.ReadDebugPixels(),Is.EqualTo(original));

@@ -1,3 +1,4 @@
+using AEther.Vortice;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using Microsoft.UI.Xaml;
@@ -28,6 +29,7 @@ internal sealed class OptionsEditor<T> where T : class
         FrameworkElement Build(PropertyDescriptor property)
         {
             var editor = CreateEditor(property);
+            editor.Tag = property.Name;
             AutomationProperties.SetName(editor, property.DisplayName);
             if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
             return editor;
@@ -98,49 +100,60 @@ internal sealed class OptionsEditor<T> where T : class
                 .FirstOrDefault(item => Equals(item.Tag, property.GetValue(Options))));
             return LabeledControl.Create(property.DisplayName, combo);
         }
-        if (property.PropertyType != typeof(int) && property.PropertyType != typeof(double))
+        if (property.PropertyType != typeof(int) && property.PropertyType != typeof(uint) && property.PropertyType != typeof(double))
             throw new InvalidOperationException($"Unsupported option type: {property.PropertyType}.");
         var range = property.Attributes[typeof(RangeAttribute)] as RangeAttribute
             ?? throw new InvalidOperationException($"Option {property.Name} needs a Range attribute.");
-        bool integral = property.PropertyType == typeof(int);
+        bool integral = property.PropertyType != typeof(double);
         var min = Convert.ToDouble(range.Minimum);
         var max = Convert.ToDouble(range.Maximum);
+        var scale = property.Attributes[typeof(NumericScaleAttribute)] as NumericScaleAttribute;
+        bool powers = scale?.PowersOfTwo == true, adaptive = scale?.Adaptive == true;
+        double Encode(double n) => powers ? Math.Log2(n) : n;
+        double Decode(double n) => powers ? Math.Pow(2, Math.Round(n)) : n;
+        double Normalize(double n) => Math.Clamp(powers ? Decode(Encode(Math.Max(min, n))) : integral ? Math.Round(n) : n, min, max);
         var step = integral ? 1 : (max - min) / 1000;
+        var initial = Convert.ToDouble(property.GetValue(Options));
         var number = new NumberBox
         {
-            Minimum = min, Maximum = max, Value = Convert.ToDouble(property.GetValue(Options)),
+            Minimum = min, Maximum = max, Value = initial,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            SmallChange = step, LargeChange = step * 10,
+            SmallChange = powers ? initial / 2 : step, LargeChange = powers ? initial : step * 10,
             NumberFormatter = new DecimalFormatter { FractionDigits = integral ? 0 : 12 },
         };
         var slider = new Slider
         {
-            Minimum = min, Maximum = max, Value = number.Value,
-            StepFrequency = step, SmallChange = step, LargeChange = step * 10,
+            Minimum = Encode(min), Maximum = Encode(adaptive ? Math.Min(max, Math.Max(min + 16, initial * 4)) : max),
+            Value = Encode(initial), StepFrequency = step, SmallChange = step, LargeChange = step * 10,
         };
         bool updating = false;
-        refresh.Add(() =>
+        void Display(double value)
         {
-            var value = Convert.ToDouble(property.GetValue(Options));
-            number.Value = value;
-            slider.Value = value;
-        });
+            updating = true;
+            try
+            {
+                number.Value = value;
+                if (powers) { number.SmallChange = value / 2; number.LargeChange = value; }
+                slider.Maximum = Math.Max(slider.Maximum, Encode(value));
+                slider.Value = Encode(value);
+            }
+            finally { updating = false; }
+        }
+        refresh.Add(() => Display(Convert.ToDouble(property.GetValue(Options))));
         void Apply(double value)
         {
             if (updating || refreshing || !double.IsFinite(value)) return;
-            value = Math.Clamp(integral ? Math.Round(value) : value, min, max);
-            updating = true;
-            try { number.Value = value; slider.Value = value; }
-            finally { updating = false; }
+            value = Normalize(value);
+            Display(value);
             Set(property, Convert.ChangeType(value, property.PropertyType));
         }
         SliderCommit.Bind(slider, value =>
         {
             if (updating || refreshing) return;
             updating = true;
-            try { number.Value = value; }
+            try { number.Value = Decode(value); }
             finally { updating = false; }
-        }, Apply);
+        }, value => Apply(Decode(value)));
         number.ValueChanged += (_, e) => Apply(e.NewValue);
         return NumericEditor.Create(property.DisplayName, number, slider);
     }

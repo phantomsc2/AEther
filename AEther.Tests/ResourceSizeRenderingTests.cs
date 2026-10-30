@@ -8,23 +8,87 @@ namespace AEther.Tests;
 
 public partial class ShaderRenderingTests
 {
+    static RasterOptions RasterSettings(Renderer r) => ((RasterEffect)r.ActiveShader!.Effects[0]).Options;
+    static FluidOptions FluidSettings(Renderer r) => ((FluidEffect)r.ActiveShader!.Effects[0]).Options;
+    static void SetRasterOptions(Renderer r, RasterOptions options) => ((RasterEffect)r.ActiveShader!.Effects[0]).Options = options;
+    static void SetFluidOptions(Renderer r, FluidOptions options) => ((FluidEffect)r.ActiveShader!.Effects[0]).Options = options;
+
+    static SceneDefinition FluidDefinition(params global::Vortice.DXGI.Format[] formats) => new("MandelFluid",
+        (d,c,s) => [new FluidEffect("Fluid",d,c,s,"MandelFluid.hlsl",new FluidOptions(128,128),formats)]);
+
+    [Test, Category("GPU")]
+    public void NamedInstancesKeepParametersAndConstantBuffersIndependent()
+    {
+        using var shaders = new SceneShaders("Spectrum");
+        File.WriteAllText(Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl"), """
+            cbuffer Parameters { float Gain = .5; };
+            float4 PS(PSin input):SV_Target { return DisplayOutput(Gain.xxx); }
+            """);
+        var setup = new SceneDefinition("Spectrum", (d,c,s) =>
+            [new FullscreenEffect("First",d,c,s,"Spectrum.hlsl"), new FullscreenEffect("Second",d,c,s,"Spectrum.hlsl")],
+            (effects,frame) => { effects[0].Draw(frame); effects[1].Draw(frame); });
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle,64,36,8,60,shaderDirectory:shaders.Path,
+            initialScene:"Spectrum",sceneDefinitions:[setup]);
+        var effects = renderer.ActiveShader!.Effects;
+        var first = effects[0].Parameters!;
+        var second = effects[1].Parameters!;
+        first.SetFloat(first.Items.Single(), .2f);
+        second.SetFloat(second.Items.Single(), .8f);
+        renderer.Render(false);
+        Assert.That(renderer.ReadPixels(false)[0], Is.EqualTo(204).Within(1), "The second pass must upload its own values.");
+        Assert.That(first.GetFloat(first.Items.Single()), Is.EqualTo(.2f));
+        Assert.That(PointField<object>(effects[0].Display,"parameterBuffer"),
+            Is.Not.SameAs(PointField<object>(effects[1].Display,"parameterBuffer")));
+        Assert.That(renderer.ReloadShaders(), Is.True);
+        effects = renderer.ActiveShader!.Effects;
+        Assert.That(effects[0].Parameters!.GetFloat(effects[0].Parameters!.Items.Single()), Is.EqualTo(.2f));
+        Assert.That(effects[1].Parameters!.GetFloat(effects[1].Parameters!.Items.Single()), Is.EqualTo(.8f));
+    }
+
+    [Test, Category("GPU")]
+    public void DeactivationReleasesFluidStorageAndSettingsSurviveRendererRestart()
+    {
+        using var shaders = new SceneShaders("MandelFluid");
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle,64,36,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
+        var effect = (FluidEffect)renderer.ActiveShader!.Effects[0];
+        effect.Options = new FluidOptions(128,64);
+        PointSet(renderer,"Emitter.Rate",.3f);
+        renderer.Render(false);
+        var original = effect.Simulation;
+        renderer.SelectScene(null);
+        Assert.That(effect.Simulation, Is.Null);
+        renderer.SelectScene(shaders.Scene); renderer.Render(false);
+        Assert.That(effect.Simulation, Is.Not.SameAs(original));
+        Assert.That(effect.Options, Is.EqualTo(new FluidOptions(128,64)));
+        Assert.That(renderer.ReloadShaders(), Is.True);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation, Is.Null);
+        var saved = renderer.GetSceneSettings(shaders.Scene)!;
+        using var nextWindow = new HiddenWindow();
+        using var next = new Renderer(nextWindow.Handle,64,36,8,60,shaderDirectory:shaders.Path);
+        next.RestoreSceneSettings(shaders.Scene,saved); next.SelectScene(shaders.Scene); next.Render(false);
+        var restored = (FluidEffect)next.ActiveShader!.Effects[0];
+        Assert.That(restored.Options, Is.EqualTo(new FluidOptions(128,64)));
+        Assert.That(restored.Parameters!.GetFloat(restored.Parameters.Items.Single(p=>p.Name=="Emitter").Children.Single(p=>p.Name=="Rate")), Is.EqualTo(.3f));
+    }
+
     [Test, Category("GPU")]
     public void LightSizesGrowShrinkAndPreserveUnrelatedAllocations()
     {
         using var shaders = new SceneShaders("MandelLight");
         string file = Path.Combine(shaders.Path, "Scenes", "MandelLight.hlsl");
-        File.WriteAllText(file, File.ReadAllText(file).Replace("uint2(513,1025)", "uint2(17,33)"));
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 80, 48, 8, 60, shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: shaders.Scene);
-        PointSet(renderer, "Sizes.Geometry.y", 0u);
+        SetRasterOptions(renderer, RasterSettings(renderer) with { Instances = 0u, LookupWidth = 17, LookupHeight = 33 });
         PointFeed(renderer, 0); renderer.Render(false);
-        var raster = PointField<RasterLight>(renderer, "rasterLight");
+        var raster = ((RasterEffect)renderer.ActiveShader!.Effects[0]).Raster!;
         var lookup = PointField<object>(raster, "lookup");
         var surface = PointField<object>(raster, "surface");
         Assert.That((raster.AllocatedSizes.SurfaceWidth, raster.AllocatedSizes.SurfaceHeight), Is.EqualTo((80, 48)));
         foreach (uint count in new uint[] { 0, 1, 2, 3, 7, 180, 700, 7 })
         {
-            PointSet(renderer, "Sizes.PointLights", count);
+            SetRasterOptions(renderer, RasterSettings(renderer) with { PointLights = count });
             renderer.Render(false);
             var records = PointRecords(renderer);
             Assert.That(records.Length, Is.EqualTo(count));
@@ -42,10 +106,12 @@ public partial class ShaderRenderingTests
         Assert.That(raster.LightsView, Is.SameAs(lastLights));
         Assert.That(raster.LightCount, Is.EqualTo(7));
         Assert.That(PointField<object>(raster, "lookup"), Is.SameAs(lookup));
-        PointSet(renderer, "Sizes.PointLights", uint.MaxValue);
+        SetRasterOptions(renderer, RasterSettings(renderer) with { PointLights = uint.MaxValue });
         Assert.DoesNotThrow(() => renderer.Render(false));
-        Assert.That(renderer.ActiveShader!.Parameters!.GetUnsigned(PointFind(renderer, "Sizes.PointLights")), Is.EqualTo(7));
+        Assert.That(RasterSettings(renderer).PointLights, Is.EqualTo(7));
         Assert.That(renderer.ShaderError, Does.Contain("PointLights"));
+        renderer.Render(false);
+        Assert.That(renderer.ShaderError, Does.Contain("PointLights"), "Rejected settings remain visible until another edit.");
         PointSet(renderer, "Lights.Radius", .2f); renderer.Render(false);
         Assert.That(renderer.ShaderError, Is.Null);
         Assert.That(PointField<object>(raster, "lookup"), Is.SameAs(lookup));
@@ -60,13 +126,11 @@ public partial class ShaderRenderingTests
     {
         using var shaders = new SceneShaders("MandelLight");
         string file = Path.Combine(shaders.Path, "Scenes", "MandelLight.hlsl");
-        File.WriteAllText(file, File.ReadAllText(file)
-            .Replace("uint2 RasterAirlightLut;", "uint2 RasterAirlightLut; uint2 RasterSurface; uint2 RasterAirlight;")
-            .Replace("uint2(513,1025)", "uint2(17,33), uint2(40,24), uint2(20,12)"));
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 80, 48, 8, 60, shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: shaders.Scene);
+        SetRasterOptions(renderer, RasterSettings(renderer) with { LookupWidth=17, LookupHeight=33, SurfaceWidth=40, SurfaceHeight=24, AirWidth=20, AirHeight=12 });
         PointFeed(renderer, 0); renderer.Render(false);
-        var raster = PointField<RasterLight>(renderer, "rasterLight");
+        var raster = ((RasterEffect)renderer.ActiveShader!.Effects[0]).Raster!;
         var surface = PointField<object>(raster, "surface");
         var air = PointField<object>(raster, "air");
         var lights = raster.LightsView;
@@ -74,11 +138,11 @@ public partial class ShaderRenderingTests
         renderer.Resize(96, 54); renderer.Render(false);
         Assert.That(PointField<object>(raster, "surface"), Is.SameAs(surface));
         Assert.That(PointField<object>(raster, "air"), Is.SameAs(air));
-        PointSet(renderer, "Sizes.RasterAirlight.x", 24u); renderer.Render(false);
+        SetRasterOptions(renderer, RasterSettings(renderer) with { AirWidth = (int)24u }); renderer.Render(false);
         Assert.That(PointField<object>(raster, "air"), Is.Not.SameAs(air));
         Assert.That(PointField<object>(raster, "surface"), Is.SameAs(surface));
         Assert.That(raster.LightsView, Is.SameAs(lights));
-        PointSet(renderer, "Sizes.RasterAirlightLut.x", 19u); renderer.Render(false);
+        SetRasterOptions(renderer, RasterSettings(renderer) with { LookupWidth = (int)19u }); renderer.Render(false);
         Assert.That(PointField<object>(raster, "lookup"), Is.Not.SameAs(lookup));
         Assert.That(raster.LightsView, Is.SameAs(lights));
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3).Any(v => v > 0), Is.True);
@@ -91,22 +155,22 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 128, 72, 8, 60, shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: shaders.Scene);
         renderer.Render(false);
-        Assert.That((renderer.Fluid.Width, renderer.Fluid.Height), Is.EqualTo((512, 512)));
-        var original = renderer.Fluid;
-        PointSet(renderer, "Sizes.FluidVelocity.x", 256u);
-        PointSet(renderer, "Sizes.FluidVelocity.y", 128u);
+        Assert.That((((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height), Is.EqualTo((512, 512)));
+        var original = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
+        SetFluidOptions(renderer, FluidSettings(renderer) with { Width = (int)256u });
+        SetFluidOptions(renderer, FluidSettings(renderer) with { Height = (int)128u });
         renderer.Render(false);
-        Assert.That((renderer.Fluid.Width, renderer.Fluid.Height), Is.EqualTo((256, 128)));
-        Assert.That(renderer.Fluid, Is.Not.SameAs(original));
-        var resized = renderer.Fluid;
+        Assert.That((((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height), Is.EqualTo((256, 128)));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.Not.SameAs(original));
+        var resized = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
         PointSet(renderer, "Emitter.Rate", .2f); renderer.Render(false);
-        Assert.That(renderer.Fluid, Is.SameAs(resized));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(resized));
         renderer.Resize(256, 144); renderer.Render(false);
-        Assert.That(renderer.Fluid, Is.SameAs(resized), "Canvas size changes with the same physical aspect preserve explicit fluid storage.");
-        PointSet(renderer, "Sizes.FluidVelocity.y", 127u); renderer.Render(false);
-        Assert.That(renderer.Fluid, Is.SameAs(resized));
-        Assert.That(renderer.ActiveShader!.Parameters!.GetUnsigned(PointFind(renderer, "Sizes.FluidVelocity.y")), Is.EqualTo(128));
-        var projection = renderer.Fluid.CheckProjection(renderer.FluidPrograms);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(resized), "Canvas size changes with the same physical aspect preserve explicit fluid storage.");
+        SetFluidOptions(renderer, FluidSettings(renderer) with { Height = (int)127u }); renderer.Render(false);
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(resized));
+        Assert.That(FluidSettings(renderer).Height, Is.EqualTo(128));
+        var projection = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.CheckProjection(((FluidEffect)renderer.ActiveShader!.Effects[0]).Programs);
         Assert.That(projection.After, Is.LessThan(projection.Before));
     }
 }

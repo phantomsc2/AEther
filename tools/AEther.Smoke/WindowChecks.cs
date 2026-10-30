@@ -51,6 +51,7 @@ internal static partial class Program
                 var graphics = Field<GraphicsPanel>("graphics");
                 bool shadersVisible() => shaderPanel.Visibility == Visibility.Visible;
                 Session? original = null;
+                AEther.Vortice.ShaderScene? beforeWatch = null;
                 Task? restart = null;
                 string? editedPath = null;
                 PointInt32 canvasPosition = default;
@@ -198,7 +199,7 @@ internal static partial class Program
                                 number.Value = .75;
                                 var row = (FrameworkElement)VisualTreeHelper.GetParent(VisualTreeHelper.GetParent(number));
                                 editedPath = (string)row.Tag;
-                                var values = current.Renderer.ActiveShader!.Parameters!;
+                                var values = current.Renderer.ActiveShader!.Effects[0].Parameters!;
                                 if (values.GetFloat(Find(values, (string)row.Tag)) != .75f)
                                     throw new Exception("Numeric editor did not update the shader.");
                                 var scenes = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
@@ -217,9 +218,10 @@ internal static partial class Program
                                 if (started != 1) throw new Exception("Expanding Audio restarted capture.");
                                 var checkbox = Descendants(shaderPanel.Content).OfType<CheckBox>().Single(c => c.Content?.ToString() == "ShowS");
                                 checkbox.IsChecked = false;
-                                var spectrum = current.Renderer.ActiveShader!.Parameters!;
+                                var spectrum = current.Renderer.ActiveShader!.Effects[0].Parameters!;
                                 if (spectrum.GetBoolean(Find(spectrum, "ShowS")))
                                     throw new Exception("Checkbox did not update the shader.");
+                                beforeWatch = current.Renderer.ActiveShader;
                                 if (added != null) File.WriteAllText(added, "float4 PS(PSin i):SV_TARGET { return float4(0.2,0.3,0.4,1); }");
                                 canvasWindow.AppWindow.Resize(new SizeInt32(800, 600));
                                 canvasWindow.AppWindow.Move(new PointInt32(canvasWindow.AppWindow.Position.X + 30,
@@ -242,13 +244,13 @@ internal static partial class Program
                                 stage++;
                                 break;
                             case 4:
-                                if (added != null && !current.Renderer.Scenes.Any(s => s.Name == "WatcherProbe")) return;
+                                if (added != null && ReferenceEquals(beforeWatch, current.Renderer.ActiveShader)) return;
                                 if (started != 1 || current != original) throw new Exception("Shader editing restarted audio capture.");
                                 if (!shadersVisible()) throw new Exception("Shader reload hid the inline settings.");
                                 if (added != null)
                                 {
                                     var dropdown = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
-                                    if (!dropdown.Items.Contains("WatcherProbe")) throw new Exception("Watcher failed to refresh scene UI.");
+                                    if (dropdown.Items.Contains("WatcherProbe")) throw new Exception("Unregistered HLSL must not become a scene.");
                                 }
                                 // This replay uses a logical clock after timestamped live capture.
                                 // Stop live rendering so it cannot consume and clear the synthetic
@@ -292,7 +294,7 @@ internal static partial class Program
                                     throw new Exception("Audio edit replaced the graphics session.");
                                 if (canvasWindow.AppWindow.Position != canvasPosition || canvasWindow.Title != "")
                                     throw new Exception("Audio edit moved or labeled the canvas.");
-                                var retained = current.Renderer.GetSceneParameters("Spectrum")!;
+                                var retained = current.Renderer.GetSceneSettings("Spectrum")!["Display"].Parameters!;
                                 if (current.Renderer.SceneName != null || retained.GetBoolean(Find(retained, "ShowS")))
                                     throw new Exception("Audio edit lost shader state.");
                                 var closedPicker = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
@@ -311,7 +313,7 @@ internal static partial class Program
                                     throw new Exception("Session restart moved the canvas.");
                                 if (started != 3 || ReferenceEquals(current, original) || !original!.Analyzer.Completion.IsCompleted)
                                     throw new Exception("Session restart did not stop the previous analysis worker.");
-                                var restored = current.Renderer.ActiveShader!.Parameters!;
+                                var restored = current.Renderer.ActiveShader!.Effects[0].Parameters!;
                                 var restoredPicker = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
                                 if (restoredPicker.SelectedItem?.ToString() != current.Renderer.SceneName)
                                     throw new Exception("Session restart did not synchronize the hub scene picker.");
@@ -320,7 +322,7 @@ internal static partial class Program
                                 shaderPanel.SelectScene("MandelPond");
                                 if (restoredPicker.SelectedItem?.ToString() != "MandelPond")
                                     throw new Exception("Programmatic selection did not synchronize the hub scene picker.");
-                                restored = current.Renderer.ActiveShader!.Parameters!;
+                                restored = current.Renderer.ActiveShader!.Effects[0].Parameters!;
                                 if (restored.GetFloat(Find(restored, editedPath!)) != .75f)
                                     throw new Exception("Session restart lost another scene's parameter values.");
                                 debugDraws = current.Renderer.DebugDrawCount;
@@ -409,36 +411,25 @@ internal static partial class Program
 
     static void CheckResourceSizeEditors()
     {
-        var code = AEther.Vortice.ShaderSource.Compile("""
-            struct ResourceSizes { uint2 FluidVelocity; uint PointLights; };
-            cbuffer Parameters { ResourceSizes Sizes = { uint2(512,512), 180 }; };
-            float4 PS() : SV_Target { return Sizes.PointLights; }
-            """, "PS", "SizeEditors.hlsl", "ps_5_0");
-        using var reflection = Vortice.D3DCompiler.Compiler.Reflect<Vortice.Direct3D11.Shader.ID3D11ShaderReflection>(code.Span);
-        var values = new AEther.Vortice.ShaderParameters(reflection.GetConstantBufferByName("Parameters"));
-        void Check(string path, double numberValue, double sliderValue, uint expected)
+        var fluid = new OptionsEditor<AEther.Vortice.FluidOptions>(new(), v => v with { });
+        var raster = new OptionsEditor<AEther.Vortice.RasterOptions>(new(), v => v with { });
+        void Check(DependencyObject root, string name, double value, double expectedSlider)
         {
-            var parameter = Find(values, path);
-            var row = (Grid)typeof(ShaderPanel).GetMethod("Editor", BindingFlags.NonPublic | BindingFlags.Static)!
-                .Invoke(null, new object[] { values, parameter })!;
-            var controls = row.Children.OfType<Grid>().Single();
-            var number = controls.Children.OfType<NumberBox>().Single();
-            var slider = controls.Children.OfType<Slider>().Single();
-            number.Value = numberValue;
-            if (values.GetUnsigned(parameter) != expected || slider.Value != sliderValue)
-                throw new Exception($"Size editor did not commit {path} as an integer.");
-            if (path.Contains("FluidVelocity"))
-            {
-                slider.Value = 7;
-                if (values.GetUnsigned(parameter) != 128 || number.Value != 128)
-                    throw new Exception("Fluid slider must select power-of-two dimensions.");
-            }
-            else if (slider.Maximum < numberValue)
-                throw new Exception("Integer numeric entry did not extend its slider range.");
+            var row = LogicalChildren(root).OfType<Grid>().Single(g => g.Tag as string == name);
+            var number = LogicalChildren(row).OfType<NumberBox>().Single();
+            var slider = LogicalChildren(row).OfType<Slider>().Single();
+            number.Value = value;
+            if (slider.Value != expectedSlider) throw new Exception($"Shared size editor failed: {name}");
         }
-        Check("Sizes.FluidVelocity.x", 256, 8, 256);
-        Check("Sizes.FluidVelocity.y", 511, 9, 512);
-        Check("Sizes.PointLights", 2000, 2000, 2000);
+        Check(fluid.Content, "Width", 256, 8);
+        if (fluid.Options.Width != 256) throw new Exception("Fluid width did not commit.");
+        Check(fluid.Content, "Height", 511, 9);
+        if (fluid.Options.Height != 512) throw new Exception("Fluid dimensions must snap to powers of two.");
+        var height = LogicalChildren(fluid.Content).OfType<Grid>().Single(g => g.Tag as string == "Height");
+        LogicalChildren(height).OfType<Slider>().Single().Value = 7;
+        if (fluid.Options.Height != 128) throw new Exception("Fluid slider must select powers of two.");
+        Check(raster.Content, "PointLights", 2000, 2000);
+        if (raster.Options.PointLights != 2000) throw new Exception("Unsigned count did not commit.");
     }
 
     static void CheckEventSummary()

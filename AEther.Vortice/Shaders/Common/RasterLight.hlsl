@@ -1,5 +1,6 @@
 #ifndef AETHER_RASTER_LIGHT
 #define AETHER_RASTER_LIGHT
+cbuffer RasterConstants { uint PointLightCount; };
 #include "Projection.hlsl"
 
 // Scene properties; the backend owns allocation and the authoritative count.
@@ -13,7 +14,7 @@ StructuredBuffer<PointLight> PointLights;
 [numthreads(64,1,1)]
 void PreparePointLights(uint3 id : SV_DispatchThreadID)
 {
-    uint count=Sizes.PointLights;
+    uint count=PointLightCount;
     if (id.x<count) PointLightOutput[id.x]=EvaluateLight(id.x);
 }
 
@@ -41,7 +42,7 @@ float4 GeometryProject(float3 world)
 float4 RasterSurfacePS(GeometryOutput input) : SV_Target
 {
     float3 sum=0,extinction=AirExtinction();
-    uint count=Sizes.PointLights;
+    uint count=PointLightCount;
     [loop] for (uint i=0;i<count;++i)
     {
         PointLight light=PointLights[i];
@@ -69,7 +70,7 @@ float4 IntegrateRasterAirlight(int2 pixel)
     float3 sum=0,scatter=AirScatter(),extinction=AirExtinction();
     uint w,h; RasterAirlightLut.GetDimensions(w,h);
     float4 layout=float4((w-1.0)/w,(h-1.0)/h,.5/w,.5/h);
-    uint count=Sizes.PointLights;
+    uint count=PointLightCount;
     [branch] if (any(scatter>0))
     [loop] for (uint i=0;i<count;++i)
     {

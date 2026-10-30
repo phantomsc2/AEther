@@ -1,22 +1,27 @@
 # Shader authoring
 
-Each top-level `AEther.Vortice/Shaders/Scenes/*.hlsl` file is one scene. Its filename
-without the extension is its identity and display name. Shared HLSL lives in
-`Shaders/Common`; it is not discovered as scenes. Source includes use quoted paths
-relative to the including file. `Common/Inputs.hlsl` is supplied automatically and
-can also be explicitly included (it has an include guard).
+Scenes are registered in `SceneDefinition.Defaults` with short C# effect setup.
+Each entry names its HLSL source and constructs the required fullscreen, fluid,
+or raster effect. The setup declares fluid attachment formats and allocation
+defaults. Adding or changing composition requires a .NET build; HLSL edits and
+ordinary parameter defaults still reload directly. Unregistered HLSL files do
+not appear in the selector. Registered entries with missing sources are omitted.
 
-The IDE source tree is preferred when launching in the repository. Deployed builds
-copy the same directory structure beside the executable. The recursive watcher
-debounces saves, creation, renames and deletion by 250 ms. No .NET build is needed
-for shader edits, parameter changes or scene discovery.
+Shared HLSL lives in `Shaders/Common`. Includes use quoted paths relative to the
+including file. `Common/Inputs.hlsl` is supplied automatically and has an include
+guard. Repository launches prefer the source tree; deployed builds use the copied
+Shaders directory. The recursive watcher debounces file changes by 250 ms.
 
-Procedural triangle scenes can use the [geometry contract](geometry-contract.md):
-HLSL declares default counts in Parameters.Sizes and evaluates vertices; the host
-executes one direct instanced draw. See [resource sizes](resource-sizes.md). The [RasterLight contract](raster-airlight-contract.md)
-supplies point-light surfaces and precalculated homogeneous single-scattering
-airlight, with shader-emitted position/intensity records. MandelLight uses this
-single raster backend.
+Each effect owns its programs, parameters, bindings and persistent storage.
+Reflection describes parameter layouts and binding slots and validates explicitly
+configured interfaces. It does not infer effects or their lifecycles. Identical
+resource names in separate effect instances identify different bound resources.
+See [effect ownership and sizes](resource-sizes.md).
+
+Procedural triangle scenes use the [geometry contract](geometry-contract.md):
+HLSL evaluates vertices and C# supplies direct instanced draw counts. The
+[RasterLight contract](raster-airlight-contract.md) supplies point-light surfaces
+and homogeneous single-scattering airlight, with shader-emitted light records.
 
 Perspective scenes share the [HLSL projection contract](projection-contract.md)
 for shader-owned cameras, vertical field of view, near/far depth mapping, rays,
@@ -290,7 +295,7 @@ defaults, offsets and bindings. Byte offsets are used only to serialize values i
 the compiled layout. No author-assigned `register` or `packoffset` is required.
 
 Fluid scenes use the [plain HLSL fluid contract](fluid-contract.md): reserved
-`Fluid.PeriodicBoundary`, `Sizes.FluidVelocity` and `Fluid.Viscosity` controls,
+`Fluid.PeriodicBoundary`, C# fluid Width/Height options and `Fluid.Viscosity` controls,
 a scene-defined velocity boundary, and optional material structs reflected from
 matching `PredictMaterial`/`UpdateMaterial` output signatures. All six scenes
 share one flow solver. Material meanings, emission and decay belong to HLSL.
@@ -324,10 +329,10 @@ over the same display interval using the same Mean/RMS/Max setting.
 It displays A left/red and B right/cyan using the same stereo average and linear
 scale. `FilteredHistogram0/1` remain aliases for `Histogram0/1`.
 
-Using `FluidVelocity` or `FluidMaterial0..7` in the final program requests the
-shared fluid backend; `FluidSampler` samples the published textures. Material
-attachments come from the reflected HLSL output struct, with no engine-defined
-dye/age channels. Ring emission, capacity and weighted birth/frequency live in
+A fluid effect explicitly declares material attachment formats in C# and exposes
+`FluidVelocity`, `FluidMaterial0..7` and `FluidSampler` to its display shader.
+HLSL defines payload semantics and evolution; reflection validates output formats.
+Ring emission, capacity and weighted birth/frequency live in
 `Common/RingFluidMaterial.hlsl`. See [the fluid contract](fluid-contract.md).
 
 ## Existing scene mappings
@@ -397,9 +402,9 @@ Monitor-specific white level and DPI follow the canvas window automatically.
 A reload builds a complete candidate set before swapping programs, parameter layouts,
 bindings and UI. Failure preserves the previous set. Removing the active scene clears selection; an empty scene directory is supported.
 Startup and reload never choose a scene implicitly.
-Compatible fluid state survives reloads; scene changes and resize reset it.
+Successful shader reload and scene deactivation reset effect storage. Dimension changes replace affected resources; unchanged fluid dimensions and physical aspect preserve simulation storage.
 
-Compilation currently runs on the window thread and rebuilds all discovered scenes,
+Compilation currently runs on the window thread and rebuilds the active registered scene and defers inactive compilation,
 so saving can briefly pause drawing. Capture and analysis continue independently.
 The HLSL compiler processes includes, conditionals and include guards. The host
 only opens requested files relative to their including file.
@@ -412,9 +417,9 @@ dotnet run --project tools/AEther.Smoke -- . --shader-authoring-only
 dotnet run --project tools/AEther.Smoke -- . --windows-watcher-only
 ```
 
-The focused smoke check renders all discovered scenes with synthetic audio, checks reflected
+The focused smoke check renders all registered scenes with synthetic audio, checks reflected
 struct/vector/bool defaults and uploads, changes slots and declaration order, exercises
-add/remove/reset and failed-reload rollback, and verifies watcher discovery and shader
+registered source removal/reset and failed-reload rollback, and verifies watcher reload and shader
 window controls without restarting capture. PNGs go to the ignored smoke artifacts folder.
 Use `--output-only` for presentation/export checks and `--fluid-only` for the
 shared fluid solver/material checks. Retired scene-specific smoke modes are removed.
