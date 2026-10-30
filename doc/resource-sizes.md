@@ -37,6 +37,12 @@ rounded upward after division by eight. See [Froxel1](froxel1.md).
 (8..256, default 86). It shares the volume allocator but has no point-light or
 surface resources. Spectrum width supplies the ring's arc count automatically.
 
+`Froxel3Effect.CloudOptions` accepts `Froxel3Options`: DepthSlices 8..256 (default
+86), Instances 0..65535 (default 1024), and LightingArcs 4/8/16/32 (default 8).
+The grid follows the canvas at 8x reduction per axis; surface color and depth
+follow full canvas resolution. Its two-row spectrum prefix texture follows
+audio width automatically. See [Froxel3](froxel3.md).
+
 | Option | Meaning/default |
 | --- | --- |
 | Fluid Width/Height | Velocity, material and pressure grid; 512x512 |

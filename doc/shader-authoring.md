@@ -257,6 +257,13 @@ survive hot reload; use Reset defaults to load the complete new reference preset
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
 sample counts show grain; raising quality costs GPU time.
 
+## Froxel3 prototype
+
+`Froxel3` combines adaptive spectrum-ring lighting with heterogeneous fog and a
+slow procedural octahedron cloud. Fog and raster surfaces share a fixed arc
+budget, independent of spectrum width. See [Froxel3](froxel3.md) for the
+approximation, controls, GPU passes, and measurements.
+
 ## Froxel2 prototype
 
 `Froxel2` uses analytic continuous ring-arc lighting from the current stereo

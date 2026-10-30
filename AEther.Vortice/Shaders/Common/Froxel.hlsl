@@ -105,7 +105,7 @@ float3 FroxelRadiance(float2 uv)
 {
     return FroxelIntegrated.SampleLevel(FroxelSampler,float3(uv,1-.5/FroxelDepth),0).rgb;
 }
-#ifndef FROXEL_CUSTOM_SOURCE
+#if !defined(FROXEL_CUSTOM_SOURCE) || defined(FROXEL_CUSTOM_RASTER)
 #include "FroxelRaster.hlsl"
 #endif
 #endif

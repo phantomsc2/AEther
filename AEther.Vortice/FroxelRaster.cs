@@ -20,7 +20,7 @@ internal sealed class FroxelRaster : IDisposable
         {
             Geometry=new(device,source,"FroxelGeometryVS",file,"vs_5_0");
             Surface=new(device,source,"FroxelSurfacePS",file);
-            var bindings=SceneEffect.FrameBindings.Concat(["FroxelConstants","FroxelLights"]);
+            var bindings=SceneEffect.FrameBindings.Concat(["FroxelConstants","FroxelLights","RingPrefix"]);
             Geometry.ValidateBindings(bindings); Surface.ValidateBindings(bindings);
             depthState=device.CreateDepthStencilState(new DepthStencilDescription {
                 DepthEnable=true,DepthWriteMask=DepthWriteMask.All,DepthFunc=ComparisonFunction.Less,StencilEnable=false });

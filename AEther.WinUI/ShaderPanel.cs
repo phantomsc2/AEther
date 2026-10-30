@@ -114,7 +114,13 @@ public sealed class ShaderPanel : UserControl
                 }
                 if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
             }
-            if (effect is Froxel2Effect ring)
+            if (effect is Froxel3Effect cloud)
+            {
+                var editor = new OptionsEditor<Froxel3Options>(cloud.CloudOptions, v => v with { }, cloud.DefaultCloudOptions);
+                editor.Changed += (_, _) => cloud.CloudOptions = editor.Options;
+                AddOptions(editor.Content);
+            }
+            else if (effect is Froxel2Effect ring)
             {
                 var editor = new OptionsEditor<Froxel2Options>(ring.DepthOptions, v => v with { }, ring.DefaultDepthOptions);
                 editor.Changed += (_, _) => ring.DepthOptions = editor.Options;

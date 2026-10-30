@@ -10,8 +10,15 @@ struct FroxelVertex
     nointerpolation float3 Normal : TEXCOORD1;
     nointerpolation float3 Albedo : TEXCOORD2;
 };
+#ifdef FROXEL_CUSTOM_RASTER
+FroxelVertex EvaluateFroxelVertex(uint vertex, uint instance);
+float3 EvaluateFroxelSurface(float3 world, float3 normal, float3 albedo);
+#endif
 FroxelVertex FroxelGeometryVS(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
 {
+#ifdef FROXEL_CUSTOM_RASTER
+    return EvaluateFroxelVertex(vertex,instance);
+#else
     uint seed = FroxelHash(instance+17);
     float a = 2*FroxelPi*FroxelRandom(seed) + T*lerp(1.3,2.5,FroxelRandom(seed+1));
     float b = 2*FroxelPi*FroxelRandom(seed+2) + T*lerp(3,5,FroxelRandom(seed+3));
@@ -32,9 +39,13 @@ FroxelVertex FroxelGeometryVS(uint vertex : SV_VertexID, uint instance : SV_Inst
     output.Albedo = lerp(float3(.25,.32,.4),float3(.85,.8,.7),FroxelRandom(seed+7));
     output.Position = ProjectionClip(FroxelCamera(),output.World);
     return output;
+#endif
 }
 float4 FroxelSurfacePS(FroxelVertex input) : SV_Target
 {
+#ifdef FROXEL_CUSTOM_RASTER
+    return float4(min(EvaluateFroxelSurface(input.World,input.Normal,input.Albedo),65504),1);
+#else
     float3 sum = 0;
     [loop] for(uint i=0;i<FroxelLightCount;++i)
     {
@@ -46,6 +57,7 @@ float4 FroxelSurfacePS(FroxelVertex input) : SV_Target
         sum += input.Albedo*diffuse*light.Intensity*FroxelLightTransmittance(input.World,light.Position)/(r2+radius*radius);
     }
     return float4(min(sum,65504),1);
+#endif
 }
 // Prefix textures store values at the FAR boundary of each segment.
 // Reconstruct the remaining fraction analytically instead of interpolating prefixes in Z.

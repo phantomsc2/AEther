@@ -25,7 +25,7 @@ public class FroxelEffect : SceneEffect
     internal ID3D11Texture3D IntegratedTexture => integrated!.Texture;
 
     internal FroxelEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file,
-        FroxelOptions options, bool customSource = false) : base(name, device, context, source, file)
+        FroxelOptions options, bool customSource = false, bool enableRaster = false) : base(name, device, context, source, file)
     {
         this.options = options; DefaultOptions = options; this.customSource = customSource;
         try
@@ -33,9 +33,9 @@ public class FroxelEffect : SceneEffect
             if (!customSource) lightsProgram = new(device, source, "PrepareFroxelLights", file, "cs_5_0");
             injectProgram = new(device, source, "InjectFroxels", file, "cs_5_0");
             integrateProgram = new(device, source, "IntegrateFroxels", file, "cs_5_0");
-            if (!customSource) raster = new(device, context, source, file);
+            if (!customSource || enableRaster) raster = new(device, context, source, file);
             var available = FrameBindings.Concat(["FroxelConstants", "FroxelLights", "FroxelLightOutput",
-                "FroxelSource", "FroxelSourceOutput", "FroxelIntegrated", "FroxelIntegratedOutput", "FroxelSampler", "FroxelSurface", "FroxelSurfaceDepth"]);
+                "FroxelSource", "FroxelSourceOutput", "FroxelIntegrated", "FroxelIntegratedOutput", "FroxelSampler", "FroxelSurface", "FroxelSurfaceDepth", "RingPrefix"]);
             foreach (var program in new[] { Display, lightsProgram, injectProgram, integrateProgram }.OfType<ShaderProgram>()) program.ValidateBindings(available);
             Parameters = ShaderParameters.Merge(new[] { Display, lightsProgram, injectProgram, integrateProgram, raster?.Geometry, raster?.Surface }
                 .OfType<ShaderProgram>().Select(p => p.Parameters));
@@ -49,6 +49,7 @@ public class FroxelEffect : SceneEffect
         catch { Dispose(); throw; }
     }
     protected override void RestoreSizes(object? sizes) { if (sizes is FroxelOptions value) Options = value; }
+    protected virtual void ValidateOptions(FroxelOptions requested) { }
 
     void Unbind()
     {
@@ -58,6 +59,7 @@ public class FroxelEffect : SceneEffect
     }
     void Configure(FroxelOptions requested, int width, int height)
     {
+        ValidateOptions(requested);
         var dimensions = requested.Resolve(width, height);
         Volume? nextSource = null, nextIntegrated = null;
         LightStorage? nextLights = null;
