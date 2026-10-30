@@ -7,10 +7,9 @@ cbuffer Parameters
     bool ShowB = true;
     bool ShowR = true;
     bool ShowSum = false;
-    bool CompareSmoothers = false;
 };
 #include "../Common/SpectrumView.hlsl"
 float4 PS(PSin input) : SV_Target
 {
-    return DrawSpectrum(input.UV, Resolution.x, ShowS, ShowT, ShowB, ShowR, ShowSum, CompareSmoothers);
+    return DrawSpectrum(input.UV, ShowS, ShowT, ShowB, ShowR, ShowSum);
 }

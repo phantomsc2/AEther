@@ -224,39 +224,6 @@ public partial class ShaderRenderingTests
 
     const int Width = 96, Height = 54, Bands = 32;
     [Test, Category("GPU")]
-    public void SpectrumComparisonShowsLogLeftAndComplexRightFromTheSameStereoAverage()
-    {
-        const int width = 128, height = 72;
-        using var shaders = new SceneShaders("Spectrum");
-        using var window = new HiddenWindow();
-        var clock = new RenderClock();
-        using var renderer = new Renderer(window.Handle, width, height, Bands, 100,
-            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
-        renderer.SelectScene("Spectrum");
-        var parameters = renderer.ActiveShader!.Effects[0].Parameters!;
-        parameters.SetBoolean(parameters.Items.Single(p => p.Name == "CompareSmoothers"), true);
-        var output = new double[Bands * 4];
-        for (int k = 0; k < Bands; k++) output[k * 4] = .25;
-        renderer.PostAudio(new SampleEvent<double>(output, output.Length, DateTime.UnixEpoch)
-            { AnalysisRow = 0, ObservedAmplitude = Enumerable.Repeat(.5, Bands).ToArray(),
-                LogSmoothedAmplitude = Enumerable.Repeat(.25, Bands).ToArray(),
-                ComplexSmoothedAmplitude = Enumerable.Repeat(.75, Bands).ToArray() }, 1);
-        clock.Advance(); renderer.Render(false);
-        var pixels = renderer.ReadPixels(false);
-        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++)
-        {
-            int offset = 4 * (y * width + x);
-            double position = 2 * Math.Abs((x + .5) / width - .5);
-            bool marker = Math.Abs(position - .5) < 1.5 / width;
-            bool a = x < width / 2 && position < .25;
-            bool b = x >= width / 2 && position < .75;
-            Assert.That(pixels[offset], Is.EqualTo(marker || a ? 255 : 0));
-            Assert.That(pixels[offset + 1], Is.EqualTo(marker || b ? 255 : 0));
-            Assert.That(pixels[offset + 2], Is.EqualTo(marker || b ? 255 : 0));
-        }
-    }
-
-    [Test, Category("GPU")]
     public void SpectrumLayerVisibilityAndRawFallback([Range(0, 15)] int layers, [Values(false, true)] bool showSum)
     {
         using var shaders = new SceneShaders("Spectrum");

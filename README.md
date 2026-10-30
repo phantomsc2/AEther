@@ -7,9 +7,7 @@ Audio analysis and audio-reactive DirectX visualization on Windows using NAudio.
 The original STBR splitter is preceded by an independent Kalman smoother.
 Choose log-amplitude smoothing (A) or complex-resonator smoothing (B), with
 explicit acceleration-noise intensities and a fixed measurement-noise floor.
-Spectrum's `CompareSmoothers` view shows both on the same input, A left/red and
-B right/cyan, with raw amplitude marked in white. Normal S/T/B/R controls retain
-their original meaning. See [models and comparison](doc/kalman-smoothing.md).
+See [smoothing models](doc/kalman-smoothing.md).
 
 The Splitter's **Frequency tilt** slider applies a power-law gain after decomposition,
 preserving linear amplitude response: 0 = None, +3 dB/octave (default),

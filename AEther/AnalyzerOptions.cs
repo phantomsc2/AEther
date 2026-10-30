@@ -107,7 +107,7 @@ namespace AEther
 
         [Category("Smoother")]
         [DisplayName("Splitter input")]
-        [Description("Both smoothers run on identical observations. Select which linear amplitude feeds the original splitter. Spectrum CompareSmoothers shows A left, B right, using the same stereo average.")]
+        [Description("Both smoothers run on identical observations. Select which linear amplitude feeds the original splitter.")]
         public SmoothingMode SmoothingMode { get; set; } = SmoothingMode.LogAmplitude;
 
         [Category("Smoother")]

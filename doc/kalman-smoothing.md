@@ -111,22 +111,7 @@ both backend state and the splitter's history. Missing packets are not zero data
 Overlapping filterbank measurements remain temporally/spatially correlated; the
 noise model is an explicit working approximation, not calibrated confidence.
 
-## Same-input A/B comparison
-
-Enable `CompareSmoothers` in Spectrum's shader properties:
-
-- Left/red: A's output.
-- Right/cyan: B's output.
-- White marker: raw observed magnitude.
-
-Both sides show the arithmetic mean of the same two audio channels (mono is
-mirrored), on the same linear amplitude scale, from the same analysis tick.
-This avoids confusing stereo differences with model differences. Input gain
-controls their common amplitude scale; no diagnostic squash or normalization
-changes the model output. Comparison overrides Spectrum's decomposition toggles
-only while enabled. The selected mode still drives the original splitter and
-other scenes. Normal Spectrum mode restores the original stereo S/T/B/residual
-view and raw fallback (the splitter input, now smoothed).
+## Diagnostic data
 
 `SampleEvent` exposes callback-lifetime linear arrays `ObservedAmplitude`,
 `LogSmoothedAmplitude`, and `ComplexSmoothedAmplitude`. Renderer diagnostic row 1
