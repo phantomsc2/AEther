@@ -97,27 +97,58 @@ public sealed class ShaderPanel : UserControl
         if (renderer?.ActiveShader is not { } scene) return;
         foreach (var effect in scene.Effects)
         {
-            var group = new StackPanel { Spacing = 4 };
+            var group = new ShaderGroupLayout();
+            void AddOptions(StackPanel content)
+            {
+                var ungrouped = new StackPanel { Spacing = 4 };
+                while (content.Children.Count > 0)
+                {
+                    var child = content.Children[0];
+                    content.Children.RemoveAt(0);
+                    if (child is Expander expander)
+                    {
+                        expander.IsExpanded = true;
+                        if (ungrouped.Children.Count > 0) { group.Children.Add(ungrouped); ungrouped = new StackPanel { Spacing = 4 }; }
+                        group.Children.Add(child);
+                    }
+                    else ungrouped.Children.Add(child);
+                }
+                if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
+            }
             if (effect is FroxelEffect froxel)
             {
                 var editor = new OptionsEditor<FroxelOptions>(froxel.Options, v => v with { }, froxel.DefaultOptions);
                 editor.Changed += (_, _) => froxel.Options = editor.Options;
-                group.Children.Add(editor.Content);
+                AddOptions(editor.Content);
             }
             if (effect is FluidEffect fluid)
             {
                 var editor = new OptionsEditor<FluidOptions>(fluid.Options, v => v with { }, fluid.DefaultOptions);
                 editor.Changed += (_, _) => fluid.Options = editor.Options;
-                group.Children.Add(editor.Content);
+                AddOptions(editor.Content);
             }
             if (effect is RasterEffect raster)
             {
                 var editor = new OptionsEditor<RasterOptions>(raster.Options, v => v with { }, raster.DefaultOptions);
                 editor.Changed += (_, _) => raster.Options = editor.Options;
-                group.Children.Add(editor.Content);
+                AddOptions(editor.Content);
             }
             if (effect.Parameters is { } values)
-                foreach (var parameter in values.Items) group.Children.Add(Editor(values, parameter));
+            {
+                var ungrouped = new StackPanel { Spacing = 4 };
+                foreach (var parameter in values.Items)
+                {
+                    if (parameter.Children.Count != 0)
+                    {
+                        if (ungrouped.Children.Count > 0) { group.Children.Add(ungrouped); ungrouped = new StackPanel { Spacing = 4 }; }
+                        group.Children.Add(Editor(values, parameter));
+                    }
+                    else ungrouped.Children.Add(Editor(values, parameter));
+                }
+                if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
+            }
+            foreach (var child in group.Children.OfType<FrameworkElement>())
+                child.VerticalAlignment = VerticalAlignment.Top;
             parameters.Children.Add(new Expander
             {
                 Header = effect.Name, Content = group, IsExpanded = true,
@@ -134,7 +165,7 @@ public sealed class ShaderPanel : UserControl
             foreach (var child in parameter.Children) children.Children.Add(Editor(values, child));
             return new Expander
             {
-                Header = parameter.Name, Content = children, IsExpanded = false,
+                Header = parameter.Name, Content = children, IsExpanded = true,
                 HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
         }

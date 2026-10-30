@@ -10,6 +10,7 @@ public sealed class AudioPanel : UserControl
     public AudioPanel(AnalyzerOptions? options = null)
     {
         editor = new(options?.Copy() ?? new(), value => value.Copy(), new());
+        foreach (var group in editor.Content.Children.OfType<Expander>()) group.IsExpanded = true;
         Content = editor.Content;
         editor.Changed += (_, _) => SettingsChanged?.Invoke(this, EventArgs.Empty);
     }

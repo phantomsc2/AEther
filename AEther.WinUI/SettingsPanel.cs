@@ -2,7 +2,12 @@ using AEther.NAudio;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using CommunityToolkit.WinUI.Controls;
+using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Input;
+using Microsoft.UI.Xaml.Media;
+using Windows.System;
 using Serilog;
 
 namespace AEther.WinUI;
@@ -14,7 +19,7 @@ public sealed class SettingsPanel : UserControl
     readonly ComboBox scenePicker = new() { Name = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ShaderPanel shaders;
     bool refreshingScenes;
-    internal Grid Columns { get; } = new() { Padding = new Thickness(12), ColumnSpacing = 4, RowSpacing = 8 };
+    internal Grid Columns { get; } = new() { Padding = new Thickness(12), ColumnSpacing = 4, RowSpacing = 4 };
     internal Grid AudioColumn { get; } = new() { RowSpacing = 8 };
     internal Grid SceneColumn { get; } = new() { RowSpacing = 8 };
     internal ScrollViewer AudioSettings { get; }
@@ -36,11 +41,11 @@ public sealed class SettingsPanel : UserControl
         Content = layout;
         SizeChanged += (_, _) => EventLog.SetAvailableHeight(ActualHeight);
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(384) });
-        Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var previewRow = new RowDefinition { Height = new GridLength(384 / previewAspectRatio), MinHeight = 32 };
         Columns.RowDefinitions.Add(previewRow); // 0: live views
-        Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 1: divider
+        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) }); // 1: grip
         var controlsRow = new RowDefinition { Height = new GridLength(1, GridUnitType.Star) };
         Columns.RowDefinitions.Add(controlsRow); // 2: controls
 
@@ -60,46 +65,121 @@ public sealed class SettingsPanel : UserControl
         });
         analysis.SizeChanged += (_, _) => UpdatePreviewSize();
 
-        var divider = new GridSplitter
+        var gripIcon = new FontIcon { Glyph = "\uE81D", FontSize = 16, Opacity = 0.55 };
+        void AddCrosshairLine(int row, int column, bool horizontal)
         {
-            Height = 8,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            ResizeDirection = GridSplitter.GridResizeDirection.Rows,
-            ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext,
+            var hitArea = new ResizeArea(horizontal ? InputSystemCursorShape.SizeNorthSouth : InputSystemCursorShape.SizeWestEast)
+            {
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            };
+            var line = new Border
+            {
+                IsHitTestVisible = false, Opacity = 0.2,
+                HorizontalAlignment = horizontal ? HorizontalAlignment.Stretch : HorizontalAlignment.Center,
+                VerticalAlignment = horizontal ? VerticalAlignment.Center : VerticalAlignment.Stretch,
+                Width = horizontal ? double.NaN : 1,
+                Height = horizontal ? 1 : double.NaN,
+            };
+            line.SetBinding(Border.BackgroundProperty, new Binding { Source = gripIcon, Path = new PropertyPath(nameof(FontIcon.Foreground)) });
+            hitArea.Children.Add(line);
+            Windows.Foundation.Point? start = null;
+            double startWidth = 0, startHeight = 0;
+            hitArea.PointerPressed += (_, e) =>
+            {
+                if (!e.GetCurrentPoint(hitArea).Properties.IsLeftButtonPressed) return;
+                start = e.GetCurrentPoint(Columns).Position;
+                startWidth = Columns.ColumnDefinitions[0].ActualWidth;
+                startHeight = previewRow.ActualHeight;
+                hitArea.CapturePointer(e.Pointer);
+                e.Handled = true;
+            };
+            hitArea.PointerMoved += (_, e) =>
+            {
+                if (start is not { } origin) return;
+                var point = e.GetCurrentPoint(Columns).Position;
+                ResizePreview(startWidth + (horizontal ? 0 : point.X - origin.X),
+                    startHeight + (horizontal ? point.Y - origin.Y : 0));
+            };
+            hitArea.PointerReleased += (_, e) => { start = null; hitArea.ReleasePointerCapture(e.Pointer); };
+            hitArea.PointerCaptureLost += (_, _) => start = null;
+            hitArea.PointerEntered += (_, _) => line.Opacity = 0.45;
+            hitArea.PointerExited += (_, _) => line.Opacity = 0.2;
+            Grid.SetRow(hitArea, row);
+            Grid.SetColumn(hitArea, column);
+            Columns.Children.Add(hitArea);
+        }
+        AddCrosshairLine(1, 0, true);
+        AddCrosshairLine(1, 2, true);
+        AddCrosshairLine(0, 1, false);
+        AddCrosshairLine(2, 1, false);
+        var grip = new ResizeGrip
+        {
+            Width = 32, Height = 32, Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = gripIcon,
+            Template = (ControlTemplate)XamlReader.Load("""
+                <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
+                    <Border Background="Transparent">
+                        <ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+                """),
         };
-        AutomationProperties.SetName(divider, "Resize live view and controls");
-        ToolTipService.SetToolTip(divider, "Drag to resize. Arrow keys adjust; double-click restores the default height.");
-        divider.DoubleTapped += (_, e) =>
+        grip.PointerEntered += (_, _) => gripIcon.Opacity = 1;
+        grip.PointerExited += (_, _) => gripIcon.Opacity = 0.55;
+        AutomationProperties.SetName(grip, "Resize spectrogram");
+        ToolTipService.SetToolTip(grip, "Drag or use arrow keys to resize. Double-click to reset.");
+        void ResizePreview(double width, double height)
         {
-            defaultPreviewSize = true;
-            UpdatePreviewSize();
-            controlsRow.Height = new GridLength(1, GridUnitType.Star);
+            defaultPreviewSize = false;
+            var maxWidth = Math.Max(32, Columns.ActualWidth - Columns.Padding.Left - Columns.Padding.Right - 40 - 120);
+            var maxHeight = Math.Max(32, Columns.ActualHeight - Columns.Padding.Top - Columns.Padding.Bottom - 40 - 80);
+            Columns.ColumnDefinitions[0].Width = new GridLength(Math.Clamp(width, 32, maxWidth));
+            previewRow.Height = new GridLength(Math.Clamp(height, 32, maxHeight));
+        }
+        Windows.Foundation.Point? dragStart = null;
+        double startWidth = 0, startHeight = 0;
+        grip.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
+        {
+            if (!e.GetCurrentPoint(grip).Properties.IsLeftButtonPressed) return;
+            dragStart = e.GetCurrentPoint(Columns).Position;
+            startWidth = Columns.ColumnDefinitions[0].ActualWidth;
+            startHeight = previewRow.ActualHeight;
+            grip.Focus(FocusState.Pointer);
+            grip.CapturePointer(e.Pointer);
+        }), true);
+        grip.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler((_, e) =>
+        {
+            if (dragStart is not { } start) return;
+            var point = e.GetCurrentPoint(Columns).Position;
+            ResizePreview(startWidth + point.X - start.X, startHeight + point.Y - start.Y);
+        }), true);
+        grip.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, e) => { dragStart = null; grip.ReleasePointerCapture(e.Pointer); }), true);
+        grip.PointerCaptureLost += (_, _) => dragStart = null;
+        grip.KeyDown += (_, e) =>
+        {
+            var (dx, dy) = e.Key switch
+            {
+                VirtualKey.Left => (-8, 0), VirtualKey.Right => (8, 0),
+                VirtualKey.Up => (0, -8), VirtualKey.Down => (0, 8), _ => (0, 0),
+            };
+            if (dx == 0 && dy == 0) return;
+            ResizePreview(Columns.ColumnDefinitions[0].ActualWidth + dx, previewRow.ActualHeight + dy);
             e.Handled = true;
         };
-        Grid.SetRow(divider, 1);
-        Grid.SetColumnSpan(divider, 3);
-        Columns.Children.Add(divider);
-
-        var columnDivider = new GridSplitter
+        grip.DoubleTapped += (_, e) =>
         {
-            Width = 8,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            ResizeDirection = GridSplitter.GridResizeDirection.Columns,
-            ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext,
+            Columns.ColumnDefinitions[0].Width = new GridLength(384);
+            defaultPreviewSize = true;
+            updatingPreviewSize = true;
+            try { previewRow.Height = new GridLength(384 / previewAspectRatio); }
+            finally { updatingPreviewSize = false; }
+            e.Handled = true;
         };
-        AutomationProperties.SetName(columnDivider, "Resize audio and video columns");
-        Grid.SetColumn(columnDivider, 1);
-        Columns.Children.Add(columnDivider);
-        var controlsDivider = new GridSplitter
-        {
-            Width = 8, VerticalAlignment = VerticalAlignment.Stretch,
-            ResizeDirection = GridSplitter.GridResizeDirection.Columns,
-            ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext,
-        };
-        AutomationProperties.SetName(controlsDivider, "Resize audio and video controls");
-        Grid.SetColumn(controlsDivider, 1);
-        Grid.SetRow(controlsDivider, 2);
-        Columns.Children.Add(controlsDivider);
+        Grid.SetColumn(grip, 1);
+        Grid.SetRow(grip, 1);
+        Columns.Children.Add(grip);
 
         // Row 0: Audio analysis (left), frame time (right).
         analysis.MinHeight = 32;
@@ -162,5 +242,15 @@ public sealed class SettingsPanel : UserControl
         }
         finally { refreshingScenes = false; }
     }
+}
+
+sealed class ResizeArea : Grid
+{
+    public ResizeArea(InputSystemCursorShape cursor) => ProtectedCursor = InputSystemCursor.Create(cursor);
+}
+
+sealed class ResizeGrip : Button
+{
+    public ResizeGrip() => ProtectedCursor = InputSystemCursor.Create(InputSystemCursorShape.Cross);
 }
 
