@@ -1,66 +1,43 @@
-# Frame-time chart probe
+# Timing chart probes
 
-Build with `dotnet build tools/AEther.ChartProfile -c Release -p:Platform=x64`.
-Run `tools/AEther.ChartProfile/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/AEther.ChartProfile.exe` from the repository root.
+Build with dotnet build tools/AEther.ChartProfile -c Release -p:Platform=x64.
+Run the executable under bin/x64/Release/net10.0-windows10.0.19041.0/win-x64
+from the repository root.
 
-The probe opens a 1280×720 client area, preloads 7 seconds of timestamped synthetic
-frame intervals, GPU durations and total audio ages at 240 samples/second, and continues adding samples while the chart
-scrolls. It measures for ten seconds after a three-second warmup. Results (CSV,
-summary text and a PNG of the XAML tree) go into `artifacts/chart-profile`.
+The production charts use direct CPU rasterization into transparent WriteableBitmap
+surfaces. Every raw sample becomes an opaque center with four quarter-opacity physical-pixel neighbors at its original time
+and logarithmic duration. There is no binning, averaging, animation, smoothing,
+per-point UI element, or LiveCharts dependency. The grid and current-time marker
+are translucent; labels and legends use XAML.
 
-- Default: plot 7 seconds, refresh at the production rate of 10 Hz.
-- `--fast`: request 60 Hz chart refresh to stress LiveCharts independently of production settings.
-- `--layout`: exercise the full audio/video and views/controls layout instead of the isolated chart.
+Default: 1280x720 isolated charts, seven-second history, 10 Hz maximum refresh, 60 Hz
+synthetic frame metrics and 1000 Hz analysis/handoff with periodic spikes.
+A three-second warmup precedes ten seconds of measurement. The probe checks raw
+sample counts, lost samples, updates, axis ranges, reset, and layout. It saves
+pipeline CSV, summaries, and a rendered XAML capture.
 
-All modes retain individual samples with no averaging, markers or animations. The chart
-uses LiveCharts' default curve smoothing and antialiasing.
-The source ring is bounded at 32,768 samples. The probe checks for overwritten samples,
-missing chart updates and incorrect quadrant placement. Synthetic GPU results arrive
-out of order to exercise sorting by the original frame timestamp. `--layout` leaves audio analysis
-unattached; it measures the chart and XAML layout, not the GPU spectrum or an active shader.
+Options:
+- --layout uses the production hub's chart/control layout inside the 720p window.
+- --fast requests the maximum supported 10 Hz chart refresh.
+- --tag=NAME writes isolated results under artifacts/chart-profile/NAME.
+- --hub --scene=MandelFluid --tag=NAME runs the actual hub, analyzer and renderer
+  at 1280x720 through scene, charts, spectrum, full hub, and scene-repeat phases.
+  Each phase samples eight seconds after warmup.
+- --chart-hz=N overrides refresh rate in hub mode.
 
-`chart.frame_time_update_ms` measures wall time from LiveCharts' `Measuring` event to
-`UpdateFinished`, including drawing and scheduling; it is not GPU execution time.
-The summary also records completed chart updates/second, process CPU core equivalents
-and private memory. Performance results should be compared in Release at 720p or higher.
+Metrics:
+- chart.processing_update_ms and chart.scheduling_update_ms measure synchronous
+  input copying, history maintenance, rasterization, bitmap-buffer write and
+  Invalidate submission. They exclude later XAML layout, composition, and scanout.
+- *_prepare_ms and *_raster_upload_ms split that work into two stages.
+- chart.frame_time_update_ms combines the two per-chart sample streams.
+- Completed chart updates count bitmap submissions, not display presentations.
+- Whole-process CPU includes UI work outside the timed chart functions.
 
-## Actual main-window comparison
+Always compare rendering performance in Release at 720p or higher. Earlier
+LiveCharts bin-sweep results are historical and timed asynchronous chart updates;
+their wall-time boundaries differ from the direct raster renderer.
 
-Run with `--hub --scene=MandelFluid --tag=my-run` to exercise the production
-`MainWindow`, timestamped synthetic stereo capture, analyzer and scene renderer.
-Add `--chart-hz=10` to request a different chart refresh rate (up to 60 Hz);
-without it the production interval is used. The process CSV records completed
-draws, which can be fewer than requested timer ticks.
-It keeps the scene at 1280×720 and the hub client at 1280×720, then samples these
-configurations for eight seconds each after warmup:
+See ../../doc/raster-chart-performance.md for measurements.
 
-1. Scene with hub hidden.
-2. Scene with chart and controls.
-3. Scene with spectrum and controls.
-4. Scene with the complete hub.
-5. Scene with hub hidden again, to expose workload/clock drift.
-
-Results go into `artifacts/hub-profile/<tag>`. Each phase has a pipeline CSV and
-summary; `process.csv` includes process/UI-thread CPU, allocations and chart draws.
-The spectrum uses its normal preview resolution, recorded in each summary; the
-main scene remains 720p throughout. CSV profiling enables detailed GPU queries for
-measurement. In normal operation, the hub requests only the two GPU timestamps
-needed for frame time.
-
-See [main-window performance notes](../../doc/main-window-performance.md) for the
-measured changes and the decision to retain full-resolution chart samples.
-
-## Initial results (before reducing production refresh to 1 Hz)
-
-Release, LiveCharts2 2.0.4, default CPU renderer, 1280×720 chart/client pixels,
-10 Hz requested refresh, 240 synthetic intervals/second, with curve smoothing and
-antialiasing disabled (2026-10-27):
-
-| Visible history | Points | Completed updates/s | Update median / p95 | CPU core equivalents |
-| --- | ---: | ---: | ---: | ---: |
-| 30 s | 7,201 | 9.08 | 12.5 / 19.7 ms | 0.215 |
-| 120 s | 28,801 | 9.10 | 55.8 / 69.4 ms | 0.603 |
-
-Both runs retained all samples. These are isolated chart measurements, not scene or
-spectrum performance measurements. The former 120-second window exposed the cost of
-feeding tens of thousands of raw points to LiveCharts; its CPU cost was substantial.
+Incremental caching draws only arriving samples and removes expired samples using per-pixel per-trace reference counts. Full history replay occurs on resize, DPI change, axis expansion or profile replacement. The source histories remain available for those rebuilds. Refresh requests are capped at 10 Hz; hidden views suspend updates. Fully empty idle charts skip bitmap submission.

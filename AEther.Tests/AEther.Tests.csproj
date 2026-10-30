@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <!-- Exercise the host's scheduler without loading the WinUI application. -->
+    <Compile Include="../AEther.WinUI/ScatterCache.cs" Link="ScatterCache.cs" />
+    <Compile Include="../AEther.WinUI/ScatterRaster.cs" Link="ScatterRaster.cs" />
     <Compile Include="../AEther.WinUI/RenderWorker.cs" Link="RenderWorker.cs" />
     <Compile Include="../AEther.WinUI/Session.cs" Link="Session.cs" />
     <Compile Include="../AEther.WinUI/AppSettings.cs" Link="AppSettings.cs" />

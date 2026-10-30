@@ -12,7 +12,8 @@ namespace AEther.ChartProfile;
 public partial class App : Application
 {
     Window? window;
-    readonly string output = Path.GetFullPath("artifacts/chart-profile");
+    readonly string output = Path.GetFullPath(Path.Combine("artifacts", "chart-profile",
+        Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--tag="))?[6..] ?? "default"));
 
     public App()
     {
@@ -37,7 +38,9 @@ public partial class App : Application
         var profile = new PipelineProfile();
         window = new Window { Title = "AEther frame-time graph probe" };
         var view = new FrameTimeView(window);
-        var refreshRate = arguments.Contains("--fast") ? 60 : 1 / view.RefreshInterval.TotalSeconds;
+
+
+        var refreshRate = arguments.Contains("--fast") ? 10 : 1 / view.RefreshInterval.TotalSeconds;
         view.RefreshInterval = TimeSpan.FromSeconds(1.0 / refreshRate);
         var layout = arguments.Contains("--layout");
         AnalysisView? analysis = null;
@@ -119,14 +122,15 @@ public partial class App : Application
                 profile.Describe("Client pixels", $"{window.AppWindow.ClientSize.Width}x{window.AppWindow.ClientSize.Height}");
                 profile.Describe("Chart DIPs", $"{view.ActualWidth:0}x{view.ActualHeight:0}");
                 profile.Describe("Rasterization scale", view.XamlRoot.RasterizationScale.ToString());
-                profile.Describe("Library", "LiveCharts2 2.0.4, default CPU Skia rendering");
+                profile.Describe("Library", "Direct WriteableBitmap CPU raster, opaque centers + quarter-opacity cross halos, all raw samples");
                 profile.Describe("Workload", $"{windowSeconds} seconds; synthetic 60 Hz frames and 1000 Hz analysis/handoff with periodic spikes; chart updates at {refreshRate} Hz");
+                profile.Describe("Binning", "None");
                 profile.Describe("Points", view.PointCount.ToString());
                 profile.Describe("Plotted points", view.PlottedPointCount.ToString());
                 profile.Describe("Completed chart updates/s", ((view.CompletedUpdates - initialUpdates) / seconds).ToString("F2"));
                 profile.Describe("CPU core equivalents", cpu.ToString("F3"));
                 profile.Describe("Private MiB", (process.PrivateMemorySize64 / 1048576.0).ToString("F1"));
-                profile.Describe("Metric", "chart.frame_time_update_ms = wall time from Measuring to UpdateFinished, includes scheduling; not GPU time");
+                profile.Describe("Metric", "chart.frame_time_update_ms = synchronous preparation + raster + bitmap upload; excludes compositor/presentation");
                 profile.Save(output);
                 // Render the actual XAML tree for visual review, without desktop capture.
                 var image = new RenderTargetBitmap();

@@ -18,7 +18,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.4-experimental" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.Sizers" Version="8.3.260402-preview2" />
-    <PackageReference Include="LiveChartsCore.SkiaSharpView.WinUI" Version="2.1.0-dev-798" />
     <ProjectReference Include="../AEther.NAudio/AEther.NAudio.csproj" />
     <ProjectReference Include="../AEther.Vortice/AEther.Vortice.csproj" />
   </ItemGroup>
