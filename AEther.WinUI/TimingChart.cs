@@ -11,29 +11,33 @@ using Windows.UI;
 
 namespace AEther.WinUI;
 
-/// <summary>Soft five-pixel scatter kernels; full raw history, no chart entities or decimation.</summary>
+/// <summary>Persistent scatter bitmap at roughly half physical resolution; no retained plot history.</summary>
 internal sealed class TimingChart : UserControl
 {
+    int bitmapWidth, bitmapHeight;
     const int Capacity = 32768;
     const int HistorySeconds = FrameTimeView.HistorySeconds;
     readonly Trace[] traces;
     readonly Image image = new() { Stretch = Stretch.Fill };
     readonly Canvas yLabels = new();
     readonly Canvas secondBars = new() { IsHitTestVisible = false };
+    readonly Canvas cursorLayer = new() { IsHitTestVisible = false };
+    readonly Microsoft.UI.Xaml.Shapes.Rectangle cursor = new()
+    {
+        Fill = new SolidColorBrush(Color.FromArgb(128, 255, 255, 255)),
+    };
     readonly Grid plot = new();
     readonly string metric;
-    readonly TimingScale scaleBounds = new();
     WriteableBitmap? bitmap;
     int[] pixels = [];
-    ScatterCache? cache;
     PipelineProfile? profile;
     long origin, lost;
     bool dirty = true;
     double latestTime;
     double[] ticks = [];
-    internal int PointCount => traces[0].Points.Count;
-    internal int PlottedPointCount => traces.Sum(t => t.Points.Count);
-    internal int[] PointCounts => traces.Select(t => t.Points.Count).ToArray();
+    internal int PointCount => traces[0].SampleCount;
+    internal int PlottedPointCount => traces.Sum(t => t.SampleCount);
+    internal int[] PointCounts => traces.Select(t => t.SampleCount).ToArray();
     internal string[] CurveNames => traces.Select(t => t.Name).ToArray();
     internal double? LowerLimit { get; private set; }
     internal double? UpperLimit { get; private set; }
@@ -55,10 +59,11 @@ internal sealed class TimingChart : UserControl
         layout.Children.Add(yLabels);
         plot.Children.Add(secondBars);
         plot.Children.Add(image);
+        cursorLayer.Children.Add(cursor);
+        plot.Children.Add(cursorLayer);
         Grid.SetColumn(plot, 1);
         layout.Children.Add(plot);
         var legend = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) };
-        legend.Children.Add(new TextBlock { Text = title, TextAlignment = TextAlignment.Center, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
         var tokens = new TokenView { SelectionMode = ListViewSelectionMode.Multiple, IsWrapped = true,
             CanRemoveTokens = false, HorizontalAlignment = HorizontalAlignment.Stretch };
         for (int i = 0; i < definitions.Length; i++)
@@ -87,17 +92,11 @@ internal sealed class TimingChart : UserControl
         Grid.SetColumn(legend, 2);
         layout.Children.Add(legend);
         Content = layout;
-        plot.SizeChanged += (_, _) => { dirty = true; UpdateLabels(); };
-        ActualThemeChanged += (_, _) => dirty = true;
+        plot.SizeChanged += (_, _) => UpdateLabels();
     }
 
-    void SetVisible(int index, bool visible)
-    {
-        traces[index].Visible = visible;
-        if (cache == null) return;
-        cache.SetVisible(index, visible);
-        if (!dirty) Render();
-    }
+    // Toggles gate future writes; existing marks remain.
+    void SetVisible(int index, bool visible) => traces[index].Visible = visible;
 
     internal void Attach(PipelineProfile? next, long timestamp)
     {
@@ -107,13 +106,13 @@ internal sealed class TimingChart : UserControl
         lost = 0;
         latestTime = 0;
         LowerLimit = UpperLimit = null;
-        scaleBounds.Reset();
         ticks = [];
         foreach (var trace in traces)
         {
             trace.History = next?.Track(trace.Metric, Capacity);
             trace.Cursor = 0;
-            trace.Points.Clear();
+            trace.SampleCount = 0;
+            trace.Incoming.Clear();
         }
         dirty = true;
         UpdateLabels();
@@ -122,53 +121,65 @@ internal sealed class TimingChart : UserControl
     internal void Refresh(double now)
     {
         long start = Stopwatch.GetTimestamp();
-        bool received = false;
+        double rasterScale = XamlRoot?.RasterizationScale ?? 1;
+        double physicalWidth = plot.ActualWidth * rasterScale, physicalHeight = plot.ActualHeight * rasterScale;
+        if (physicalWidth <= 0 || physicalHeight <= 0) return;
         double min = double.PositiveInfinity, max = double.NegativeInfinity;
-        for (int traceIndex = 0; traceIndex < traces.Length; traceIndex++)
+        foreach (var trace in traces)
         {
-            var trace = traces[traceIndex];
             if (trace.History != null) lost += trace.History.ReadSince(ref trace.Cursor, trace.Incoming);
             else trace.Incoming.Clear();
-            received |= trace.Incoming.Count != 0;
-            bool unordered = false;
+            if (!trace.Visible) { trace.Incoming.Clear(); continue; }
+            foreach (var sample in trace.Incoming)
+            {
+                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
+                double value = Math.Log10(sample.Milliseconds);
+                min = Math.Min(min, value); max = Math.Max(max, value);
+                trace.SampleCount++;
+            }
+        }
+        double previousTime = latestTime;
+        latestTime = now;
+        UpdateCursor();
+        // Expand only: contraction would unnecessarily discard accumulated marks.
+        if (double.IsFinite(min) && double.IsFinite(max))
+        {
+            double lower = TimingScale.Floor(min), upper = TimingScale.Ceiling(max);
+            if (upper <= lower) upper = TimingScale.Next(lower);
+            lower = Math.Min(LowerLimit ?? lower, lower);
+            upper = Math.Max(UpperLimit ?? upper, upper);
+            if (LowerLimit != lower || UpperLimit != upper)
+            {
+                LowerLimit = lower; UpperLimit = upper;
+                ticks = TimingScale.Ticks(lower, upper);
+                dirty = true;
+                UpdateLabels();
+            }
+        }
+        bool resized = ResizeRaster(physicalWidth, physicalHeight);
+        bool changed = dirty || resized;
+        if (dirty)
+        {
+            Array.Clear(pixels);
+        }
+        else changed |= AdaptiveScatterRaster.ClearSweep(pixels, bitmapWidth, bitmapHeight, previousTime, now, HistorySeconds);
+        profile?.Elapsed(metric.Replace("_update_ms", "_prepare_ms"), start);
+        long rasterStart = Stopwatch.GetTimestamp();
+        foreach (var trace in traces)
+        {
             foreach (var sample in trace.Incoming)
             {
                 if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
                 double time = Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds;
-                unordered |= trace.Points.Count > 0 && time < trace.Points[^1].Time;
-                var point = new ScatterPoint(time, Math.Log10(sample.Milliseconds));
-                trace.Points.Add(point);
-                cache?.Add(traceIndex, point);
-
+                int x = (int)(ScatterRaster.Wrap(time, HistorySeconds) / HistorySeconds * (bitmapWidth - 1));
+                int y = Math.Clamp((int)((UpperLimit!.Value - Math.Log10(sample.Milliseconds)) /
+                    (UpperLimit.Value - LowerLimit!.Value) * (bitmapHeight - 1)), 0, bitmapHeight - 1);
+                int index = y * bitmapWidth + x;
+                if (pixels[index] != trace.Color) { pixels[index] = trace.Color; changed = true; }
             }
-            if (unordered) trace.Points.Sort((a, b) => a.Time.CompareTo(b.Time));
-            int expired = 0;
-            while (expired < trace.Points.Count && trace.Points[expired].Time < now - HistorySeconds) expired++;
-            expired = Math.Max(expired, trace.Points.Count - Capacity);
-            if (expired > 0)
-            {
-                received = true; // Upload the cleared cache even when the last sample expires.
-                for (int i = 0; i < expired; i++) cache?.Remove(traceIndex, trace.Points[i]);
-                trace.Points.RemoveRange(0, expired);
-            }
+            trace.Incoming.Clear();
         }
-        foreach (var trace in traces)
-            foreach (var point in trace.Points)
-            {
-                min = Math.Min(min, point.LogMilliseconds);
-                max = Math.Max(max, point.LogMilliseconds);
-            }
-        if (!received && !dirty && traces.All(t => t.Points.Count == 0)) return;
-        latestTime = now;
-        if (scaleBounds.Update(min, max, now))
-        {
-            LowerLimit = scaleBounds.Lower; UpperLimit = scaleBounds.Upper;
-            dirty = true;
-            ticks = TimingScale.Ticks(LowerLimit!.Value, UpperLimit!.Value);
-            UpdateLabels();
-        }
-        profile?.Elapsed(metric.Replace("_update_ms", "_prepare_ms"), start);
-        long rasterStart = Stopwatch.GetTimestamp();
+        if (!changed) return;
         Render();
         profile?.Elapsed(metric.Replace("_update_ms", "_raster_upload_ms"), rasterStart);
         profile?.Elapsed(metric, start);
@@ -177,15 +188,26 @@ internal sealed class TimingChart : UserControl
         CompletedUpdates++;
         dirty = false;
     }
-
     void UpdateLabels()
     {
+        UpdateCursor();
         yLabels.Children.Clear();
         secondBars.Children.Clear();
         double height = plot.ActualHeight, width = plot.ActualWidth;
         double scale = XamlRoot?.RasterizationScale ?? 1;
         if (LowerLimit is double lower && UpperLimit is double upper)
         {
+            foreach (double tick in ticks)
+            {
+                var line = new Microsoft.UI.Xaml.Shapes.Rectangle
+                {
+                    Width = width, Height = 1 / scale,
+                    Fill = new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)),
+                };
+                double y = Math.Floor(Math.Max(0, Math.Ceiling(height * scale) - 1) * (upper - tick) / (upper - lower)) / scale;
+                Canvas.SetTop(line, y);
+                secondBars.Children.Add(line);
+            }
             int step = Math.Max(1, (int)Math.Ceiling(ticks.Length / Math.Max(2, height / 18)));
             for (int i = 0; i < ticks.Length; i += step)
             {
@@ -207,50 +229,49 @@ internal sealed class TimingChart : UserControl
         }
     }
 
-    void Render()
+    void UpdateCursor()
     {
         double scale = XamlRoot?.RasterizationScale ?? 1;
-        int width = Math.Max(1, (int)Math.Ceiling(plot.ActualWidth * scale));
-        int height = Math.Max(1, (int)Math.Ceiling(plot.ActualHeight * scale));
-        if (bitmap == null || bitmap.PixelWidth != width || bitmap.PixelHeight != height)
+        double width = plot.ActualWidth;
+        cursor.Width = 1 / scale;
+        cursor.Height = plot.ActualHeight;
+        double x = Math.Floor(Math.Max(0, Math.Ceiling(width * scale) - 1) * PresentTime / HistorySeconds) / scale;
+        Canvas.SetLeft(cursor, x);
+    }
+
+    bool ResizeRaster(double physicalWidth, double physicalHeight)
+    {
+        int width = AdaptiveScatterRaster.Dimension(bitmapWidth, physicalWidth);
+        int height = AdaptiveScatterRaster.Dimension(bitmapHeight, physicalHeight);
+        if (width == bitmapWidth && height == bitmapHeight) return false;
+        var nextPixels = new int[checked(width * height)];
+        if (!dirty && pixels.Length != 0)
+            AdaptiveScatterRaster.Restore(pixels, bitmapWidth, bitmapHeight, nextPixels, width, height);
+        pixels = nextPixels;
+        bitmapWidth = width; bitmapHeight = height;
+        bitmap = null;
+        UpdateLabels();
+        return true;
+    }
+
+    void Render()
+    {
+        if (bitmap == null)
         {
-            bitmap = new(width, height);
-            pixels = new int[checked(width * height)];
+            bitmap = new(bitmapWidth, bitmapHeight);
             image.Source = bitmap;
-            cache = null;
-            UpdateLabels();
-        }
-        if (dirty || cache == null)
-        {
-            if (cache == null)
-            {
-                cache = new ScatterCache(width, height, LowerLimit ?? -3, UpperLimit ?? 2,
-                    HistorySeconds, traces.Select(t => t.Color).ToArray(), ticks);
-                for (int i = 0; i < traces.Length; i++)
-                    if (!traces[i].Visible) cache.SetVisible(i, false);
-            }
-            else cache.Reset(LowerLimit ?? -3, UpperLimit ?? 2, ticks);
-            for (int i = 0; i < traces.Length; i++)
-                foreach (var point in traces[i].Points) cache.Add(i, point);
-        }
-        Array.Copy(cache.Pixels, pixels, pixels.Length);
-        int cursor = Math.Clamp((int)(PresentTime / HistorySeconds * (width - 1)), 0, width - 1);
-        for (int y = 0; y < height; y++)
-        {
-            int index = y * width + cursor;
-            if (pixels[index] == 0 || pixels[index] == 0x30303030) pixels[index] = unchecked((int)0x80808080);
         }
         using var stream = bitmap.PixelBuffer.AsStream();
         stream.Write(MemoryMarshal.AsBytes(pixels.AsSpan()));
         bitmap.Invalidate();
     }
-
     sealed class Trace(string metric, string name, Color color)
     {
         internal string Metric { get; } = metric;
         internal string Name { get; } = name;
         internal int Color { get; } = unchecked((int)(0xff000000u | (uint)color.R << 16 | (uint)color.G << 8 | color.B));
-        internal List<ScatterPoint> Points { get; } = new(Capacity);
+        // Accepted samples since Attach; no plotted points are retained.
+        internal int SampleCount;
         internal List<TimingSample> Incoming { get; } = new();
         internal TimingHistory? History;
         internal long Cursor;

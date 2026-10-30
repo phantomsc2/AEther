@@ -14,6 +14,7 @@ namespace AEther.WinUI;
 
 public sealed class SettingsPanel : UserControl
 {
+    const double DefaultPreviewWidth = 448;
     public const string Loopback = "System audio (loopback)";
     readonly ComboBox input = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ComboBox scenePicker = new() { Name = "Scene", IsEnabled = false, HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -40,10 +41,11 @@ public sealed class SettingsPanel : UserControl
         layout.Children.Add(EventLog);
         Content = layout;
         SizeChanged += (_, _) => EventLog.SetAvailableHeight(ActualHeight);
-        Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(384) });
+        double initialPreviewWidth = Math.Max(DefaultPreviewWidth, 280 * previewAspectRatio);
+        Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(initialPreviewWidth) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         Columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var previewRow = new RowDefinition { Height = new GridLength(384 / previewAspectRatio), MinHeight = 32 };
+        var previewRow = new RowDefinition { Height = new GridLength(initialPreviewWidth / previewAspectRatio), MinHeight = 32 };
         Columns.RowDefinitions.Add(previewRow); // 0: live views
         Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(32) }); // 1: grip
         var controlsRow = new RowDefinition { Height = new GridLength(1, GridUnitType.Star) };
@@ -170,10 +172,10 @@ public sealed class SettingsPanel : UserControl
         };
         grip.DoubleTapped += (_, e) =>
         {
-            Columns.ColumnDefinitions[0].Width = new GridLength(384);
+            Columns.ColumnDefinitions[0].Width = new GridLength(initialPreviewWidth);
             defaultPreviewSize = true;
             updatingPreviewSize = true;
-            try { previewRow.Height = new GridLength(384 / previewAspectRatio); }
+            try { previewRow.Height = new GridLength(initialPreviewWidth / previewAspectRatio); }
             finally { updatingPreviewSize = false; }
             e.Handled = true;
         };

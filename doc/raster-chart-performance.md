@@ -1,5 +1,31 @@
 # Transparent full-resolution timing scatter
 
+## Current experiment: persistent low-resolution bitmap
+
+The chart now writes incoming samples directly into a bitmap targeting half the
+plot's physical width and height, stretched by the XAML Image. Each sample writes one opaque pixel; the five-point
+kernel, occupancy cache, retained plot points, expiration and raster cursor are
+bypassed. The seven-second X coordinate still wraps, so old marks accumulate
+until the cursor sweeps their columns on the next wrap. Each refresh clears the
+swept columns to transparency before writing new samples. A gap of at least one
+full sweep clears all columns. Newer writes overwrite earlier colors at the same pixel.
+
+Legend tokens gate future writes only. Disabled curves are drained from the
+metric transport but do not affect the bitmap or axis. Toggles do not upload or
+clear the bitmap. Uploads occur only when pixels change or the bitmap is resized.
+Sizing is evaluated at the normal chart refresh cadence, including DPI changes.
+Each axis keeps its bitmap dimension while the upscaling ratio is between 1.5x
+and 2.5x inclusive; outside that band it targets 2x (minimum two bitmap pixels).
+On resize, nearest-neighbor sampling restores existing marks without retaining
+sample history. Both horizontal and vertical grid lines and the live cursor are separate XAML elements.
+Marks can be lost or duplicated until the cursor replaces those columns.
+The standard XAML Image presentation path is retained; it has no exposed
+high-quality/cubic interpolation selector. Profile replacement clears it; outward-only axis expansion also
+clears it because there is no retained history to remap. Diagnostic point counts
+now count accepted samples since attachment, not retained points.
+
+The earlier measurements below describe the previous renderer, not this experiment.
+
 The production timing charts now rasterize every retained sample into a reusable
 WriteableBitmap. There is no LiveCharts dependency, binning, averaging, curve fitting,
 or per-sample UI object. Each sample is an opaque one-physical-pixel dot. Samples
