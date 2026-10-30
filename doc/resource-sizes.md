@@ -29,6 +29,10 @@ Allocation defaults and live values are typed C# options, outside HLSL Parameter
 `FluidEffect.Options` accepts `FluidOptions`; `RasterEffect.Options` accepts
 `RasterOptions`. Records are replaced atomically and read once per frame.
 
+`FroxelEffect.Options` accepts `FroxelOptions`: DepthSlices is 8..256 (default 64),
+PointLights is 0..64 (default four). Width and height always follow the canvas,
+rounded upward after division by eight. See [Froxel1](froxel1.md).
+
 | Option | Meaning/default |
 | --- | --- |
 | Fluid Width/Height | Velocity, material and pressure grid; 512x512 |

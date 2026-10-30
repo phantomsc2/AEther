@@ -257,6 +257,14 @@ survive hot reload; use Reset defaults to load the complete new reference preset
 Sampling is stratified with a stable per-pixel seed. Narrow profiles and low
 sample counts show grain; raising quality costs GPU time.
 
+## Froxel1 prototype
+
+`Froxel1` is an audio-independent camera-aligned volumetric fog POC with animated
+procedural noise and phase-offset blinking point lights. Its grid follows canvas
+size at 8x reduction per screen axis, with independently adjustable depth slices
+(default 64) and light count (default four). See [Froxel1](froxel1.md) for controls,
+transport approximations, resource layout, and profiling.
+
 ## MandelLight
 
 The scene uses GPU-generated point lights in three perpendicular STB rings,

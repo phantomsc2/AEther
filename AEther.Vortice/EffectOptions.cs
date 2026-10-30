@@ -3,6 +3,22 @@ using System.ComponentModel.DataAnnotations;
 
 namespace AEther.Vortice;
 
+public sealed record FroxelOptions(
+    [property: Category("Sizes"), Range(8, 256), NumericScale(adaptive: true)] int DepthSlices = 64,
+    [property: Category("Sizes"), Range(0, 64), NumericScale(adaptive: true)] int PointLights = 4,
+    [property: Category("Sizes"), Range(0, 65535), NumericScale(adaptive: true)] int Instances = 1024)
+{
+    internal (int Width, int Height, int Depth) Resolve(int width, int height)
+    {
+        if (DepthSlices is < 8 or > 256) throw new InvalidOperationException("DepthSlices must be from 8 through 256.");
+        if (Instances is < 0 or > 65535) throw new InvalidOperationException("Instances must be from 0 through 65535.");
+        if (PointLights is < 0 or > 64) throw new InvalidOperationException("PointLights must be from 0 through 64.");
+        if (width < 1 || height < 1 || width > 16384 || height > 16384)
+            throw new InvalidOperationException("Canvas dimensions must be from 1 through 16384.");
+        return ((width + 7) / 8, (height + 7) / 8, DepthSlices);
+    }
+}
+
 /// <summary>Numeric presentation metadata shared by option editors.</summary>
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class NumericScaleAttribute(bool powersOfTwo = false, bool adaptive = false) : Attribute

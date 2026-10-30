@@ -19,6 +19,7 @@ public sealed class SceneDefinition
     public static IReadOnlyList<SceneDefinition> Defaults { get; } =
     [
         Fullscreen("Histogram"), Fullscreen("Spectrum"), Fullscreen("Debug"), Fullscreen("MandelPond"),
+        new("Froxel1", (d, c, s) => [new FroxelEffect("Froxel", d, c, s, "Froxel1.hlsl", new FroxelOptions())]),
         new("MandelLight", (d, c, s) => [new RasterEffect("Raster", d, c, s, "MandelLight.hlsl",
             new RasterOptions(LookupWidth: 513, LookupHeight: 1025))]),
         new("MandelFluid", (d, c, s) => [new FluidEffect("Fluid", d, c, s, "MandelFluid.hlsl",

@@ -98,6 +98,12 @@ public sealed class ShaderPanel : UserControl
         foreach (var effect in scene.Effects)
         {
             var group = new StackPanel { Spacing = 4 };
+            if (effect is FroxelEffect froxel)
+            {
+                var editor = new OptionsEditor<FroxelOptions>(froxel.Options, v => v with { }, froxel.DefaultOptions);
+                editor.Changed += (_, _) => froxel.Options = editor.Options;
+                group.Children.Add(editor.Content);
+            }
             if (effect is FluidEffect fluid)
             {
                 var editor = new OptionsEditor<FluidOptions>(fluid.Options, v => v with { }, fluid.DefaultOptions);
