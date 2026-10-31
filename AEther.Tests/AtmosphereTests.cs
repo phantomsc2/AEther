@@ -31,26 +31,32 @@ public partial class ShaderRenderingTests
     }
 
     // Independent double-precision reference: direct path quadrature, with no LUT lookups.
-    const double AtmosphereR = 6360, AtmosphereTop = 6460;
-    static double AtmosphereReferenceDistance(double r, double mu) =>
-        -r * mu + Math.Sqrt(r * r * mu * mu + AtmosphereTop * AtmosphereTop - r * r);
-    static double AtmosphereReferenceColumn(double r, double mu, double distance)
+    const double AtmosphereR = 6360, AtmosphereTop = AtmosphereR+10*8;
+    static double AtmosphereReferenceAltitude(double v, double scale)
+    {
+        double q=v*v*10/11;
+        return scale*q/(1-q);
+    }
+    static double AtmosphereReferenceDistance(double r, double mu, double top = AtmosphereTop) =>
+        -r * mu + Math.Sqrt(r * r * mu * mu + top * top - r * r);
+    static double AtmosphereReferenceColumn(double r, double mu, double distance, double scaleHeight = 8)
     {
         const int steps = 2048;
         double sum = 0, ds = distance / steps;
         for (int i = 0; i <= steps; i++)
         {
             double t = i * ds, h = Math.Sqrt(r * r + t * (2 * r * mu + t)) - AtmosphereR;
-            sum += (i == 0 || i == steps ? 1 : i % 2 == 0 ? 2 : 4) * Math.Exp(-h / 8);
+            sum += (i == 0 || i == steps ? 1 : i % 2 == 0 ? 2 : 4) * Math.Exp(-h / scaleHeight);
         }
         return sum * ds / 3;
     }
-    static double[] AtmosphereReferenceSky(double azimuth, double elevation, double sunAltitude)
+    static double[] AtmosphereReferenceSky(double azimuth, double elevation, double sunAltitude,
+        double sunAzimuth = 0, double intensity = 20, double cutoff = 10, int steps = 4096)
     {
-        const int steps = 4096;
-        double vy = Math.Sin(elevation), vz = Math.Cos(elevation) * Math.Cos(azimuth);
+        double vy = Math.Sin(elevation), vz = Math.Cos(elevation) * Math.Cos(azimuth-sunAzimuth);
         double sy = Math.Sin(sunAltitude), sz = Math.Cos(sunAltitude), c = vy * sy + vz * sz;
-        double ds = AtmosphereReferenceDistance(AtmosphereR, vy) / steps;
+        double top = AtmosphereR+cutoff*8;
+        double ds = AtmosphereReferenceDistance(AtmosphereR, vy, top) / steps;
         double column = 0, phase = 3 * (1 + c * c) / (16 * Math.PI);
         double[] beta = [.0058, .0135, .0331], result = new double[3];
         for (int i = 0; i < steps; i++)
@@ -60,9 +66,9 @@ public partial class ShaderRenderingTests
             bool shadow = mu < 0 && r * r * mu * mu > r * r - AtmosphereR * AtmosphereR;
             if (!shadow)
             {
-                double sunColumn = AtmosphereReferenceColumn(r, mu, AtmosphereReferenceDistance(r, mu));
+                double sunColumn = AtmosphereReferenceColumn(r, mu, AtmosphereReferenceDistance(r, mu, top));
                 for (int channel = 0; channel < 3; channel++)
-                    result[channel] += 20 * phase * beta[channel] * density * ds *
+                    result[channel] += intensity * phase * beta[channel] * density * ds *
                         Math.Exp(-beta[channel] * (column + .5 * density * ds + sunColumn));
             }
             column += density * ds;
@@ -78,6 +84,7 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle, 1280, 720, 8, 60,
             shaderDirectory: shaders.Path, initialScene: shaders.Scene);
         PointSet(renderer, "Sun.Altitude", (float)((altitude + 90) / 180));
+        PointSet(renderer, "Sun2.Intensity", 0);
         renderer.Render(false);
         var effect = (AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var trans = AtmosphereRead(renderer, effect.TransmittanceTexture);
@@ -88,7 +95,8 @@ public partial class ShaderRenderingTests
         foreach (int y in new[] { 0, 16, 40, 63 })
         foreach (int x in new[] { 0, 32, 128, 255 })
         {
-            double rho = y * H / 63, r = Math.Sqrt(AtmosphereR * AtmosphereR + rho * rho);
+            double h = AtmosphereReferenceAltitude(y/63.0,8), r = AtmosphereR+h;
+            double rho = Math.Sqrt(h*(2*AtmosphereR+h));
             double d = (AtmosphereTop - r) + x / 255.0 * (rho + H - (AtmosphereTop - r));
             double mu = d < 1e-6 ? 1 : Math.Clamp((H * H - rho * rho - d * d) / (2 * r * d), -1, 1);
             double column = AtmosphereReferenceColumn(r, mu, d);
@@ -101,9 +109,12 @@ public partial class ShaderRenderingTests
         {
             double elevation = .5 * Math.PI * Math.Pow(1 - y / 127.0, 2);
             var expected = AtmosphereReferenceSky(2 * Math.PI * x / 255, elevation, altitude * Math.PI / 180);
+            var longer = AtmosphereReferenceSky(2 * Math.PI * x / 255, elevation, altitude * Math.PI / 180, cutoff:20);
             for (int c = 0; c < 3; c++)
             {
                 double actual = sky[4 * (y * 256 + x) + c];
+                // Deliberate 10H truncation budget; absolute floor covers faint tail directions.
+                Assert.That(expected[c], Is.EqualTo(longer[c]).Within(Math.Max(.0005,longer[c]*.005)), "10H versus 20H tail convergence");
                 TestContext.Out.WriteLine($"sun {altitude}, sky ({x},{y}), channel {c}: {actual:G6}, reference {expected[c]:G6}");
                 Assert.That(actual, Is.EqualTo(expected[c]).Within(Math.Max(.0002, expected[c] * .025)),
                     $"sky ({x},{y}), channel {c}");
@@ -138,9 +149,10 @@ public partial class ShaderRenderingTests
         var original = renderer.ReadPixels(false);
         Assert.That(original.Skip(4 * 1280 * 650).Where((_, i) => i % 4 != 3), Is.All.Zero, "Flat black ground");
         Draw(); Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "No time or audio dependence");
-        PointSet(renderer, "Sun.Azimuth", .25f); Draw();
+        PointSet(renderer, "Sun.Azimuth", .25f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Sun2.Azimuth", .75f); Draw("Atmosphere sky view");
         PointSet(renderer, "View.Azimuth", .25f); Draw();
-        Assert.That(renderer.ReadPixels(false), Is.EqualTo(original).Within(1), "Rotate view and sun together");
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(original).Within(1), "Rotate view and both suns together");
         foreach (float pitch in new[] { 0f, 1f }) { PointSet(renderer, "View.Altitude", pitch); Draw(); }
         Assert.That(RingReadScene(renderer).All(float.IsFinite), Is.True, "Vertical camera basis");
         PointSet(renderer, "ShowSkyView", true); Draw();
@@ -156,6 +168,10 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(rawTrans), "Raw transmittance bypasses exposure");
         PointSet(renderer, "Sun.Intensity", .25f); Draw("Atmosphere sky view");
         PointSet(renderer, "Sun.Altitude", .5f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Sun2.Intensity", .35f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Sun2.Altitude", .6f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Phase.Anisotropy", .8f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Phase.Shape", .75f); Draw("Atmosphere sky view");
         PointSet(renderer, "Atmosphere.ScaleHeight", .6f); Draw("Atmosphere transmittance", "Atmosphere sky view");
         renderer.Resize(1281, 721); Draw();
         Assert.That(effect.TransmittanceTexture.Description.Width, Is.EqualTo(256));
@@ -168,8 +184,16 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReloadActiveScene(), Is.True, renderer.ShaderError);
         Draw("Atmosphere transmittance", "Atmosphere sky view");
         Assert.That(PointFind(renderer, "Sun.Intensity") is { } p && renderer.ActiveShader!.Effects[0].Parameters!.GetFloat(p) == .25f, Is.True);
+        void AssertSun2Settings()
+        {
+            var values = renderer.ActiveShader!.Effects[0].Parameters!;
+            foreach (var (path, expected) in new[] { ("Sun2.Azimuth", .75f), ("Sun2.Altitude", .6f), ("Sun2.Intensity", .35f) })
+                Assert.That(values.GetFloat(PointFind(renderer, path)), Is.EqualTo(expected), path);
+        }
+        AssertSun2Settings();
         renderer.SelectScene("Spectrum"); renderer.Render(false);
         renderer.SelectScene("Atmosphere"); Draw("Atmosphere transmittance", "Atmosphere sky view");
+        AssertSun2Settings();
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
         renderer.SetGraphicsOptions(renderer.Options with { Exposure = 0 });
         renderer.Resize(1280, 720); Draw("Atmosphere transmittance", "Atmosphere sky view");
@@ -184,7 +208,6 @@ public partial class ShaderRenderingTests
         foreach (float value in new[] { 0f, 1f })
         {
             foreach (string channel in new[] { "x", "y", "z" }) PointSet(renderer, "Atmosphere.RayleighScattering." + channel, 1);
-            PointSet(renderer, "Atmosphere.Height", value);
             PointSet(renderer, "Atmosphere.ScaleHeight", value);
             PointSet(renderer, "Sun.Altitude", value);
             PointSet(renderer, "Sun.Intensity", 1);
@@ -194,8 +217,105 @@ public partial class ShaderRenderingTests
         }
     }
 
-    [Test, Category("GPU"), Category("Performance")]
-    public void AtmosphereTimingAndCapturesAt720p()
+    [TestCase(20), TestCase(-3), Category("GPU")]
+    public void AtmosphereCombinesIndependentSuns(double secondAltitude)
+    {
+        using var shaders = new SceneShaders("Atmosphere");
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle, 1280, 720, 8, 60,
+            shaderDirectory: shaders.Path, initialScene: shaders.Scene);
+        void Sun(string name, float azimuth, double altitude, float intensity)
+        {
+            PointSet(renderer, name+".Azimuth", azimuth);
+            PointSet(renderer, name+".Altitude", (float)((altitude+90)/180));
+            PointSet(renderer, name+".Intensity", intensity);
+        }
+        float[] Read()
+        {
+            renderer.Render(false);
+            return AtmosphereRead(renderer, ((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
+        }
+        void Equal(float[] actual, float[] expected, string message)
+        {
+            Assert.That(actual.Zip(expected, (a,b) => Math.Abs(a-b)).Max(), Is.LessThan(1e-5), message);
+        }
+        Sun("Sun", .1f, 30, .5f); Sun("Sun2", .65f, secondAltitude, 0);
+        var first = Read();
+        PointSet(renderer, "Sun.Intensity", 0); PointSet(renderer, "Sun2.Intensity", .25f);
+        var second = Read();
+        PointSet(renderer, "Sun.Intensity", .5f);
+        var combined = Read();
+        Equal(combined, first.Zip(second, (a,b) => a+b).Select((v,i) => i%4 == 3 ? 1 : v).ToArray(), "Linear sum of independent suns");
+        foreach (var (x,y) in new[] { (0,0), (32,64), (90,110), (0,127), (180,127) })
+        {
+            double azimuth = 2*Math.PI*x/255, elevation = .5*Math.PI*Math.Pow(1-y/127.0,2);
+            var a = AtmosphereReferenceSky(azimuth, elevation, Math.PI/6, .1*2*Math.PI);
+            var b = AtmosphereReferenceSky(azimuth, elevation, secondAltitude*Math.PI/180, .65*2*Math.PI, 10);
+            for (int c=0; c<3; c++)
+                Assert.That(combined[4*(y*256+x)+c], Is.EqualTo(a[c]+b[c]).Within(Math.Max(.0002,(a[c]+b[c])*.025)),
+                    $"Combined reference ({x},{y}), channel {c}");
+        }
+        for (int y=0; y<128; y++)
+        for (int c=0; c<3; c++)
+            Assert.That(combined[4*y*256+c], Is.EqualTo(combined[4*(y*256+255)+c]).Within(1e-5), "Combined seam");
+        Sun("Sun", .65f, secondAltitude, .25f); Sun("Sun2", .1f, 30, .5f);
+        Equal(Read(), combined, "Swapping suns preserves radiance");
+        Sun("Sun", .1f, 30, .5f); Sun("Sun2", .65f, -90, .25f);
+        Equal(Read(), first, "Planet fully occludes the second sun independently");
+        Sun("Sun2", .1f, 30, .25f);
+        var coincident = Read();
+        PointSet(renderer, "Sun.Intensity", .75f); PointSet(renderer, "Sun2.Intensity", 0);
+        Equal(Read(), coincident, "Coincident suns combine intensities");
+        PointSet(renderer, "Sun.Intensity", 0);
+        Assert.That(Read().Where((_,i) => i%4 != 3), Is.All.Zero, "Both suns disabled");
+    }
+
+    [Test, Category("GPU")]
+    public void AtmosphereDrainePhaseMatchesFormulaAndConservesEnergy()
+    {
+        using var shaders = new SceneShaders("Spectrum");
+        File.WriteAllText(Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl"), """
+            #include "../Common/AtmosphereTypes.hlsl"
+            cbuffer Parameters
+            {
+                AtmosphereSettings Atmosphere = { float3(.058,.135,.331), 7.0/15.0, .0625 };
+                AtmosphereSunSettings Sun = { 0, 2.0/3.0, .5 };
+                AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, .25 };
+                AtmospherePhaseSettings Phase = { .5, .5 };
+            };
+            float AtmosphereScaleHeight() { return lerp(1.0,16.0,Atmosphere.ScaleHeight); }
+            float3 AtmosphereBeta() { return .1*Atmosphere.RayleighScattering*(16*Atmosphere.Density); }
+            #include "../Common/Atmosphere.hlsl"
+            float4 PS(PSin input):SV_Target
+            {
+                float c = 2*(input.Position.x-.5)/4096-1;
+                return LinearOutput(float3(AtmosphereDrainePhase(c,AtmosphereDraineCoefficients()),0,0));
+            }
+            """);
+        using var window = new HiddenWindow();
+        using var renderer = new Renderer(window.Handle,4097,1,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
+        foreach (var (g,a) in new[] { (0.0,0.0), (0.0,1.0), (.8,0.0), (.8,1.0), (.8,2.0), (-.95,2.0), (.95,2.0) })
+        {
+            PointSet(renderer,"Phase.Anisotropy",(float)((g+.95)/1.9));
+            PointSet(renderer,"Phase.Shape",(float)(a/2));
+            renderer.Render(false);
+            var pixels = RingReadScene(renderer);
+            double integral = 0;
+            for (int i=0;i<=4096;i++)
+            {
+                double c = 2.0*i/4096-1;
+                double expected = (1-g*g)*(1+a*c*c)/(4*Math.PI*(1+a*(1+2*g*g)/3)*Math.Pow(1+g*g-2*g*c,1.5));
+                double actual = pixels[4*i];
+                Assert.That(actual,Is.EqualTo(expected).Within(Math.Max(1e-6,expected*.002)),$"g={g}, a={a}, c={c}");
+                integral += (i==0 || i==4096 ? 1 : i%2==0 ? 2 : 4)*actual;
+            }
+            integral *= 2*Math.PI*(2.0/4096)/3;
+            Assert.That(integral,Is.EqualTo(1).Within(.002),$"Normalized phase g={g}, a={a}");
+        }
+    }
+
+    [TestCase(false), TestCase(true), Category("GPU"), Category("Performance")]
+    public void AtmosphereTimingAndCapturesAt720p(bool secondEnabled)
     {
         using var shaders = new SceneShaders("Atmosphere");
         using var window = new HiddenWindow();
@@ -205,6 +325,7 @@ public partial class ShaderRenderingTests
         var histories = stages.ToDictionary(s => s, s => profile.Track("gpu." + s + "_ms"));
         using var renderer = new Renderer(window.Handle, 1280, 720, 8, 60, profile: profile,
             shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        if (!secondEnabled) PointSet(renderer, "Sun2.Intensity", 0);
         void Tick() { clock.Advance(); renderer.Render(false); renderer.ReadPixels(false); renderer.PollGpuTimings(); }
         Tick();
         // Exercise sun-only and full rebuilds separately from the subsequent cached frames.
@@ -213,9 +334,11 @@ public partial class ShaderRenderingTests
             PointSet(renderer, "Sun.Altitude", i % 2 == 0 ? .66f : .67f); Tick();
             PointSet(renderer, "Atmosphere.ScaleHeight", i % 2 == 0 ? .46f : .47f); Tick();
         }
-        renderer.ActiveShader!.Effects[0].Parameters!.Reset(); Tick();
+        renderer.ActiveShader!.Effects[0].Parameters!.Reset();
+        if (!secondEnabled) PointSet(renderer, "Sun2.Intensity", 0);
+        Tick();
         for (int i = 0; i < 180; i++) Tick();
-        var report = new List<string> { $"1280x720, {renderer.AdapterDescription}" };
+        var report = new List<string> { $"1280x720, {renderer.AdapterDescription}, {(secondEnabled ? "two suns" : "one sun")}" };
         foreach (var stage in stages)
         {
             long cursor = 0;
@@ -230,20 +353,27 @@ public partial class ShaderRenderingTests
         }
         var directory = Path.GetFullPath(Path.Combine(ShaderDirectory, "..", "..", "artifacts", "atmosphere"));
         Directory.CreateDirectory(directory);
-        File.WriteAllLines(Path.Combine(directory, "timings.txt"), report);
+        File.WriteAllLines(Path.Combine(directory, secondEnabled ? "timings-two-suns.txt" : "timings-one-sun.txt"), report);
         foreach (var line in report) TestContext.Out.WriteLine(line);
+        if (!secondEnabled) return;
         void Capture(string name)
         {
             Tick();
             string path = Path.Combine(directory, name + "-1280x720.rgba");
             File.WriteAllBytes(path, renderer.ReadPixels(false)); TestContext.AddTestAttachment(path);
         }
-        Capture("day");
+        Capture("two-suns");
+        PointSet(renderer, "Sun2.Intensity", 0); Capture("day");
         PointSet(renderer, "Sun.Altitude", .5f); Capture("sunset");
         PointSet(renderer, "Sun.Altitude", .48f); Capture("twilight");
         PointSet(renderer, "Sun.Altitude", 0f); Capture("night");
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
         PointSet(renderer, "ShowTransmittance", true); Capture("transmittance");
         PointSet(renderer, "ShowTransmittance", false); PointSet(renderer, "ShowSkyView", true); Capture("sky-view");
+        renderer.ActiveShader!.Effects[0].Parameters!.Reset();
+        PointSet(renderer, "Sun2.Intensity", 0);
+        PointSet(renderer, "View.Altitude", 2f/3);
+        PointSet(renderer, "Phase.Anisotropy", (float)((.8+.95)/1.9));
+        Capture("draine-forward-lobe");
     }
 }

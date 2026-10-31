@@ -38,6 +38,12 @@ public partial class ShaderRenderingTests
         Assert.That(dithered.Zip(original, (a, b) => Math.Abs(a - b)).Max(), Is.LessThanOrEqualTo(1));
         if (!highPrecision)
             Assert.That(renderer.ReadPresentedPixels().Select(x => (byte)Math.Round(x * 255)), Is.EqualTo(dithered));
+        else
+        {
+            var presented = renderer.ReadPresentedPixels();
+            renderer.Render(false);
+            Assert.That(renderer.ReadPresentedPixels(), Is.EqualTo(presented), "scRGB dither must not flicker.");
+        }
 
         var audio = renderer.Audio;
         var history = audio.History;
@@ -103,9 +109,10 @@ public partial class ShaderRenderingTests
     [TestCase(false, false, 1, 1, .5f), TestCase(false, false, 1, 1, 2),
      TestCase(true, false, 1, 1, 2), TestCase(true, false, 6, 2.5f, 2),
      TestCase(true, false, 6, 2.5f, 4096), TestCase(true, false, 1, 1, 1f / 4096),
-     TestCase(false, true, 1, 1, 4096), TestCase(true, true, 6, 2.5f, 4096), Category("GPU")]
+     TestCase(false, true, 1, 1, 4096), TestCase(true, true, 6, 2.5f, 4096),
+     TestCase(true, false, 1, 1, .5f, true), Category("GPU")]
     public void PresentationShaderMapsSyntheticColorsOnAnOffscreenFp16Surface(bool scRgb, bool displayColor,
-        float headroom, float whiteScale, float gain)
+        float headroom, float whiteScale, float gain, bool dither = false)
     {
         // WARP tests the real shader and constant-buffer layout without relying on an HDR monitor.
         global::Vortice.Direct3D11.D3D11.D3D11CreateDevice(null, DriverType.Warp, DeviceCreationFlags.None,
@@ -141,7 +148,7 @@ public partial class ShaderRenderingTests
             context.PSSetShader(pixel);
             context.PSSetConstantBuffer(3, buffer);
             context.UpdateSubresource(new PostprocessingConstants
-                { Mapping = new(scRgb ? 1 : 0, whiteScale, gain, headroom) }, buffer);
+                { Mapping = new(scRgb ? 1 : 0, whiteScale, gain, headroom), Dither = new(dither ? 1 : 0, 0, 0, 0) }, buffer);
             foreach (var color in new[] { new Vector3(0, .0001f, .003f), new Vector3(.25f, 1, 8), new Vector3(.02f, .041f, .75f) })
             {
                 context.ClearRenderTargetView(inputTarget, new Color4(color.X, color.Y, color.Z, displayColor ? 1 : 0));
@@ -169,8 +176,12 @@ public partial class ShaderRenderingTests
                         double mapped = headroom * (1 - Math.Exp(-value * gain / headroom));
                         expected = scRgb ? mapped * whiteScale : Srgb(mapped);
                     }
-                    Assert.That((float)actual[c], Is.EqualTo(expected).Within(Math.Max(.000002, Math.Abs(expected) * .002)),
-                        $"color {color}, channel {c}");
+                    if (dither)
+                        Assert.That(Srgb((float)actual[c]/whiteScale),Is.EqualTo(Srgb(expected/whiteScale)).Within(.0025),
+                            "scRGB dither stays within half an SDR code step plus FP16 rounding");
+                    else
+                        Assert.That((float)actual[c], Is.EqualTo(expected).Within(Math.Max(.000002, Math.Abs(expected) * .002)),
+                            $"color {color}, channel {c}");
                 }
                 Assert.That((float)actual[3], Is.EqualTo(1));
             }

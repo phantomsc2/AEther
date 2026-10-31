@@ -3,12 +3,13 @@ using Vortice.DXGI;
 
 namespace AEther.Vortice;
 
-/// <summary>Ground-level single-scattering sky. Integration runs only when a LUT's inputs change.</summary>
+/// <summary>Shared atmosphere LUT lifecycle for ground and orbital views.</summary>
 public sealed class AtmosphereEffect : SceneEffect
 {
     internal const int TransmittanceWidth = 256, TransmittanceHeight = 64;
     internal const int SkyViewWidth = 256, SkyViewHeight = 128;
     readonly ShaderProgram transmittanceProgram, skyViewProgram;
+    readonly int skyViewWidth, skyViewHeight;
     readonly ID3D11SamplerState sampler;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
     Lookup? transmittance, skyView;
@@ -19,9 +20,11 @@ public sealed class AtmosphereEffect : SceneEffect
     internal ID3D11Texture2D TransmittanceTexture => transmittance!.Texture;
     internal ID3D11Texture2D SkyViewTexture => skyView!.Texture;
 
-    internal AtmosphereEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file)
+    internal AtmosphereEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file,
+        int skyViewWidth = SkyViewWidth, int skyViewHeight = SkyViewHeight)
         : base(name, device, context, source, file)
     {
+        this.skyViewWidth = skyViewWidth; this.skyViewHeight = skyViewHeight;
         try
         {
             transmittanceProgram = new(device, source, "BuildTransmittance", file, "cs_5_0");
@@ -59,20 +62,23 @@ public sealed class AtmosphereEffect : SceneEffect
             var leaves = ShaderParameters.Leaves(parameters!.Items).ToArray();
             nextAtmosphere = leaves.Where(p => p.Path.StartsWith("Atmosphere.", StringComparison.Ordinal))
                 .Select(parameters.GetFloat).ToArray();
-            nextSun = leaves.Where(p => p.Path is "Sun.Altitude" or "Sun.Intensity").Select(parameters.GetFloat).ToArray();
+            nextSun = leaves.Where(p => p.Path.StartsWith("Sun.", StringComparison.Ordinal)
+                || p.Path.StartsWith("Sun2.", StringComparison.Ordinal)
+                || p.Path.StartsWith("Phase.", StringComparison.Ordinal)
+                || p.Path.StartsWith("Orbit.", StringComparison.Ordinal)).Select(parameters.GetFloat).ToArray();
             rebuildTransmittance |= atmosphereKey == null || !nextAtmosphere.AsSpan().SequenceEqual(atmosphereKey);
             rebuildSky |= sunKey == null || !nextSun.AsSpan().SequenceEqual(sunKey);
         }
         rebuildSky |= rebuildTransmittance;
         transmittance ??= new(Device, TransmittanceWidth, TransmittanceHeight);
-        skyView ??= new(Device, SkyViewWidth, SkyViewHeight);
+        skyView ??= new(Device, skyViewWidth, skyViewHeight);
         textures["AtmosphereTransmittance"] = transmittance.View;
         textures["AtmosphereSkyView"] = skyView.View;
         samplers["AtmosphereSampler"] = sampler;
         outputs["AtmosphereTransmittanceOutput"] = transmittance.Output;
         outputs["AtmosphereSkyViewOutput"] = skyView.Output;
         if (rebuildTransmittance) Run(transmittanceProgram, "Atmosphere transmittance", TransmittanceWidth, TransmittanceHeight);
-        if (rebuildSky) Run(skyViewProgram, "Atmosphere sky view", SkyViewWidth, SkyViewHeight);
+        if (rebuildSky) Run(skyViewProgram, "Atmosphere sky view", skyViewWidth, skyViewHeight);
         atmosphereKey = nextAtmosphere; sunKey = nextSun; previous = parameters;
 
         void Run(ShaderProgram program, string marker, int width, int height)

@@ -20,6 +20,7 @@ public sealed class SceneDefinition
     [
         Fullscreen("Histogram"), Fullscreen("Spectrum"), Fullscreen("Debug"), Fullscreen("MandelPond"),
         new("Atmosphere", (d, c, s) => [new AtmosphereEffect("Atmosphere", d, c, s, "Atmosphere.hlsl")]),
+        new("Planet", (d, c, s) => [new AtmosphereEffect("Atmosphere", d, c, s, "Planet.hlsl", 256, 128)]),
         new("Froxel1", (d, c, s) => [new FroxelEffect("Froxel", d, c, s, "Froxel1.hlsl", new FroxelOptions())]),
         new("Froxel2", (d, c, s) => [new Froxel2Effect("Froxel", d, c, s, "Froxel2.hlsl")]),
         new("Froxel3", (d, c, s) => [new Froxel3Effect("Froxel", d, c, s, "Froxel3.hlsl")]),

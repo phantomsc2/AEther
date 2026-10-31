@@ -28,6 +28,7 @@ internal sealed partial class ColorOutput : IDisposable
     float whiteScale = 1;
     float headroom = 1;
     float renderedGain = 1;
+    bool hdrDisplay;
     int width, height;
     public bool HighPrecision { get; }
     public WaitHandle FrameReady { get; } = null!;
@@ -147,6 +148,7 @@ internal sealed partial class ColorOutput : IDisposable
         {
             nextDisplayCheck = now + 1;
             whiteScale = headroom = 1;
+            hdrDisplay = false;
             // Poll infrequently to follow monitor moves, HDR toggles and the
             // Windows SDR-brightness slider without doing display queries per frame.
             try
@@ -155,6 +157,7 @@ internal sealed partial class ColorOutput : IDisposable
                 using var advanced = output?.QueryInterfaceOrNull<IDXGIOutput6>();
                 if (advanced?.Description1 is { ColorSpace: ColorSpaceType.RgbFullG2084NoneP2020 } display)
                 {
+                    hdrDisplay = true;
                     whiteScale = DisplayWhiteLevel.GetScale(output!.Description.DeviceName);
                     if (float.IsFinite(display.MaxLuminance) && display.MaxLuminance > 0)
                         headroom = Math.Max(1, display.MaxLuminance / (80 * whiteScale));
@@ -162,7 +165,7 @@ internal sealed partial class ColorOutput : IDisposable
             }
             catch (SharpGenException) { whiteScale = headroom = 1; }
         }
-        DrawTo(shader, backTarget!, new(HighPrecision ? 1 : 0, whiteScale, renderedGain, headroom), true);
+        DrawTo(shader, backTarget!, new(HighPrecision ? 1 : 0, whiteScale, renderedGain, headroom), !hdrDisplay);
     }
 
     void DrawTo(ID3D11PixelShader shader, ID3D11RenderTargetView target, Vector4 mapping, bool dither)

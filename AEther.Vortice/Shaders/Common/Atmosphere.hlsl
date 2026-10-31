@@ -1,34 +1,39 @@
 #ifndef AETHER_ATMOSPHERE
 #define AETHER_ATMOSPHERE
 
-// Distances in km, scattering/extinction in inverse km. No aerosols or absorption.
-static const float AtmospherePi = 3.141592653589793;
-static const float AtmosphereRadius = 6360.0;
-struct AtmosphereSettings
-{
-    float3 RayleighScattering;
-    float ScaleHeight;
-    float Height;
-};
-struct AtmosphereSunSettings { float Azimuth, Altitude, Intensity; };
-struct AtmosphereViewSettings { float Azimuth, Altitude; };
-cbuffer Parameters
-{
-    AtmosphereSettings Atmosphere = { float3(.058, .135, .331), 7.0/15.0, 80.0/140.0 };
-    AtmosphereSunSettings Sun = { 0, 2.0/3.0, .5 };
-    AtmosphereViewSettings View = { 0, 100.0/180.0 };
-    bool ShowTransmittance = false;
-    bool ShowSkyView = false;
-};
+// The including scene declares Parameters and supplies AtmosphereScaleHeight()
+// and AtmosphereBeta() before including this transport implementation.
+#include "AtmosphereTypes.hlsl"
 Texture2D<float4> AtmosphereTransmittance;
 Texture2D<float4> AtmosphereSkyView;
 SamplerState AtmosphereSampler;
 RWTexture2D<float4> AtmosphereTransmittanceOutput;
 RWTexture2D<float4> AtmosphereSkyViewOutput;
 
-float AtmosphereHeight() { return lerp(20.0, 160.0, Atmosphere.Height); }
-float AtmosphereScaleHeight() { return lerp(1.0, 16.0, Atmosphere.ScaleHeight); }
-float3 AtmosphereBeta() { return .1 * Atmosphere.RayleighScattering; }
+// Numerical truncation only: exp(-10) is about 0.0045% of base density.
+static const float AtmosphereExtent = 10;
+static const uint AtmosphereTransmittanceSteps = 128, AtmosphereSkySteps = 64;
+float AtmosphereHeight() { return AtmosphereExtent*AtmosphereScaleHeight(); }
+float AtmosphereDensityAtAltitude(float h)
+{
+    // Plain exponential; the finite integration boundary does not reshape density.
+    return exp(-max(0,h)/AtmosphereScaleHeight());
+}
+// Draine (2003), normalized over 4*pi. Shape a=0 gives HG, a=1 gives Cornette-Shanks.
+// Coefficients are uniform and evaluated once per Sky-View texel, outside integration.
+float4 AtmosphereDraineCoefficients()
+{
+    float g = lerp(-.95,.95,Phase.Anisotropy), a = 2*Phase.Shape;
+    float g2 = g*g;
+    float k = (1-g2)/(4*AtmospherePi*(1+a*(1+2*g2)/3));
+    return float4(1+g2,2*g,k,a);
+}
+float AtmosphereDrainePhase(float c, float4 coefficients)
+{
+    c = clamp(c,-1,1);
+    float r = rsqrt(max(1e-6,coefficients.x-coefficients.y*c));
+    return coefficients.z*(1+coefficients.w*c*c)*r*r*r;
+}
 float AtmosphereAltitudeAngle(float value) { return AtmospherePi * (value - .5); }
 float3 AtmosphereDirection(float azimuth, float altitude)
 {
@@ -58,20 +63,22 @@ float2 AtmosphereTexelUV(float2 unit, uint width, uint height)
     float2 size = float2(width,height);
     return (.5+saturate(unit)*(size-1))/size;
 }
-// Bruneton boundary-distance mapping: x is distance, y is sqrt(r*r-R*R).
+// Boundary-distance U; compact altitude V concentrates rows within a few scale heights.
 // The table covers non-ground-intersecting rays, including negative zenith cosine at altitude.
 float2 AtmosphereTransmittanceCoordinates(float h, float mu)
 {
     float H = sqrt(AtmosphereHeight()*(2*AtmosphereRadius+AtmosphereHeight()));
     float rho = sqrt(max(0,h*(2*AtmosphereRadius+h)));
     float dmin = AtmosphereHeight()-h, dmax = rho+H;
-    return saturate(float2((AtmosphereDistanceToTop(h,mu)-dmin)/max(dmax-dmin,1e-6),rho/H));
+    float v = sqrt((h/(h+AtmosphereScaleHeight()))*((AtmosphereExtent+1)/AtmosphereExtent));
+    return saturate(float2((AtmosphereDistanceToTop(h,mu)-dmin)/max(dmax-dmin,1e-6),v));
 }
 void AtmosphereTransmittanceRay(float2 unit, out float h, out float mu)
 {
     float H = sqrt(AtmosphereHeight()*(2*AtmosphereRadius+AtmosphereHeight()));
-    float rho = unit.y*H, r = sqrt(AtmosphereRadius*AtmosphereRadius+rho*rho);
-    h = rho*rho/(r+AtmosphereRadius);
+    float q = unit.y*unit.y*(AtmosphereExtent/(AtmosphereExtent+1));
+    h = AtmosphereScaleHeight()*q/(1-q);
+    float r = AtmosphereRadius+h, rho = sqrt(h*(2*AtmosphereRadius+h));
     float d = lerp(AtmosphereHeight()-h,rho+H,unit.x);
     mu = d > 1e-6 ? clamp((H*H-rho*rho-d*d)/(2*r*d),-1,1) : 1;
 }
@@ -83,24 +90,69 @@ float3 AtmosphereSunTransmittance(float h, float mu)
     return AtmosphereTransmittance.SampleLevel(AtmosphereSampler,
         AtmosphereTexelUV(AtmosphereTransmittanceCoordinates(h,mu),width,height),0).rgb;
 }
-// Top row is zenith; bottom row is horizon. Both azimuth endpoints are stored.
-float3 AtmosphereSkyDirection(float2 unit)
-{
-    float elevation = .5*AtmospherePi*(1-unit.y)*(1-unit.y);
-    return AtmosphereDirection(2*AtmospherePi*unit.x,elevation);
-}
-float2 AtmosphereSkyCoordinates(float3 direction)
-{
-    float phi = atan2(direction.x,direction.z)/(2*AtmospherePi);
-    return float2(frac(phi+1),1-sqrt(saturate(asin(saturate(direction.y))/(.5*AtmospherePi))));
-}
 // Stable 1-exp(-x) for optically thin segments, with exact zero-scattering limit.
-float3 AtmosphereSegmentScatter(float3 opticalDepth)
+float3 AtmosphereSegmentScatter(float3 opticalDepth, float3 segmentTransmission)
 {
     float3 x = max(0,opticalDepth);
     float3 series = x*(1-x*(.5-x/6));
-    return float3(x.x < .01 ? series.x : 1-exp(-x.x),
-                  x.y < .01 ? series.y : 1-exp(-x.y),
-                  x.z < .01 ? series.z : 1-exp(-x.z));
+    return float3(x.x < .01 ? series.x : 1-segmentTransmission.x,
+                  x.y < .01 ? series.y : 1-segmentTransmission.y,
+                  x.z < .01 ? series.z : 1-segmentTransmission.z);
+}
+
+// Transport is independent of the scene's camera, projection, and opaque body.
+// origin is inside/on the numerical volume; distance ends at its limit or a surface.
+float3 AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps)
+{
+    if (distance<=0) return 0;
+    float h0 = max(0,length(origin)-AtmosphereRadius);
+    float mu = dot(origin,ray)/(AtmosphereRadius+h0);
+    float step = distance/steps;
+    float3 betaStep = AtmosphereBeta()*step;
+    float3 sun = AtmosphereDirection(2*AtmospherePi*Sun.Azimuth,AtmosphereAltitudeAngle(Sun.Altitude));
+    float3 sun2 = AtmosphereDirection(2*AtmospherePi*Sun2.Azimuth,AtmosphereAltitudeAngle(Sun2.Altitude));
+    float4 coefficients = AtmosphereDraineCoefficients();
+    float c = dot(ray,sun), c2 = dot(ray,sun2);
+    float phase = AtmosphereDrainePhase(c,coefficients), phase2 = AtmosphereDrainePhase(c2,coefficients);
+    float3 transmission = 1, radiance = 0;
+    [loop] for (uint i=0; i<steps; i++)
+    {
+        float t = (i+.5)*step;
+        float h = AtmosphereAltitudeAlongRay(h0,mu,t);
+        float3 tau = betaStep*AtmosphereDensityAtAltitude(h);
+        float3 segmentTransmission = exp(-tau);
+        float3 incoming = 0;
+        [branch] if (Sun.Intensity>0)
+        {
+            float sunMu = clamp((dot(origin,sun)+t*c)/(AtmosphereRadius+h),-1,1);
+            incoming += AtmosphereSunTransmittance(h,sunMu)*phase*(40*Sun.Intensity);
+        }
+        [branch] if (Sun2.Intensity>0)
+        {
+            float sunMu = clamp((dot(origin,sun2)+t*c2)/(AtmosphereRadius+h),-1,1);
+            incoming += AtmosphereSunTransmittance(h,sunMu)*phase2*(40*Sun2.Intensity);
+        }
+        radiance += transmission*incoming*AtmosphereSegmentScatter(tau,segmentTransmission);
+        transmission *= segmentTransmission;
+    }
+    return max(0,radiance);
+}
+
+[numthreads(8,8,1)]
+void BuildTransmittance(uint3 id : SV_DispatchThreadID)
+{
+    uint width,height;
+    AtmosphereTransmittanceOutput.GetDimensions(width,height);
+    if (id.x>=width || id.y>=height) return;
+    float h,mu;
+    AtmosphereTransmittanceRay(float2(id.xy)/float2(width-1,height-1),h,mu);
+    float step = AtmosphereDistanceToTop(h,mu)/AtmosphereTransmittanceSteps;
+    float densitySum = 0;
+    [loop] for (uint i=0; i<AtmosphereTransmittanceSteps; i++)
+    {
+        float t = (i+.5)*step;
+        densitySum += AtmosphereDensityAtAltitude(AtmosphereAltitudeAlongRay(h,mu,t));
+    }
+    AtmosphereTransmittanceOutput[id.xy] = float4(exp(-AtmosphereBeta()*(densitySum*step)),1);
 }
 #endif
