@@ -47,7 +47,7 @@ The resizable hub has two equal-width columns. Input, Gain and the live analysis
 view are pinned on the left. Below them, DFT, Pipeline, Smoother and Splitter are
 separate expandable blocks, all closed initially, inside one shared scroller.
 Pipeline includes a graphics-owned **Peak emphasis** aggregation parameter:
-0 = Mean, 0.5 = RMS (default), 1 = Max. Intermediate values use a power mean with
+0 = Mean, 0.5 = RMS, 1 = Max (default emphasis 0.172). Intermediate values use a power mean with
 `p = 1 / (1 - a)`, weighted by each row's overlap with the display interval.
 Missing intervals contribute zero; Max includes every row with positive overlap.
 Scenes hold the aggregate between arrivals until it becomes stale after 50 ms.
@@ -112,6 +112,28 @@ C# effect options and use the shared settings panel generator. Values survive co
 within the process; they are not saved between app launches. See
 [shader authoring](doc/shader-authoring.md) for the input contract, examples, mappings,
 and current limitations.
+
+`FractalCut` draws parallel Z slabs back-to-front through a fixed Julia-box volume,
+with a static frontal perspective camera. Each slab samples binary membership
+at its ray-segment midpoint and integrates homogeneous emission/absorption with
+`alpha = 1 - exp(-extinction * distance)`. Premultiplied hardware blending takes
+place in linear floating-point RGBA before tone mapping. Segment distance includes
+perspective and clipped boundary slabs. There is no lighting, antialiasing,
+temporal history or audio input. Run `AEther.Smoke.exe . --fractal-cut-only` for
+720p previews, analytic transport checks and a two-color draw-order check.
+Its normalized Box controls map Scale to [-4,4], InnerFoldRadius to [0,1]
+(with a numerical guard at zero), and Iterations to integers [1,32]. Defaults
+are scale -2.152, guarded zero inner radius and 13 iterations (normalized
+Box controls: 0.231, 0, 0.382).
+JuliaSeed components map to [-2,2], with a static default of (-1.468,-0.684,0.756)
+(normalized 0.133,0.329,0.689).
+Extinction maps to [0,4] per fractal-coordinate unit, default 1.256
+(normalized 0.314); zero is transparent.
+CutScale controls slice spacing over the same six-unit volume: slice count is
+`ceil(2^(8 - 4*CutScale))`, from 256 to 16, default 256 (normalized 0). Increasing spacing reduces
+sampling detail without changing the volume extent or intentionally changing its
+optical density. The exponential integral is exact within each sampled slab;
+fractal boundaries still have spatial sampling error.
 
 MandelPond and MandelFluid share fractal geometry. MandelFluid adds persistent pigment:
 tones supply body material, background drives turbulence and rhythmic attacks highlight the

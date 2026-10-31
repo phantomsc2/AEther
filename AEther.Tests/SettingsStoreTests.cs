@@ -45,10 +45,10 @@ public class SettingsStoreTests
     }
 
     [Test]
-    public void OlderGraphicsSettingsDefaultToZeroExposure()
+    public void OlderGraphicsSettingsUseCurrentExposureDefault()
     {
         var options = JsonSerializer.Deserialize<GraphicsOptions>("{\"HistorySeconds\":4,\"SpectrumAggregation\":0.8}");
-        Assert.That(options, Is.EqualTo(new GraphicsOptions(4, .8, 0)));
+        Assert.That(options, Is.EqualTo(new GraphicsOptions(4, .8, -1.248)));
     }
 
     [TestCase(-12), TestCase(0), TestCase(12)]

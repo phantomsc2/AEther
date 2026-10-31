@@ -116,7 +116,7 @@ public sealed partial class Renderer : IDisposable
     public Renderer(IntPtr window, int width, int height, AnalysisOutput input,
         string? shaderDirectory = null, Action<IDXGISwapChain1?>? attachSwapChain = null,
         string? initialScene = null, PipelineProfile? profile = null, GraphicsOptions? graphicsOptions = null, ILogger? logger = null, IReadOnlyList<SceneDefinition>? sceneDefinitions = null)
-        : this(window, width, height, input.Domain.Length, input.AnalysisRate, graphicsOptions?.HistorySeconds ?? 2,
+        : this(window, width, height, input.Domain.Length, input.AnalysisRate, graphicsOptions?.HistorySeconds ?? 2.220,
             shaderDirectory, attachSwapChain: attachSwapChain, initialScene: initialScene, profile: profile, logger: logger, sceneDefinitions: sceneDefinitions)
     {
         Input = input;
@@ -124,7 +124,7 @@ public sealed partial class Renderer : IDisposable
     }
 
     public Renderer(IntPtr window, int width, int height, int bands, double analysisRate,
-        double historySeconds = 2, string? shaderDirectory = null, bool highPrecisionOutput = true,
+        double historySeconds = 2.220, string? shaderDirectory = null, bool highPrecisionOutput = true,
         Action<IDXGISwapChain1?>? attachSwapChain = null, TimeProvider? timeProvider = null,
         string? initialScene = null, PipelineProfile? profile = null, ILogger? logger = null, IReadOnlyList<SceneDefinition>? sceneDefinitions = null)
     {
@@ -133,7 +133,8 @@ public sealed partial class Renderer : IDisposable
         using var startup = profile?.Measure("startup.gpu_ms");
         Options = new(historySeconds);
         Options.Validate();
-        Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider);
+        Audio = new(bands, analysisRate, historySeconds, timeProvider: timeProvider)
+        { SpectrumAggregation = Options.SpectrumAggregation };
         Audio.Profile = profile;
         if (initialScene != null) SceneName = initialScene;
         this.shaderDirectory = shaderDirectory ?? FindShaderDirectory();
