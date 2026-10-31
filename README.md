@@ -93,6 +93,11 @@ a C# registration; deleting a registered source removes it from the selector. Fa
 previous programs and controls, with diagnostics in the shader panel and event log. Published apps
 use the `Shaders` tree beside the executable.
 
+`Atmosphere` is a ground-level Rayleigh single-scattering sky with Transmittance
+and Sky-View LUTs, sun/view controls, and raw LUT previews. It works without audio;
+the final background pass uses a lookup with no integration. See the
+[atmosphere scene](doc/atmosphere.md) for physical parameters and verification.
+
 Editable values are reflected from `cbuffer Parameters`; nested structs become groups,
 bools become checkboxes, and floats/float vectors use linked [0, 1] sliders and numeric
 inputs. Analyzer options are grouped by category using expanders, numeric inputs,
