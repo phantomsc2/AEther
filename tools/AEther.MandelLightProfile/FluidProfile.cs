@@ -40,6 +40,8 @@ internal static partial class Program
             ((FluidEffect)renderer.ActiveShader!.Effects[0]).Options = new FluidOptions(item.Low ? 128 : 512, item.Low ? 128 : 512);
             Set(renderer, "Fluid.PeriodicBoundary", item.Periodic);
             Set(renderer, "Fluid.Viscosity", item.Viscosity);
+            Set(renderer, "Fluid.VC1Enabled", args.Contains("--vc1"));
+            Set(renderer, "Fluid.VC2Enabled", args.Contains("--vc2"));
             if (args.Contains("--filaments"))
             {
                 Set(renderer, "Fluid.VelocityGain", .5f);

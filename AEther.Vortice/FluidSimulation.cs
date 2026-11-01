@@ -17,14 +17,18 @@ internal sealed class FluidSimulation : IDisposable
 {
     internal static readonly string[] MaterialNames = Enumerable.Range(0, 8).Select(i => $"FluidMaterial{i}").ToArray();
     internal static readonly string[] PredictionNames = Enumerable.Range(0, 8).Select(i => $"FluidPredicted{i}").ToArray();
-    internal enum Pass { PredictVelocity, AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, PredictMaterial, UpdateMaterial, DiffuseVelocityX, DiffuseVelocityY, ProjectUnforced }
+    internal enum Pass { PredictVelocity, AdvectVelocity, Divergence, Relax, Residual, Restrict, Prolong, Project, PredictMaterial, UpdateMaterial, DiffuseVelocityX, DiffuseVelocityY, ProjectUnforced, Vorticity, VC1, VC2Potential, VC2 }
 
     internal sealed class Settings
     {
         internal readonly ShaderParameters Values;
         readonly ShaderParameter periodic, viscosity;
+        readonly ShaderParameter? vc1Enabled, vc1Strength, vc2Enabled, vc2Strength;
         internal bool Periodic => Values.GetBoolean(periodic);
         internal bool Viscous => Values.GetFloat(viscosity) > 0;
+        internal float VC1Strength => Strength(vc1Enabled, vc1Strength);
+        internal float VC2Strength => Strength(vc2Enabled, vc2Strength);
+        float Strength(ShaderParameter? enabled, ShaderParameter? strength) => enabled != null && strength != null && Values.GetBoolean(enabled) ? Values.GetFloat(strength) : 0;
         internal Settings(ShaderParameters? values)
         {
             Values = values ?? throw new InvalidOperationException("Fluid scenes require Parameters.Fluid settings.");
@@ -38,6 +42,15 @@ internal sealed class FluidSimulation : IDisposable
             }
             periodic = Require("PeriodicBoundary", true);
             viscosity = Require("Viscosity", false);
+            ShaderParameter? Optional(string name, bool boolean)
+            {
+                var field = fields?.FirstOrDefault(p => p.Name == name);
+                if (field != null && (field.Children.Count != 0 || field.IsBoolean != boolean))
+                    throw new InvalidOperationException($"Parameters.Fluid.{name}: invalid type.");
+                return field;
+            }
+            vc1Enabled = Optional("VC1Enabled", true); vc1Strength = Optional("VC1Strength", false);
+            vc2Enabled = Optional("VC2Enabled", true); vc2Strength = Optional("VC2Strength", false);
         }
     }
 
@@ -245,7 +258,7 @@ internal sealed class FluidSimulation : IDisposable
         foreach (var pair in samplers) namedSamplers[pair.Key] = pair.Value;
         parameters = new Parameters
         {
-            B = new((float)TimeStep, 0, 0, 0),
+            B = new((float)TimeStep, 0, programs.Configuration.VC1Strength, programs.Configuration.VC2Strength),
             C = new((float)Math.Max(0, dt - .05), 0, 0, 0),
         };
         if (velocityWarmupPending)
@@ -370,8 +383,34 @@ internal sealed class FluidSimulation : IDisposable
             Draw(Pass.DiffuseVelocityY, nextVelocity, v: velocity);
             (velocity, nextVelocity) = (nextVelocity, velocity);
         }
+        ApplyConfinement();
         PassMarker?.Invoke("Fluid velocity", false);
         Project();
+    }
+
+    void ApplyConfinement()
+    {
+        if (parameters.B.Z > 0)
+        {
+            Draw(Pass.Vorticity, levels[0].Residual, v: velocity);
+            Draw(Pass.VC1, nextVelocity, v: velocity, rhs: levels[0].Residual);
+            (velocity, nextVelocity) = (nextVelocity, velocity);
+        }
+        if (parameters.B.W > 0)
+        {
+            Draw(Pass.Vorticity, levels[0].Residual, v: velocity);
+            Draw(Pass.VC2Potential, levels[0].Scratch, rhs: levels[0].Residual);
+            Draw(Pass.VC2, nextVelocity, v: velocity, correction: levels[0].Scratch);
+            (velocity, nextVelocity) = (nextVelocity, velocity);
+        }
+    }
+
+    internal void CheckConfinement(Programs shaders, float vc1, float vc2)
+    {
+        programs = shaders;
+        parameters.B = new((float)TimeStep, 0, vc1, vc2);
+        Grid(velocity);
+        ApplyConfinement();
     }
 
     void StepMaterial()

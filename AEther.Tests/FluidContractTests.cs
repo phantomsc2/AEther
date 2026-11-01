@@ -9,6 +9,115 @@ namespace AEther.Tests;
 public partial class ShaderRenderingTests
 {
 
+    [TestCase(false, false), TestCase(true, false), TestCase(false, true), TestCase(true, true), Category("GPU")]
+    public void ConfinementActsOnVorticesAndLeavesZeroFlowUnchanged(bool vc1, bool vc2)
+    {
+        using var shaders = new SceneShaders("MandelFluid");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        clock.Advance(); renderer.Render(false);
+        var effect = (FluidEffect)renderer.ActiveShader!.Effects[0];
+        var fluid = effect.Simulation!;
+        var zero = new float[fluid.Width * fluid.Height * 2];
+        fluid.WriteVelocity(zero);
+        fluid.CheckConfinement(effect.Programs, vc1 ? .5f : 0, vc2 ? .5f : 0);
+        Assert.That(fluid.ReadVelocity(), Is.All.Zero);
+
+        var initial = new float[zero.Length];
+        for (int y = 0; y < fluid.Height; y++)
+        for (int x = 0; x < fluid.Width; x++)
+        {
+            int i = 2 * (y * fluid.Width + x);
+            initial[i] = (float)(Math.Sin(2 * Math.PI * y / fluid.Height) * Math.Cos(4 * Math.PI * x / fluid.Width));
+            initial[i + 1] = (float)(-Math.Sin(2 * Math.PI * x / fluid.Width) * Math.Cos(4 * Math.PI * y / fluid.Height));
+        }
+        fluid.WriteVelocity(initial);
+        fluid.CheckConfinement(effect.Programs, vc1 ? .5f : 0, vc2 ? .5f : 0);
+        var result = fluid.ReadVelocity();
+        Assert.That(result.All(float.IsFinite), Is.True);
+        double delta = result.Zip(initial, (a, b) => Math.Abs((double)a - b)).Sum();
+        Assert.That(delta, vc1 || vc2 ? Is.GreaterThan(1e-5) : Is.Zero);
+        if (!vc1 && vc2)
+        {
+            Assert.That(Math.Abs(result.Where((_, i) => i % 2 == 0).Sum(v => (double)v)
+                                 - initial.Where((_, i) => i % 2 == 0).Sum(v => (double)v)), Is.LessThan(.01));
+            Assert.That(Math.Abs(result.Where((_, i) => i % 2 == 1).Sum(v => (double)v)
+                                 - initial.Where((_, i) => i % 2 == 1).Sum(v => (double)v)), Is.LessThan(.01));
+        }
+    }
+
+    [Test, Category("GPU")]
+    public void ConfinementControlsChangePassesWithoutResettingSimulation()
+    {
+        using var shaders = new SceneShaders("MandelFluid");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        clock.Advance(); renderer.Render(false);
+        var effect = (FluidEffect)renderer.ActiveShader!.Effects[0];
+        var fluid = effect.Simulation!;
+        var parameters = effect.Parameters!;
+        var fields = parameters.Items.Single(p => p.Name == "Fluid").Children;
+        ShaderParameter Field(string name) => fields.Single(p => p.Name == name);
+        Assert.That(parameters.GetBoolean(Field("VC1Enabled")), Is.False);
+        Assert.That(parameters.GetBoolean(Field("VC2Enabled")), Is.False);
+        Assert.That(parameters.GetFloat(Field("VC1Strength")), Is.EqualTo(.5f));
+        Assert.That(parameters.GetFloat(Field("VC2Strength")), Is.EqualTo(.5f));
+        clock.Advance(); renderer.Render(false);
+        int baseline = fluid.LastDraws;
+        parameters.SetBoolean(Field("VC1Enabled"), true);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(effect.Simulation, Is.SameAs(fluid));
+        Assert.That(fluid.LastDraws, Is.EqualTo(baseline + 2));
+        parameters.SetBoolean(Field("VC2Enabled"), true);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(baseline + 5));
+        parameters.SetFloat(Field("VC1Strength"), 0);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(baseline + 3));
+        parameters.SetBoolean(Field("VC2Enabled"), false);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(baseline));
+    }
+
+    [TestCase(false), TestCase(true), Category("GPU")]
+    public void ConfinementRemainsFiniteAtMaximumStrengthOnNonSquareGrid(bool periodic)
+    {
+        using var shaders = new SceneShaders("MandelFluid");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, Bands, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        var effect = (FluidEffect)renderer.ActiveShader!.Effects[0];
+        effect.Options = new FluidOptions(128, 64);
+        var parameters = effect.Parameters!;
+        var fields = parameters.Items.Single(p => p.Name == "Fluid").Children;
+        parameters.SetBoolean(fields.Single(p => p.Name == "PeriodicBoundary"), periodic);
+        clock.Advance(); renderer.Render(false);
+        var fluid = effect.Simulation!;
+        var initial = new float[fluid.Width * fluid.Height * 2];
+        for (int y = 0; y < fluid.Height; y++)
+        for (int x = 0; x < fluid.Width; x++)
+        {
+            int i = 2 * (y * fluid.Width + x);
+            initial[i] = (float)(.2 * Math.Sin(2 * Math.PI * y / fluid.Height));
+            initial[i + 1] = (float)(.2 * Math.Sin(2 * Math.PI * x / fluid.Width));
+        }
+        fluid.WriteVelocity(initial);
+        for (int i = 0; i < 60; i++) fluid.CheckConfinement(effect.Programs, 1, 1);
+        var result = fluid.ReadVelocity();
+        Assert.That(result.All(float.IsFinite), Is.True);
+        Assert.That(result.Max(v => Math.Abs(v)), Is.LessThan(10));
+        if (!periodic)
+        {
+            for (int y = 0; y < fluid.Height; y++) Assert.That(result[2 * (y * fluid.Width + fluid.Width - 1)], Is.Zero);
+            for (int x = 0; x < fluid.Width; x++) Assert.That(result[2 * ((fluid.Height - 1) * fluid.Width + x) + 1], Is.Zero);
+        }
+    }
+
 
     const string FluidContractSource = """
         // A comment with #define RING_FLUID must have no special host meaning.

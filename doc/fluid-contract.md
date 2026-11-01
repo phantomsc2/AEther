@@ -36,6 +36,12 @@ not use `Parameters`.
   See [resource sizes](resource-sizes.md).
 - `Viscosity` is normalized; shared HLSL maps it to `0.1 * value^3`. Zero skips
   the two diffusion draws.
+- Optional `VC1Enabled` / `VC1Strength` and `VC2Enabled` / `VC2Strength` fields
+  enable vorticity confinement independently. Ring defaults are disabled with
+  strength 0.5. Existing scenes without these fields remain disabled. Both
+  methods can be enabled; VC1 is applied first and VC2 uses its updated velocity.
+  Strength zero skips the corresponding passes. These numerical corrections
+  can inject energy and should not be confused with the inlet's `Curl` control.
 
 Velocity and pressure advance at 60 Hz with three multigrid V-cycles and 16
 coarsest-grid iterations. Two initial velocity steps establish flow on the first

@@ -2,7 +2,7 @@
 #define AETHER_FLUID_SIMULATION
 // Shared velocity/multigrid passes. Coordinates and
 // velocities are in viewport-height units, independent of the grid resolution.
-cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, UnusedDecay, UnusedDiffusion; float CatchupSeconds; float3 UnusedForcing; };
+cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, VC1Strength, VC2Strength; float CatchupSeconds; float3 UnusedForcing; };
 Texture2D<float2> Velocity;
 Texture2D<float4> Advected;
 int2 WrapCell(int2 p) { int2 size = int2(GridSize); return (p % size + size) % size; }
@@ -121,6 +121,98 @@ float2 DiffuseVelocityX(PSin input) : SV_Target
 float2 DiffuseVelocityY(PSin input) : SV_Target
 {
     return DiffuseVelocityAxis(input.UV, float2(0, 1));
+}
+
+// Corner-centered curl of face-centered velocity. A wall corner has no
+// confinement flux, keeping normal velocity zero at the domain boundary.
+float Vorticity(PSin input) : SV_Target
+{
+    int2 p = int2(input.Position.xy);
+    if (!Fluid.PeriodicBoundary && (p.x == GridSize.x - 1 || p.y == GridSize.y - 1)) return 0;
+    float2 v = ReadVelocity(p);
+    return (ReadVelocity(p + int2(1, 0)).y - v.y) / CellSize.x
+        - (ReadVelocity(p + int2(0, 1)).x - v.x) / CellSize.y;
+}
+float ReadCurl(int2 p)
+{
+    if (Fluid.PeriodicBoundary) return Rhs.Load(int3(WrapCell(p), 0));
+    if (any(p < 0) || any(p >= int2(GridSize))) return 0;
+    return Rhs.Load(int3(p, 0));
+}
+float2 VC1Force(int2 p)
+{
+    float w = ReadCurl(p);
+    float nw = abs(ReadCurl(p + int2(-1, -1))), north = abs(ReadCurl(p + int2(0, -1))), ne = abs(ReadCurl(p + int2(1, -1)));
+    float west = abs(ReadCurl(p + int2(-1, 0))), east = abs(ReadCurl(p + int2(1, 0)));
+    float sw = abs(ReadCurl(p + int2(-1, 1))), south = abs(ReadCurl(p + int2(0, 1))), se = abs(ReadCurl(p + int2(1, 1)));
+    // Scharr derivatives average across the transverse direction to reduce
+    // grid-axis bias; retain physical derivatives for rectangular cells.
+    float2 g = float2(3 * (ne - nw) + 10 * (east - west) + 3 * (se - sw),
+                      3 * (sw - nw) + 10 * (south - north) + 3 * (se - ne)) / (32 * CellSize);
+    // Fade weak gradients instead of normalizing grid noise to unit strength.
+    // A local curl scale keeps this threshold independent of flow amplitude;
+    // division by cell size expresses it in the same units as the gradient.
+    float scale = (abs(w) + nw + north + ne + west + east + sw + south + se) / 9;
+    float epsilon = max(.05 * scale / min(CellSize.x, CellSize.y), 1e-12);
+    float2 n = g / sqrt(dot(g, g) + epsilon * epsilon);
+    return (2 * VC1Strength) * min(CellSize.x, CellSize.y) * w * float2(n.y, -n.x);
+}
+float2 VC1(PSin input) : SV_Target
+{
+    int2 p = int2(input.Position.xy);
+    float2 f = VC1Force(p);
+    float2 a = float2(.5 * (f.x + VC1Force(p - int2(0, 1)).x),
+                      .5 * (f.y + VC1Force(p - int2(1, 0)).y));
+    float2 v = ReadVelocity(p) + StepSeconds * a;
+    if (!Fluid.PeriodicBoundary)
+    {
+        if (p.x == GridSize.x - 1) v.x = 0;
+        if (p.y == GridSize.y - 1) v.y = 0;
+    }
+    return v;
+}
+float VC2Potential(PSin input) : SV_Target
+{
+    int2 p = int2(input.Position.xy);
+    float w = ReadCurl(p);
+    float4 a = abs(float4(ReadCurl(p + int2(1, 0)), ReadCurl(p - int2(1, 0)),
+                          ReadCurl(p + int2(0, 1)), ReadCurl(p - int2(0, 1))));
+    float4 d = abs(float4(ReadCurl(p + int2(-1, -1)), ReadCurl(p + int2(1, -1)),
+                          ReadCurl(p + int2(-1, 1)), ReadCurl(p + int2(1, 1))));
+    float h = min(CellSize.x, CellSize.y);
+    // Include diagonal curl with inverse physical-distance weights. Normalize
+    // the weights so a constant neighborhood retains its curl magnitude.
+    float2 axisWeight = h / CellSize;
+    float diagonalWeight = h / length(CellSize);
+    float4 weights = float4(axisWeight.x, axisWeight.x, axisWeight.y, axisWeight.y);
+    float center = abs(w);
+    float hmean = 0;
+    // Preserve the zero-sample limit of the harmonic mean, including walls.
+    if (center > 0 && all(a > 0) && all(d > 0))
+        hmean = (1 + 2 * (axisWeight.x + axisWeight.y) + 4 * diagonalWeight)
+            / (1 / center + dot(1 / a, weights) + diagonalWeight * dot(1 / d, float4(1, 1, 1, 1)));
+    float eps = .2 * VC2Strength * h * h / StepSeconds;
+    return eps * (.5 * w - sign(w) * hmean);
+}
+float ReadPotential(int2 p)
+{
+    if (Fluid.PeriodicBoundary) return Correction.Load(int3(WrapCell(p), 0));
+    if (any(p < 0) || any(p >= int2(GridSize))) return 0;
+    return Correction.Load(int3(p, 0));
+}
+float2 VC2(PSin input) : SV_Target
+{
+    int2 p = int2(input.Position.xy);
+    float s = ReadPotential(p);
+    float2 a = float2(-(s - ReadPotential(p - int2(0, 1))) / CellSize.y,
+                        (s - ReadPotential(p - int2(1, 0))) / CellSize.x);
+    float2 v = ReadVelocity(p) + StepSeconds * a;
+    if (!Fluid.PeriodicBoundary)
+    {
+        if (p.x == GridSize.x - 1) v.x = 0;
+        if (p.y == GridSize.y - 1) v.y = 0;
+    }
+    return v;
 }
 float Divergence(PSin input) : SV_Target
 {
