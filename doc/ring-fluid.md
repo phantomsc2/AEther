@@ -21,8 +21,7 @@ stores density-weighted birth timestamp and frequency. Transport carries these
 attributes together. Signal fades exponentially with the audio history duration;
 density and coordinate moments remain available without keeping pixels lit.
 
-- Local S emits frequency-tinted material through `Emitter.Rate`, `MaterialGain`
-  and `Capacity`. `Radius`, `Width` and `EdgeSoftness` define the inlet.
+- Local S directly emits frequency-tinted material. `Radius` and `Width` define the antialiased inlet.
 - Local B controls `Fluid.EmissionVelocity`, `VelocityGain` and `Curl`.
 - T contributes to scene lighting, never material injection or inlet motion.
 - `Fluid.Viscosity` maps to `0.1 * value^3`; `PeriodicBoundary` wraps the domain.

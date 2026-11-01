@@ -13,7 +13,7 @@ public sealed record GraphicsOptions(
     double SpectrumAggregation = .172,
     [property: Range(-12.0, 12.0)]
     [property: Description("Exposure in stops: +1 doubles illumination, -1 halves it. Applies to linear scene output; diagnostics keep their original colors.")]
-    double Exposure = -1.248)
+    double Exposure = -3.288)
 {
     public void Validate()
     {

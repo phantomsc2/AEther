@@ -3,10 +3,6 @@ struct EmitterParameters
 {
     float Radius;            // 0 .. .5 simulation units, scaled for aspect.
     float Width;             // 0 .. .1 simulation units (half-width).
-    float EdgeSoftness;      // 0 .. .01 units, with pixel antialiasing minimum.
-    float Rate;              // 0 .. 200 density units per second, scaled by local S.
-    float MaterialGain;      // Local S material sensitivity; .5 = unity gain.
-    float Capacity;          // 0 .. 100 density units.
 };
 struct FluidParameters
 {
@@ -21,5 +17,5 @@ struct FluidParameters
     float VC2Strength;
 };
 
-#define RING_EMITTER_DEFAULTS { .667, .1600, .1, .1600, 1, .12 }
-#define RING_FLUID_DEFAULTS { .5, .5, 0, 0, true, false, .5, false, .5 }
+#define RING_EMITTER_DEFAULTS { 1, .103 }
+#define RING_FLUID_DEFAULTS { 1, .349, 0, 0, true, false, .5, false, .507 }

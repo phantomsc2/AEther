@@ -39,7 +39,7 @@ public sealed class NumericScaleAttribute(bool powersOfTwo = false, bool adaptiv
 }
 
 public sealed record FluidOptions(
-    [property: Category("Sizes"), Range(16, 2048), NumericScale(powersOfTwo: true)] int Width = 512,
+    [property: Category("Sizes"), Range(16, 2048), NumericScale(powersOfTwo: true)] int Width = 1024,
     [property: Category("Sizes"), Range(16, 2048), NumericScale(powersOfTwo: true)] int Height = 512)
 {
     internal void Validate()

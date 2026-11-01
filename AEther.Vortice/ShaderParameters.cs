@@ -69,6 +69,7 @@ public sealed class ShaderParameters
             children.OrderBy(x => x.Name, StringComparer.Ordinal).ToList(), d.Class == ShaderVariableClass.Struct ? "Struct" : $"{d.Class}:{d.Type}:{d.ColumnCount}");
     }
 
+    public float GetDefaultFloat(ShaderParameter parameter) => BitConverter.ToSingle(defaults, parameter.Offset);
     public float GetFloat(ShaderParameter parameter) { lock (SyncRoot) return BitConverter.ToSingle(Data, parameter.Offset); }
     public bool GetBoolean(ShaderParameter parameter) { lock (SyncRoot) return BitConverter.ToInt32(Data, parameter.Offset) != 0; }
     ShaderParameters(ShaderParameters source)
@@ -108,7 +109,7 @@ public sealed class ShaderParameters
     internal ShaderParameters Snapshot() { lock (SyncRoot) return new(this); }
     public void SetFloat(ShaderParameter parameter, float value)
     {
-        if (!float.IsFinite(value) || value is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(value));
+        if (!float.IsFinite(value) || value < 0 || value > (parameter.Path is "Emitter.Radius" or "Fluid.EmissionVelocity" ? 2 : 1)) throw new ArgumentOutOfRangeException(nameof(value));
         lock (SyncRoot)
         {
             if (BitConverter.ToSingle(Data, parameter.Offset) == value) return;

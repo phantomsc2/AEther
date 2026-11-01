@@ -353,7 +353,7 @@ original splitter neighborhood settings are active. Diagnostic row 1 contains [r
 A fluid effect explicitly declares material attachment formats in C# and exposes
 `FluidVelocity`, `FluidMaterial0..7` and `FluidSampler` to its display shader.
 HLSL defines payload semantics and evolution; reflection validates output formats.
-Ring emission, capacity and weighted birth/frequency live in
+Ring emission and weighted birth/frequency live in
 `Common/RingFluidMaterial.hlsl`. See [the fluid contract](fluid-contract.md).
 
 ## Existing scene mappings
@@ -369,7 +369,7 @@ The HLSL source is authoritative. Current normalized controls map to these units
 | `Quality.Antialiasing` | boolean checkbox: false uses one sample; true uses 2x2 |
 | `Quality.MovementSpeed` | 0 to 10; default 3 |
 | `Fluid.EmissionVelocity` | 0 to 20, scaled by local B |
-| `Emitter.Rate` | 0 to 200 density units per second, scaled by local S |
+| `Emitter.Width` | 0 to 0.1 simulation units |
 | `Fluid.Viscosity` | `0.1 * value^3`, no dye diffusion |
 | `Fluid.Curl` | 0 to 20, scaled by local B and angular variation |
 
@@ -380,7 +380,7 @@ preserved pose when changing speed.
 
 ## Mapping normalized controls
 
-Float controls stay in [0, 1], including defaults and vector components. Keep
+Float defaults and vector components stay in [0, 1]. The ring emitter radius and fluid emission velocity controls allow values up to 2. Keep
 physical bounds and response curves in the scene HLSL so each scene remains
 self contained. There is no separate bounds metadata.
 

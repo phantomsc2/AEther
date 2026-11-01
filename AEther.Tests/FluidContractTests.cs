@@ -65,7 +65,7 @@ public partial class ShaderRenderingTests
         Assert.That(parameters.GetBoolean(Field("VC1Enabled")), Is.False);
         Assert.That(parameters.GetBoolean(Field("VC2Enabled")), Is.False);
         Assert.That(parameters.GetFloat(Field("VC1Strength")), Is.EqualTo(.5f));
-        Assert.That(parameters.GetFloat(Field("VC2Strength")), Is.EqualTo(.5f));
+        Assert.That(parameters.GetFloat(Field("VC2Strength")), Is.EqualTo(.507f));
         clock.Advance(); renderer.Render(false);
         int baseline = fluid.LastDraws;
         parameters.SetBoolean(Field("VC1Enabled"), true);

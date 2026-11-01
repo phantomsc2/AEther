@@ -14,7 +14,7 @@ float RingOutletRadius()
 float RingOutletCollar()
 {
     // Cover the emitter's feather and the adjacent interpolation stencil only.
-    return .01 * Emitter.EdgeSoftness + 2 * length(CellSize);
+    return 2 * length(CellSize);
 }
 float2 PreventEmitterReentry(float2 p, float2 velocity)
 {
@@ -81,11 +81,8 @@ FluidMaterial UpdateMaterial(PSin input)
     float3 source;
     RingEmissionSample(p, SourceAge, source);
     // S alone generates material. B controls velocity; T is lighting only.
-    float materialDrive = AmplitudeResponse(source.r
-        * exp2(20 * Emitter.MaterialGain - 10), .035);
-    float dose = StepSeconds * (200 * Emitter.Rate) * emitter * materialDrive;
-    float capacity = max(1e-6, 100 * Emitter.Capacity);
-    float addedDensity = max(0, capacity - oldDensity) * (1 - exp(-dose / capacity));
+    float materialDrive = AmplitudeResponse(source.r, .035);
+    float addedDensity = StepSeconds * emitter * materialDrive;
     float density = oldDensity + addedDensity;
     float sampledAge = max(SourceAge, HistoryNewestAge);
     float emittedAt = T - sampledAge * HistorySeconds / max(HistorySpan, 1e-6);
@@ -97,8 +94,8 @@ FluidMaterial UpdateMaterial(PSin input)
     frequencyMass += emittedFrequency * addedDensity;
     signalMass += emittedMaterial * addedDensity;
 
-    // Refresh both representations together at an active inlet, at any capacity.
-    float inlet = Emitter.Rate > 0 && materialDrive > 0 ? emitter : 0;
+    // Refresh both representations together at an active inlet.
+    float inlet = materialDrive > 0 ? emitter : 0;
     // Preserve the 60 Hz inlet response when transport follows a faster display.
     inlet = 1 - pow(1 - saturate(inlet), 60 * StepSeconds);
     birthMass = lerp(birthMass, emittedAt * density, inlet);

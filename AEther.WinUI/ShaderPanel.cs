@@ -198,27 +198,31 @@ public sealed class ShaderPanel : UserControl
             });
             return checkbox;
         }
+        double anchor = values.GetDefaultFloat(parameter);
+        double max = parameter.Path is "Emitter.Radius" or "Fluid.EmissionVelocity" ? 2 : 1;
+        double Encode(double v) => anchor > 0 && anchor < max ? (v <= anchor ? .5 * v / anchor : .5 + .5 * (v - anchor) / (max - anchor)) : v / max;
+        double Decode(double v) => anchor > 0 && anchor < max ? (v <= .5 ? 2 * v * anchor : anchor + (2 * v - 1) * (max - anchor)) : v * max;
         var number = new NumberBox
         {
-            Minimum = 0, Maximum = 1, SmallChange = .01, LargeChange = .1,
+            Minimum = 0, Maximum = max, SmallChange = .01, LargeChange = .1,
             Value = values.GetFloat(parameter),
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             NumberFormatter = NumericEditor.Formatter(),
         };
-        var slider = new Slider { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = values.GetFloat(parameter) };
+        var slider = new Slider { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = Encode(values.GetFloat(parameter)) };
         bool updating = false;
         SliderCommit.Bind(slider, value =>
         {
             if (updating) return;
             updating = true;
-            try { number.Value = value; }
+            try { number.Value = Decode(value); }
             finally { updating = false; }
-        }, value => { if (!updating) values.SetFloat(parameter, (float)value); });
+        }, value => { if (!updating) values.SetFloat(parameter, (float)Decode(value)); });
         number.ValueChanged += (_, e) =>
         {
             if (updating || !double.IsFinite(e.NewValue)) return;
             updating = true;
-            try { slider.Value = e.NewValue; values.SetFloat(parameter, (float)e.NewValue); }
+            try { slider.Value = Encode(e.NewValue); values.SetFloat(parameter, (float)e.NewValue); }
             finally { updating = false; }
         };
         var row = NumericEditor.Create(parameter.Name, number, slider);
@@ -227,7 +231,7 @@ public sealed class ShaderPanel : UserControl
         {
             values.Reset(parameter);
             updating = true;
-            try { number.Value = slider.Value = values.GetFloat(parameter); }
+            try { number.Value = values.GetFloat(parameter); slider.Value = Encode(number.Value); }
             finally { updating = false; }
         });
         return row;

@@ -11,7 +11,7 @@ cbuffer Parameters
 {
     EmitterParameters Emitter = RING_EMITTER_DEFAULTS;
     FluidParameters Fluid = RING_FLUID_DEFAULTS;
-    LightingParameters Lighting = { .1960, .3330 };
+    LightingParameters Lighting = { .040, .325 };
 };
 #include "../Common/RingEmitter.hlsl"
 #include "../Common/RingFluidMaterial.hlsl"

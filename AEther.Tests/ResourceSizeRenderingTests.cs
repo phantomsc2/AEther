@@ -54,7 +54,7 @@ public partial class ShaderRenderingTests
         using var renderer = new Renderer(window.Handle,64,36,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
         var effect = (FluidEffect)renderer.ActiveShader!.Effects[0];
         effect.Options = new FluidOptions(128,64);
-        PointSet(renderer,"Emitter.Rate",.3f);
+        PointSet(renderer,"Emitter.Width",.3f);
         renderer.Render(false);
         var original = effect.Simulation;
         renderer.SelectScene(null);
@@ -70,7 +70,7 @@ public partial class ShaderRenderingTests
         next.RestoreSceneSettings(shaders.Scene,saved); next.SelectScene(shaders.Scene); next.Render(false);
         var restored = (FluidEffect)next.ActiveShader!.Effects[0];
         Assert.That(restored.Options, Is.EqualTo(new FluidOptions(128,64)));
-        Assert.That(restored.Parameters!.GetFloat(restored.Parameters.Items.Single(p=>p.Name=="Emitter").Children.Single(p=>p.Name=="Rate")), Is.EqualTo(.3f));
+        Assert.That(restored.Parameters!.GetFloat(restored.Parameters.Items.Single(p=>p.Name=="Emitter").Children.Single(p=>p.Name=="Width")), Is.EqualTo(.3f));
     }
 
     [Test, Category("GPU")]
@@ -155,7 +155,7 @@ public partial class ShaderRenderingTests
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle, 128, 72, 8, 60, shaderDirectory: shaders.Path, timeProvider: new PointClock(), initialScene: shaders.Scene);
         renderer.Render(false);
-        Assert.That((((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height), Is.EqualTo((512, 512)));
+        Assert.That((((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height), Is.EqualTo((1024, 512)));
         var original = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
         SetFluidOptions(renderer, FluidSettings(renderer) with { Width = (int)256u });
         SetFluidOptions(renderer, FluidSettings(renderer) with { Height = (int)128u });
@@ -163,7 +163,7 @@ public partial class ShaderRenderingTests
         Assert.That((((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Height), Is.EqualTo((256, 128)));
         Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.Not.SameAs(original));
         var resized = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
-        PointSet(renderer, "Emitter.Rate", .2f); renderer.Render(false);
+        PointSet(renderer, "Emitter.Width", .2f); renderer.Render(false);
         Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(resized));
         renderer.Resize(256, 144); renderer.Render(false);
         Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!, Is.SameAs(resized), "Canvas size changes with the same physical aspect preserve explicit fluid storage.");

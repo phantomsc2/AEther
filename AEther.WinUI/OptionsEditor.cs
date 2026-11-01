@@ -27,7 +27,7 @@ internal sealed class OptionsEditor<T> where T : class
         var defaultCategory = CategoryAttribute.Default.Category;
         FrameworkElement Build(PropertyDescriptor property)
         {
-            var editor = CreateEditor(property);
+            var editor = CreateEditor(property, property.GetValue(defaults)!);
             editor.Tag = property.Name;
             AutomationProperties.SetName(editor, property.DisplayName);
             if (!string.IsNullOrWhiteSpace(property.Description)) ToolTipService.SetToolTip(editor, property.Description);
@@ -79,7 +79,7 @@ internal sealed class OptionsEditor<T> where T : class
         finally { refreshing = false; }
     }
 
-    FrameworkElement CreateEditor(PropertyDescriptor property)
+    FrameworkElement CreateEditor(PropertyDescriptor property, object defaultValue)
     {
         if (property.PropertyType == typeof(bool))
         {
@@ -127,10 +127,14 @@ internal sealed class OptionsEditor<T> where T : class
             SmallChange = powers ? initial / 2 : step, LargeChange = powers ? initial : step * 10,
             NumberFormatter = NumericEditor.Formatter(integral),
         };
+        bool centered = typeof(T) == typeof(GraphicsOptions) || typeof(T) == typeof(FluidOptions);
+        double lo = Encode(min), hi = Encode(max), anchor = Encode(Convert.ToDouble(defaultValue));
+        double ToSlider(double n) => !centered ? Encode(n) : Encode(n) <= anchor ? .5 * (Encode(n) - lo) / (anchor - lo) : .5 + .5 * (Encode(n) - anchor) / (hi - anchor);
+        double FromSlider(double n) => !centered ? Decode(n) : Decode(n <= .5 ? lo + 2 * n * (anchor - lo) : anchor + (2 * n - 1) * (hi - anchor));
         var slider = new Slider
         {
-            Minimum = Encode(min), Maximum = Encode(adaptive ? Math.Min(max, Math.Max(min + 16, initial * 4)) : max),
-            Value = Encode(initial), StepFrequency = step, SmallChange = step, LargeChange = step * 10,
+            Minimum = centered ? 0 : Encode(min), Maximum = centered ? 1 : Encode(adaptive ? Math.Min(max, Math.Max(min + 16, initial * 4)) : max),
+            Value = ToSlider(initial), StepFrequency = centered ? .001 : step, SmallChange = centered ? .001 : step, LargeChange = centered ? .01 : step * 10,
         };
         bool updating = false;
         void Display(double value)
@@ -140,8 +144,8 @@ internal sealed class OptionsEditor<T> where T : class
             {
                 number.Value = value;
                 if (powers) { number.SmallChange = value / 2; number.LargeChange = value; }
-                slider.Maximum = Math.Max(slider.Maximum, Encode(value));
-                slider.Value = Encode(value);
+                if (!centered) slider.Maximum = Math.Max(slider.Maximum, Encode(value));
+                slider.Value = ToSlider(value);
             }
             finally { updating = false; }
         }
@@ -158,9 +162,9 @@ internal sealed class OptionsEditor<T> where T : class
         {
             if (updating || refreshing) return;
             updating = true;
-            try { number.Value = Decode(value); }
+            try { number.Value = FromSlider(value); }
             finally { updating = false; }
-        }, value => Apply(Decode(value)));
+        }, value => Apply(FromSlider(value)));
         number.ValueChanged += (_, e) => Apply(e.NewValue);
         return NumericEditor.Create(property.DisplayName, number, slider);
     }

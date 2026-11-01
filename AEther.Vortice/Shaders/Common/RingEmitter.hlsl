@@ -2,7 +2,7 @@
 float RingEmitter(float2 p)
 {
     float distance = abs(length(p) - .5 * Emitter.Radius * min(1, AspectRatio));
-    float edge = max(1e-6, max(.01 * Emitter.EdgeSoftness, fwidth(length(p))));
+    float edge = max(1e-6, fwidth(length(p)));
     float width = .1 * Emitter.Width * min(1, AspectRatio);
     return 1 - smoothstep(width, width + edge, distance);
 }
