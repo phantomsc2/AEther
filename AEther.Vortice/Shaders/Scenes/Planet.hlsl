@@ -2,12 +2,12 @@
 struct AtmosphereOrbitSettings { float Azimuth, Elevation, Altitude; };
 cbuffer Parameters
 {
-    AtmosphereSettings Atmosphere = { float3(.201, .454, .687), .5, .5 }; // H=.1868R, density=.0172x.
+    AtmosphereSettings Atmosphere = { float3(.201, .454, .687), .18, .5 }; // Thin blue limb with a warm inner edge.
     AtmosphereSunSettings Sun = { .309, .714, .111 };
     AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, .25 };
-    AtmosphereViewSettings View = { .5, .5 };
-    AtmosphereOrbitSettings Orbit = { .130, .023, 0 };
-    AtmospherePhaseSettings Phase = { .5, .5 };
+    AtmosphereViewSettings View = { .36, .5 };
+    AtmosphereOrbitSettings Orbit = { .24, .15, .15 };
+    AtmospherePhaseSettings Phase = { .3, .5 };
     bool ShowTransmittance = false;
     bool ShowSkyView = false;
 };
@@ -22,7 +22,7 @@ float3 AtmosphereBeta() { return .01 * Atmosphere.RayleighScattering * Atmospher
 float3 PlanetObserver()
 {
     return AtmosphereDirection(2*AtmospherePi*Orbit.Azimuth,lerp(-89.0,89.0,Orbit.Elevation)*AtmospherePi/180)
-        *(2.94*AtmosphereRadius*pow(3.0,Orbit.Altitude));
+        *(AtmosphereRadius*pow(8.82,Orbit.Altitude)); // Surface at zero, original 8.82R maximum.
 }
 ProjectionCamera PlanetCamera()
 {
@@ -43,7 +43,7 @@ bool PlanetSphere(float3 origin, float3 ray, float radius, out float2 roots)
 float PlanetLimbAngle()
 {
     float r = length(PlanetObserver());
-    return asin(AtmosphereRadius/r);
+    return asin(saturate(AtmosphereRadius/r));
 }
 float PlanetAngularScale(float limb)
 {
@@ -51,7 +51,9 @@ float PlanetAngularScale(float limb)
     // when inside that region). The remaining rows retain full-sphere coverage.
     float core = asin(min(1,(AtmosphereRadius+2*AtmosphereScaleHeight())/length(PlanetObserver())));
     float span = AtmospherePi-limb, width = core-limb;
-    return width/(span-width);
+    // From the surface, distribute non-disk rows across the sky hemisphere;
+    // the dense core and limb coincide, so the orbital mapping degenerates.
+    return width>1e-6 ? width/(span-width) : 1;
 }
 // Separate disk and annulus row ranges prevent interpolation across the opaque limb.
 // Disk rows concentrate near the limb; non-disk rows cover the rest of the sphere,

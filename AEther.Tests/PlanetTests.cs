@@ -9,13 +9,42 @@ namespace AEther.Tests;
 
 public partial class ShaderRenderingTests
 {
+    // Keep independent transport fixtures at their original physical distances.
+    static float PlanetReferenceOrbit(double oldAltitude) => (float)(Math.Log(2.94*Math.Pow(3,oldAltitude))/Math.Log(8.82));
+
+    [Test,Category("GPU")]
+    public void PlanetOrbitEndpointsReachSurfaceAndOriginalMaximum()
+    {
+        using var shaders=new SceneShaders("Planet");
+        string file=Path.Combine(shaders.Path,"Scenes","Planet.hlsl");
+        string source=File.ReadAllText(file);
+        File.WriteAllText(file,source[..source.IndexOf("float4 PS(PSin",StringComparison.Ordinal)]+"""
+            float4 PS(PSin input) : SV_TARGET
+            {
+                return float4(length(PlanetObserver())/AtmosphereRadius,
+                    PlanetLimbAngle(),PlanetAngularScale(PlanetLimbAngle()),1);
+            }
+            """);
+        using var window=new HiddenWindow();
+        using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
+        foreach(float altitude in new[]{0f,1f})
+        {
+            PointSet(renderer,"Orbit.Altitude",altitude);renderer.Render(false);
+            var scene=RingReadScene(renderer);
+            Assert.That(scene.All(float.IsFinite),Is.True);
+            Assert.That(scene[0],Is.EqualTo(altitude==0 ? 1 : 8.82).Within(.01));
+            var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
+            Assert.That(AtmosphereRead(renderer,effect.SkyViewTexture).All(float.IsFinite),Is.True);
+        }
+    }
     static void PlanetReferenceSettings(Renderer renderer)
     {
         foreach (var (path, value) in new[] { ("Atmosphere.RayleighScattering.x", .058f), ("Atmosphere.RayleighScattering.y", .135f),
             ("Atmosphere.RayleighScattering.z", .331f), ("Atmosphere.ScaleHeight", (float)(.5+Math.Log2(.55/.1868)/6)),
             ("Atmosphere.Density", (float)Math.Pow(.15,1/2.53951953)),
-            ("Orbit.Azimuth", 0f), ("Orbit.Elevation", .5f), ("Orbit.Altitude", .25f),
-            ("Sun.Azimuth", 0f), ("Sun.Altitude", 2f/3), ("Sun.Intensity", .5f) }) PointSet(renderer, path, value);
+            ("Orbit.Azimuth", 0f), ("Orbit.Elevation", .5f), ("Orbit.Altitude", PlanetReferenceOrbit(.25)),
+            ("Sun.Azimuth", 0f), ("Sun.Altitude", 2f/3), ("Sun.Intensity", .5f),
+            ("Phase.Anisotropy", .5f), ("View.Azimuth", .5f) }) PointSet(renderer, path, value);
     }
 
     static double PlanetDensity(double h, double scale = .55*AtmosphereR)
@@ -91,6 +120,7 @@ public partial class ShaderRenderingTests
         using var shaders=new SceneShaders("Planet");
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
+        PointSet(renderer,"Atmosphere.ScaleHeight",.5f);
         renderer.Render(false);
         var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var transmittance=AtmosphereRead(renderer,effect.TransmittanceTexture);
@@ -206,7 +236,7 @@ public partial class ShaderRenderingTests
         PlanetReferenceSettings(renderer);
         // Logarithmic height control centered at .1868R.
         PointSet(renderer,"Atmosphere.ScaleHeight",(float)(.5+Math.Log2(scaleR/.1868)/6));
-        PointSet(renderer,"Orbit.Altitude",(float)orbit);
+        PointSet(renderer,"Orbit.Altitude",PlanetReferenceOrbit(orbit));
         renderer.Render(false);
         var sky=AtmosphereRead(renderer,((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
         foreach(var (x,y) in new[]{(0,0),(64,59),(64,70),(128,90),(64,110),(0,127)})
@@ -230,7 +260,7 @@ public partial class ShaderRenderingTests
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
         PlanetReferenceSettings(renderer);
-        foreach(var (path,value) in new[]{("Orbit.Altitude",0f),("Orbit.Azimuth",.618f),("Orbit.Elevation",.359f),
+        foreach(var (path,value) in new[]{("Orbit.Altitude",PlanetReferenceOrbit(0)),("Orbit.Azimuth",.618f),("Orbit.Elevation",.359f),
             ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Sun2.Intensity",0f),
             ("Phase.Anisotropy",.580f),("Phase.Shape",0f)}) PointSet(renderer,path,value);
         renderer.Render(false);
