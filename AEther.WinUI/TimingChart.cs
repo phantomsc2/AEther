@@ -34,6 +34,7 @@ internal sealed class TimingChart : UserControl
     bool dirty = true;
     double latestTime, lastSummaryTime;
     double[] ticks = [];
+    double? frameBudget;
     internal int PointCount => traces[0].SampleCount;
     internal int PlottedPointCount => traces.Sum(t => t.SampleCount);
     internal int[] PointCounts => traces.Select(t => t.SampleCount).ToArray();
@@ -76,12 +77,12 @@ internal sealed class TimingChart : UserControl
         string[] headings = ["Mean", "Std", "Max"];
         for (int column = 1; column <= 3; column++)
             AddCell(new TextBlock { Text = headings[column - 1], FontSize = 11,
-                HorizontalAlignment = HorizontalAlignment.Right }, 0, column);
+                HorizontalAlignment = HorizontalAlignment.Left }, 0, column);
         ToolTipService.SetToolTip(legend, "Milliseconds received since the previous summary update (about 1 second). Std is population standard deviation.");
         for (int i = 0; i < definitions.Length; i++)
         {
-            int index = i;
-            var d = definitions[i];
+            int index = definitions.Length - 1 - i;
+            var d = definitions[index];
             legend.RowDefinitions.Add(new() { Height = GridLength.Auto });
             var label = new TextBlock { Text = d.Name, FontSize = 11 };
             var token = new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton
@@ -102,9 +103,9 @@ internal sealed class TimingChart : UserControl
             token.Checked += (_, _) => SetVisible(index, true);
             token.Unchecked += (_, _) => SetVisible(index, false);
             AddCell(token, i + 1, 0);
-            AddCell(traces[i].MeanText, i + 1, 1);
-            AddCell(traces[i].StdText, i + 1, 2);
-            AddCell(traces[i].MaxText, i + 1, 3);
+            AddCell(traces[index].MeanText, i + 1, 1);
+            AddCell(traces[index].StdText, i + 1, 2);
+            AddCell(traces[index].MaxText, i + 1, 3);
         }
         Grid.SetColumn(legend, 3);
         layout.Children.Add(legend);
@@ -122,6 +123,14 @@ internal sealed class TimingChart : UserControl
 
     // Toggles gate future writes; existing marks remain.
     void SetVisible(int index, bool visible) => traces[index].Visible = visible;
+
+    internal void SetFrameBudget(double? milliseconds)
+    {
+        double? next = milliseconds is double value && double.IsFinite(value) && value > 0 ? value : null;
+        if (frameBudget == next) return;
+        frameBudget = next;
+        UpdateLabels();
+    }
 
     internal void Attach(PipelineProfile? next, long timestamp)
     {
@@ -185,6 +194,8 @@ internal sealed class TimingChart : UserControl
         {
             double lower = TimingScale.Floor(min), upper = TimingScale.Ceiling(max);
             if (upper <= lower) upper = TimingScale.Next(lower);
+            upper = Math.Min(upper, 2); // log10(100 ms)
+            if (lower >= upper) lower = 1; // Keep a valid range if all samples exceed the cap.
             lower = Math.Min(LowerLimit ?? lower, lower);
             upper = Math.Max(UpperLimit ?? upper, upper);
             if (LowerLimit != lower || UpperLimit != upper)
@@ -209,7 +220,7 @@ internal sealed class TimingChart : UserControl
         {
             foreach (var sample in trace.Incoming)
             {
-                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
+                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0 || sample.Milliseconds > 100) continue;
                 double time = Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds;
                 int x = (int)(ScatterRaster.Wrap(time, HistorySeconds) / HistorySeconds * (bitmapWidth - 1));
                 int y = Math.Clamp((int)((UpperLimit!.Value - Math.Log10(sample.Milliseconds)) /
@@ -266,6 +277,19 @@ internal sealed class TimingChart : UserControl
             };
             Canvas.SetLeft(bar, Math.Floor(Math.Max(0, Math.Ceiling(width * scale) - 1) * i / (HistorySeconds * 2)) / scale);
             secondBars.Children.Add(bar);
+        }
+        if (frameBudget is double budget && LowerLimit is double min && UpperLimit is double max)
+        {
+            double value = Math.Log10(budget);
+            if (value < min || value > max) return;
+            var line = new Microsoft.UI.Xaml.Shapes.Rectangle
+            {
+                Width = width, Height = 5 / scale,
+                Fill = new SolidColorBrush(Color.FromArgb(80, 255, 80, 80)),
+            };
+            double y = Math.Floor(Math.Max(0, Math.Ceiling(height * scale) - 1) * (max - value) / (max - min));
+            Canvas.SetTop(line, (y - 2) / scale);
+            secondBars.Children.Add(line);
         }
     }
 
@@ -332,7 +356,7 @@ internal sealed class TimingChart : UserControl
 
         static TextBlock SummaryText() => new()
         {
-            Text = "—", FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right,
+            Text = "—", FontSize = 11, HorizontalAlignment = HorizontalAlignment.Left,
         };
     }
 }

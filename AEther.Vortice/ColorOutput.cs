@@ -184,6 +184,16 @@ internal sealed partial class ColorOutput : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     struct Presentation { public Vector4 Mapping, Dither; }
 
+    public double? GetFrameBudgetMilliseconds()
+    {
+        try
+        {
+            using var display = FindOutput();
+            return display == null ? null : DisplayWhiteLevel.GetFrameBudgetMilliseconds(display.Description.DeviceName);
+        }
+        catch (SharpGenException) { return null; }
+    }
+
     IDXGIOutput? FindOutput()
     {
         if (attachSwapChain == null)

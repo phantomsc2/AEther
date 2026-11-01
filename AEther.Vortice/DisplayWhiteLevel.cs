@@ -7,6 +7,32 @@ namespace AEther.Vortice;
 internal static class DisplayWhiteLevel
 {
     const uint ActivePaths = 2;
+    // The active path retains the fractional refresh rate (for example 60000/1001).
+    public static double? GetFrameBudgetMilliseconds(string deviceName)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            if (GetDisplayConfigBufferSizes(ActivePaths, out var pathCount, out var modeCount) != 0) break;
+            var paths = new DisplayPath[pathCount];
+            var modes = new DisplayMode[modeCount];
+            int status = QueryDisplayConfig(ActivePaths, ref pathCount, paths, ref modeCount, modes, IntPtr.Zero);
+            if (status == 122) continue;
+            if (status != 0) break;
+            foreach (var path in paths.Take((int)pathCount))
+            {
+                var source = new SourceName
+                {
+                    Header = new() { Type = 1, Size = (uint)Marshal.SizeOf<SourceName>(), Adapter = path.Source.Adapter, Id = path.Source.Id },
+                };
+                if (GetSourceName(ref source) != 0 || !string.Equals(source.Name, deviceName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (path.Target.RefreshNumerator > 0 && path.Target.RefreshDenominator > 0)
+                    return 1000.0 * path.Target.RefreshDenominator / path.Target.RefreshNumerator;
+            }
+            break;
+        }
+        return null;
+    }
+
     public static float GetScale(string deviceName)
     {
         for (int attempt = 0; attempt < 3; attempt++)

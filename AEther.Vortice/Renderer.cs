@@ -48,6 +48,11 @@ public sealed partial class Renderer : IDisposable
     long previousFrame;
     CompositionClock? displayClock;
     public long? LastPresentationTimestamp { get; private set; }
+    /// <summary>Nominal frame period of the display hosting the main swap chain.</summary>
+    public double? GetFrameBudgetMilliseconds()
+    {
+        lock (graphicsGate) return disposed ? null : output.GetFrameBudgetMilliseconds();
+    }
     internal bool RawPresentationClock { get; set; }
     // Reference cadence for repeatable before/after developer profiling only.
     internal bool FixedFluidMaterialCadence { get; set; }

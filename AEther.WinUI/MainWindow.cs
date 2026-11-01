@@ -70,6 +70,7 @@ public sealed class MainWindow : Window
         canvasWindow = new(root);
         analysis = new(this);
         frameTime = new(this);
+        frameTime.FrameBudgetProvider = () => session?.Renderer.GetFrameBudgetMilliseconds();
         var display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).OuterBounds;
         settings = new(audio, graphics, shaders, analysis, frameTime, (double)display.Width / display.Height);
         SystemBackdrop = new MicaBackdrop();
@@ -525,6 +526,7 @@ public sealed class MainWindow : Window
 
     void UpdateRendering()
     {
+        frameTime.SetCanvasActive(!closing && CanvasVisible);
         if (closing || changingSession || session == null)
         {
             renderWorker?.SetEnabled(false);
