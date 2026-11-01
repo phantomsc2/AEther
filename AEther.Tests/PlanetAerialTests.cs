@@ -38,10 +38,19 @@ public partial class ShaderRenderingTests
         clock.Frame=600;Draw();
         Assert.That(renderer.ReadPixels(false).SequenceEqual(first),Is.False,"Orbiting cutouts move");
         Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
-        PointSet(renderer,"Ring.Speed",0);Draw();first=renderer.ReadPixels(false);
+        PointSet(renderer,"Shell.Speed",0);Draw();first=renderer.ReadPixels(false);
         clock.Frame=1200;Draw();Assert.That(renderer.ReadPixels(false),Is.EqualTo(first));
-        PointSet(renderer,"Ring.Radius",.6f);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
-        PointSet(renderer,"View.Azimuth",.55f);Draw();Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
+        PointSet(renderer,"Shell.Alt",.6f);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
+        PointSet(renderer,"Camera.Yaw",.55f);Draw();Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
+        PointSet(renderer,"Camera.Fov",.7f);Draw();
+        Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));Assert.That(markers,Does.Not.Contain("Atmosphere sky view"));
+        PointSet(renderer,"Atmosphere.Phase.Shape",.6f);Draw();
+        Assert.That(markers,Does.Contain("Atmosphere sky view"));Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
+        Assert.That(markers,Does.Not.Contain("Atmosphere transmittance"));
+        PointSet(renderer,"Shell.Count",0);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
+        PointSet(renderer,"Debug.Aerial",true);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
+        PointSet(renderer,"Debug.Transmission",true);Draw();Assert.That(RingReadScene(renderer).All(float.IsFinite),Is.True);
+        PointSet(renderer,"Debug.Aerial",false);
         renderer.Resize(1281,720);Draw();Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
         PointSet(renderer,"Atmosphere.Density",0);Draw();
         a=ReadFroxelVolume(renderer,effect.AerialRadianceTexture);t=ReadFroxelVolume(renderer,effect.AerialTransmissionTexture);
@@ -66,7 +75,7 @@ public partial class ShaderRenderingTests
         var cursors=stages.ToDictionary(stage=>stage,stage=>0L);
         foreach(int size in new[]{32,64}) {
             effect.AerialSize=size;
-            for(int i=0;i<48;i++) { PointSet(renderer,"View.Azimuth",i%2==0?.5f:.5001f);Tick(); }
+            for(int i=0;i<48;i++) { PointSet(renderer,"Camera.Yaw",i%2==0?.5f:.5001f);Tick(); }
             foreach(string stage in stages) {
                 long cursor=cursors[stage];var samples=new List<TimingSample>();histories[stage].ReadSince(ref cursor,samples);cursors[stage]=cursor;
                 var values=samples.Skip(8).Select(sample=>sample.Milliseconds).Order().ToArray();
@@ -75,13 +84,13 @@ public partial class ShaderRenderingTests
             }
         }
         // Freeze motion for an image comparison that isolates cache resolution.
-        PointSet(renderer,"Ring.Speed",0);PointSet(renderer,"View.Azimuth",.5f);
+        PointSet(renderer,"Shell.Speed",0);PointSet(renderer,"Camera.Yaw",.5f);
         effect.AerialSize=32;Tick();var coarse=RingReadScene(renderer);
         effect.AerialSize=64;Tick();var fine=RingReadScene(renderer);
         double error=0,energy=0;
         for(int i=0;i<coarse.Length;i++) if(i%4!=3) { error+=Math.Pow(coarse[i]-fine[i],2);energy+=fine[i]*fine[i]; }
         report.Add($"32 versus 64 cubed relative linear image RMS: {Math.Sqrt(error/Math.Max(energy,1e-20)):P4}");
-        effect.AerialSize=32;PointSet(renderer,"Ring.Speed",.4f);
+        effect.AerialSize=32;PointSet(renderer,"Shell.Speed",.4f);
         for(int phase=0;phase<3;phase++) { for(int i=0;i<180;i++) clock.Advance();Tick();File.WriteAllBytes(Path.Combine(directory,$"orbit-{phase}-1280x720.rgba"),renderer.ReadPixels()); }
         // Independent finite-path reference: radial inward camera ray, clear noon light.
         PlanetReferenceSettings(renderer);PointSet(renderer,"Sun2.Intensity",0);Tick();
@@ -119,4 +128,27 @@ public partial class ShaderRenderingTests
         }
         File.WriteAllLines(Path.Combine(directory,"quality-and-timings.txt"),report);
         foreach(string line in report) TestContext.Out.WriteLine(line);
+    }    [Test,Category("GPU")]
+    public void PlanetShellKeepsExactAltitudeInRandomOrbitalPlanes()
+    {
+        using var shaders=new SceneShaders("Planet");
+        string path=Path.Combine(shaders.Path,"Scenes","Planet.hlsl");
+        string source=File.ReadAllText(path);
+        File.WriteAllText(path,source[..source.IndexOf("float4 PS(PSin",StringComparison.Ordinal)]+"float4 PS(PSin input):SV_TARGET { return float4(PlanetMeteorCenter((uint)input.Position.x)+3,1); }");
+        using var window=new HiddenWindow();var clock=new FroxelClock();
+        using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:shaders.Scene);
+        var values=renderer.ActiveShader!.Effects[0].Parameters!;
+        Assert.That(values.Items.Select(p=>p.Name),Is.EqualTo(new[]{"Atmosphere","Camera","Debug","Shell","Sun","Sun2","Transport"}));
+        foreach(float altitude in new[]{0f,.03903904f,1f}) foreach(long frame in new[]{0L,1200L}) {
+            PointSet(renderer,"Shell.Alt",altitude);clock.Frame=frame;renderer.Render(false);
+            var pixels=RingReadScene(renderer);double radius=1+.002+1.998*altitude;
+            double minY=10,maxY=-10,sumY=0;
+            for(int k=0;k<1000;k++) {
+                double x=pixels[k*4]-3,y=pixels[k*4+1]-3,z=pixels[k*4+2]-3;
+                Assert.That(Math.Sqrt(x*x+y*y+z*z),Is.EqualTo(radius).Within(.006),"Centers remain on the exact spherical shell");
+                minY=Math.Min(minY,y/radius);maxY=Math.Max(maxY,y/radius);sumY+=y/radius;
+            }
+            Assert.That(minY,Is.LessThan(-.95));Assert.That(maxY,Is.GreaterThan(.95));
+            Assert.That(Math.Abs(sumY/1000),Is.LessThan(.08),"Distribution covers both hemispheres");
+        }
     }}

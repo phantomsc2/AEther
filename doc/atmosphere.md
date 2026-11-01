@@ -7,7 +7,7 @@ the flat local horizon are black. There is no ground mesh or ground reflection.
 Two independently controlled white directional suns illuminate the atmosphere,
 without visible disks. Setting either sun's intensity to zero disables it.
 
-For an orbital observer, a black solid sphere, and an orbiting stream of black octahedra, select the
+For an orbital observer, a black solid sphere, and an orbiting shell of black octahedra, select the
 separate [Planet scene](planet.md). Both scenes share finite-path transport and
 the Transmittance builder; their camera, physical scale, control mappings, and
 Sky-View mappings differ. Planet additionally caches finite-path aerial perspective in a 32-cubed frustum volume for its meteor cutouts. Planet uses an exponential gas envelope with finite truncation;
@@ -22,16 +22,15 @@ their respective scene shaders.
 
 ## Physical model and controls
 
-The model uses single scattering with a normalized Draine phase function and
+The model uses direct single scattering plus approximate multiple scattering with a normalized Draine phase function and
 Rayleigh-derived RGB scattering coefficients. Density decreases exponentially
 with height. Integration stops at 10 scale heights (80 km by default), where
 density is approximately 0.0000454 of surface density; the remaining tail is
 discarded. There is no outer taper or separate height control.
 Scattering equals extinction: there are no
-aerosols, ozone, absorption, clouds, multiple scattering, or scene shadow maps.
+aerosols, ozone, absorption, clouds, or scene shadow maps.
 Analytic planet occlusion prevents sunlight from passing through the planet and
-allows the upper atmosphere to remain lit after sunset. Missing multiple scattering
-and a separate aerosol population limit atmospheric realism. Away from the
+allows the upper atmosphere to remain lit after sunset. The isotropic multiple-scattering approximation and lack of a separate aerosol population limit atmospheric realism. Away from the
 Rayleigh phase defaults this is a generalized scattering medium, rather than a
 pure molecular Rayleigh model.
 
@@ -82,7 +81,7 @@ segment loop, using reciprocal square root rather than a general power.
 
 ## LUTs and data flow
 
-The effect owns two RGBA32F textures, requiring 768 KiB combined, with no mipmaps
+The effect owns three RGBA32F textures, requiring 784 KiB combined, with no mipmaps
 or temporal accumulation. RGB contains the transport result; alpha is one.
 
 **Transmittance (256 x 64)** stores attenuation from a point to the atmosphere
@@ -136,8 +135,8 @@ not normally exposed sky images. Transmittance takes precedence when both are on
 
 | Change | GPU work |
 |---|---|
-| First frame, successful reload, or scene reactivation | Build both LUTs |
-| Any `Atmosphere` parameter | Build Transmittance, then Sky-View |
+| First frame, successful reload, or scene reactivation | Build Transmittance, Multiple Scattering, and Sky-View |
+| Any `Atmosphere` parameter | Build Transmittance, then Multiple Scattering if enabled, then Sky-View |
 | Azimuth, altitude, or intensity of either sun | Build Sky-View only |
 | Either `Phase` parameter | Build Sky-View only |
 | View direction, exposure, debug toggles, or canvas size | Display only |
@@ -200,3 +199,53 @@ completed in this run.
 
 References: [Hillaire's SIGGRAPH 2020 slides](https://blog.selfshadow.com/publications/s2020-shading-course/hillaire/s2020_pbs_hillaire_slides.pdf)
 and [Bruneton and Neyret, Precomputed Atmospheric Scattering](https://scispace.com/pdf/precomputed-atmospheric-scattering-4wluja3fvt.pdf).
+
+## Scattering orders
+
+Both scenes expose **Transport** with independent switches:
+
+- **L0 - Surface reflectance (reserved)**: defaults off and has no rendering effect.
+- **L1 - Single scattering**: defaults on and controls only directly sunlit atmospheric scattering.
+- **L2+ - Multiple scattering**: defaults on and controls the approximate higher-order atmospheric source. It remains meaningful with displayed L1 disabled: the LUT's internal seed is not gated by the display switches.
+
+Attenuation and opaque geometry remain unchanged by these switches. L1+L2 equals
+the sum of their separately rendered linear radiances. Both disabled yields black
+radiance while preserving RGB transmission. There is no ground reflection in the
+multiple-scattering builder; adding L0 later requires a separate implementation.
+
+A new 32x32 RGBA32F LUT (16 KiB) stores the unit-source response versus local sun
+zenith cosine and density-focused altitude. Following Hillaire 2020 equations
+5-10, it integrates 64 equal-area sphere directions and 32 midpoint path samples,
+then closes higher orders with M = B / (1-f), per RGB channel. B is the angular
+mean of isotropic single-scattered radiance; f is the angular mean unit-radiance
+scattering transfer. Both include atmospheric extinction and the opaque planet.
+This is constant cost with respect to scattering order, not an exact solution.
+The source construction follows the reference's isotropic phase approximation;
+it is independent of the editable direct-light Draine phase parameters.
+
+The denominator is floored at 0.0001 for optically thick, nonabsorbing extremes.
+This explicitly bounds amplification; those extremes are not physically validated.
+The model still assumes spherical density and does not include meteor/terrain
+shadows or atmospheric absorption. Strongly anisotropic higher orders are not
+resolved. L2+ represents an isotropic source, rather than a directional light field.
+
+The LUT is built after Transmittance and sampled inside the shared Sky-View and
+aerial-perspective integrator. Each sun samples it at its own local zenith angle
+and scales it by its intensity. Local direct-sun occlusion does not suppress the
+indirect source. RGB transmission is unchanged. The LUT is rebuilt only when
+medium properties change, and lazily if L2+ is disabled. Camera, sun, phase,
+geometry, and transport toggles do not invalidate the LUT. Toggling L1/L2+ updates
+Sky-View and aerial radiance; L0 performs no GPU cache work.
+
+The new GPU marker is `Atmosphere multiple scattering`. Planet provides
+Debug.MultipleScattering, and Atmosphere provides ShowMultipleScattering, for raw
+LUT inspection independent of exposure and the L2+ display switch. These previews
+also trigger construction of a stale LUT while L2+ is disabled.
+
+AtmosphereScatteringOrdersAreIndependent checks additivity, independent toggles,
+unchanged transmission, zero density, bounded extreme outputs, invalidation, and
+reload for both scenes at 1280x720. AtmosphereMultipleLutMatchesIndependentClosure
+compares sampled LUT nodes with independent double-precision dense-path integration.
+Legacy numerical fixtures explicitly disable L2+ to continue isolating L1.
+
+Reference: [Hillaire's implementation](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyRayMarching.hlsl), especially NewMultiScattCS and IntegrateScatteredLuminance.

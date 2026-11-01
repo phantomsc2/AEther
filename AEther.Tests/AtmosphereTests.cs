@@ -283,6 +283,7 @@ public partial class ShaderRenderingTests
                 AtmosphereSunSettings Sun = { 0, 2.0/3.0, .5 };
                 AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, .25 };
                 AtmospherePhaseSettings Phase = { .5, .5 };
+                TransportSettings Transport = { false, true, false };
             };
             float AtmosphereScaleHeight() { return lerp(1.0,16.0,Atmosphere.ScaleHeight); }
             float3 AtmosphereBeta() { return .1*Atmosphere.RayleighScattering*(16*Atmosphere.Density); }

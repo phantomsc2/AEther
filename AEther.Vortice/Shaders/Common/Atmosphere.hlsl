@@ -6,6 +6,8 @@
 #include "AtmosphereTypes.hlsl"
 Texture2D<float4> AtmosphereTransmittance;
 Texture2D<float4> AtmosphereSkyView;
+Texture2D<float4> AtmosphereMultipleScattering;
+RWTexture2D<float4> AtmosphereMultipleScatteringOutput;
 SamplerState AtmosphereSampler;
 RWTexture2D<float4> AtmosphereTransmittanceOutput;
 RWTexture2D<float4> AtmosphereSkyViewOutput;
@@ -19,11 +21,14 @@ float AtmosphereDensityAtAltitude(float h)
     // Plain exponential; the finite integration boundary does not reshape density.
     return exp(-max(0,h)/AtmosphereScaleHeight());
 }
+#ifndef ATMOSPHERE_PHASE
+#define ATMOSPHERE_PHASE Phase
+#endif
 // Draine (2003), normalized over 4*pi. Shape a=0 gives HG, a=1 gives Cornette-Shanks.
 // Coefficients are uniform and evaluated once per Sky-View texel, outside integration.
 float4 AtmosphereDraineCoefficients()
 {
-    float g = lerp(-.95,.95,Phase.Anisotropy), a = 2*Phase.Shape;
+    float g = lerp(-.95,.95,ATMOSPHERE_PHASE.Anisotropy), a = 2*ATMOSPHERE_PHASE.Shape;
     float g2 = g*g;
     float k = (1-g2)/(4*AtmospherePi*(1+a*(1+2*g2)/3));
     return float4(1+g2,2*g,k,a);
@@ -100,6 +105,60 @@ float3 AtmosphereSegmentScatter(float3 opticalDepth, float3 segmentTransmission)
                   x.z < .01 ? series.z : 1-segmentTransmission.z);
 }
 
+// Unit-irradiance higher-order source; density-focused altitude and sun zenith.
+float3 AtmosphereMultipleSource(float h, float sunMu)
+{
+    uint width,height; AtmosphereMultipleScattering.GetDimensions(width,height);
+    float v=sqrt(saturate((h/(h+AtmosphereScaleHeight()))*((AtmosphereExtent+1)/AtmosphereExtent)));
+    return AtmosphereMultipleScattering.SampleLevel(AtmosphereSampler,
+        AtmosphereTexelUV(float2(.5+.5*sunMu,v),width,height),0).rgb;
+}
+// Hillaire 2020 eqs. 5-10: isotropic seed and geometric-series closure.
+// Independent of the display's L1/L2 toggles, sun intensity, and camera.
+[numthreads(8,8,1)]
+void BuildMultipleScattering(uint3 id:SV_DispatchThreadID)
+{
+    uint width,height; AtmosphereMultipleScatteringOutput.GetDimensions(width,height);
+    if(id.x>=width || id.y>=height) return;
+    float2 uv=float2(id.xy)/float2(width-1,height-1);
+    float q=uv.y*uv.y*(AtmosphereExtent/(AtmosphereExtent+1));
+    float h=AtmosphereScaleHeight()*q/(1-q),r=AtmosphereRadius+h;
+    float sunMu=2*uv.x-1;
+    float3 sun=float3(sqrt(saturate(1-sunMu*sunMu)),sunMu,0);
+    float3 beta=AtmosphereBeta(),seed=0,transfer=0;
+    const uint directions=64,steps=32;
+    [loop] for(uint j=0;j<directions;j++)
+    {
+        float mu=1-2*((j/8)+.5)/8;
+        float phi=2*AtmospherePi*((j%8)+.5)/8;
+        float horizontal=sqrt(saturate(1-mu*mu));
+        float3 ray=float3(horizontal*cos(phi),mu,horizontal*sin(phi));
+        float distance=AtmosphereDistanceToTop(h,mu);
+        if(AtmospherePlanetOccludes(h,mu))
+        {
+            float b=r*mu,c=h*(2*AtmosphereRadius+h);
+            distance=c/max(-b+sqrt(max(0,b*b-c)),1e-6);
+        }
+        float ds=distance/steps;
+        float3 t=1,a=0;
+        [loop] for(uint i=0;i<steps;i++)
+        {
+            float d=(i+.5)*ds;
+            float sampleH=AtmosphereAltitudeAlongRay(h,mu,d);
+            float3 tau=beta*ds*AtmosphereDensityAtAltitude(sampleH),ts=exp(-tau);
+            float sampleSunMu=clamp((r*sunMu+d*dot(ray,sun))/(AtmosphereRadius+sampleH),-1,1);
+            a+=t*AtmosphereSunTransmittance(sampleH,sampleSunMu)
+                *AtmosphereSegmentScatter(tau,ts)/(4*AtmospherePi);
+            t*=ts;
+        }
+        seed+=a/directions;
+        transfer+=(1-t)/directions;
+    }
+    // Pure scattering and extreme optical thickness can approach unit transfer.
+    // Explicitly bound amplification to prevent singular or negative closure.
+    float3 multiple=seed/max(1-transfer,1e-4);
+    AtmosphereMultipleScatteringOutput[id.xy]=float4(multiple,1);
+}
 // Transport is independent of the scene's camera, projection, and opaque body.
 // origin is inside/on the numerical volume; distance ends at its limit or a surface.
 float3 AtmosphereIntegrateTransport(float3 origin, float3 ray, float distance, uint steps, out float3 transmission)
@@ -126,12 +185,18 @@ float3 AtmosphereIntegrateTransport(float3 origin, float3 ray, float distance, u
         [branch] if (Sun.Intensity>0)
         {
             float sunMu = clamp((dot(origin,sun)+t*c)/(AtmosphereRadius+h),-1,1);
-            incoming += AtmosphereSunTransmittance(h,sunMu)*phase*(40*Sun.Intensity);
+                        float3 source=0;
+            if(Transport.L1) source+=AtmosphereSunTransmittance(h,sunMu)*phase;
+            if(Transport.L2Plus) source+=AtmosphereMultipleSource(h,sunMu);
+            incoming+=source*(40*Sun.Intensity);
         }
         [branch] if (Sun2.Intensity>0)
         {
             float sunMu = clamp((dot(origin,sun2)+t*c2)/(AtmosphereRadius+h),-1,1);
-            incoming += AtmosphereSunTransmittance(h,sunMu)*phase2*(40*Sun2.Intensity);
+                        float3 source=0;
+            if(Transport.L1) source+=AtmosphereSunTransmittance(h,sunMu)*phase2;
+            if(Transport.L2Plus) source+=AtmosphereMultipleSource(h,sunMu);
+            incoming+=source*(40*Sun2.Intensity);
         }
         radiance += transmission*incoming*AtmosphereSegmentScatter(tau,segmentTransmission);
         transmission *= segmentTransmission;

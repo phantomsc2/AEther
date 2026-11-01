@@ -1,21 +1,24 @@
 #include "../Common/AtmosphereTypes.hlsl"
-struct RingSettings { float Radius, Speed, Width, Inclination, Size; };
-struct AtmosphereOrbitSettings { float Azimuth, Elevation, Altitude; };
+struct PlanetAtmosphereSettings
+{
+    float3 RayleighScattering;
+    float ScaleHeight, Density;
+    AtmospherePhaseSettings Phase;
+};
+struct PlanetCameraSettings { float Alt, Long, Lat, Yaw, Pitch, Fov; };
+struct ShellSettings { float Alt, Speed, Size, Count, Seed; };
+struct PlanetDebugSettings { bool Transmittance, SkyView, Aerial, Transmission, MultipleScattering; float Slice; };
 cbuffer Parameters
 {
-    AtmosphereSettings Atmosphere = { float3(.201, .454, .687), .18, .5 }; // Thin blue limb with a warm inner edge.
-    AtmosphereSunSettings Sun = { .25, .5, .5 };
-    AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, 0 };
-    AtmosphereViewSettings View = { .5, .5 };
-    AtmosphereOrbitSettings Orbit = { 0, .5, .1024908 };
-    AtmospherePhaseSettings Phase = { .3, .5 };
-    RingSettings Ring = { .03030303, .4, .1, .22222222, .05714286 };
-    bool ShowAerial=false;
-    bool ShowAerialTransmission=false;
-    float AerialSlice=.5;
-    bool ShowTransmittance = false;
-    bool ShowSkyView = false;
+    TransportSettings Transport = { false, true, true };
+    PlanetAtmosphereSettings Atmosphere = { float3(.201,.454,.687), .18, .5, { .3,.5 } };
+    PlanetCameraSettings Camera = { .1024908, 0, .5, .5, .5, .81818182 };
+    ShellSettings Shell = { .03903904, .4, .05714286, .244140625, .5 };
+    AtmosphereSunSettings Sun = { .25,.5,.5 };
+    AtmosphereSunSettings Sun2 = { .5,110.0/180.0,0 };
+    PlanetDebugSettings Debug = { false,false,false,false,false,.5 };
 };
+#define ATMOSPHERE_PHASE Atmosphere.Phase
 // Three octaves either side of the reference scale height; midpoint matches the shadow preset.
 float AtmosphereScaleHeight() { return AtmosphereRadius*.1868*exp2(6*(Atmosphere.ScaleHeight-.5)); }
 // Preserve vacuum and the original maximum, with useful thin atmospheres near the midpoint.
@@ -26,12 +29,12 @@ float3 AtmosphereBeta() { return .01 * Atmosphere.RayleighScattering * Atmospher
 
 float3 PlanetObserver()
 {
-    return AtmosphereDirection(2*AtmospherePi*Orbit.Azimuth,lerp(-89.0,89.0,Orbit.Elevation)*AtmospherePi/180)
-        *(AtmosphereRadius*pow(8.82,Orbit.Altitude)); // Surface at zero, original 8.82R maximum.
+    return AtmosphereDirection(2*AtmospherePi*Camera.Long,lerp(-89.0,89.0,Camera.Lat)*AtmospherePi/180)
+        *(AtmosphereRadius*pow(8.82,Camera.Alt)); // Surface at zero, original 8.82R maximum.
 }
 ProjectionCamera PlanetCamera()
 {
-    float azimuth = 2*AtmospherePi*Orbit.Azimuth;
+    float azimuth = 2*AtmospherePi*Camera.Long;
     float3 origin = PlanetObserver(), forward = -normalize(origin);
     float3 right = float3(-cos(azimuth),0,sin(azimuth));
     return MakeProjectionCamera(origin,forward,right,cross(forward,right));
@@ -116,12 +119,12 @@ void BuildSkyView(uint3 id : SV_DispatchThreadID)
 ProjectionCamera PlanetDisplayCamera()
 {
     ProjectionCamera camera = PlanetCamera();
-    float yaw = 2*AtmospherePi*(View.Azimuth-.5), pitch = AtmosphereAltitudeAngle(View.Altitude);
+    float yaw = 2*AtmospherePi*(Camera.Yaw-.5), pitch = AtmosphereAltitudeAngle(Camera.Pitch);
     float3 forward = cos(yaw)*camera.Forward+sin(yaw)*camera.Right;
     camera.Right = cos(yaw)*camera.Right-sin(yaw)*camera.Forward;
     camera.Forward = cos(pitch)*forward+sin(pitch)*camera.Up;
     camera.Up = cross(camera.Forward,camera.Right);
-    camera.Focal = 1/tan(AtmospherePi/3); // 120 degree vertical FOV.
+    camera.Focal = 1/tan(lerp(30.0,140.0,Camera.Fov)*AtmospherePi/360);
     camera.Near=AtmosphereRadius*.0001;
     camera.Far=length(camera.Origin)+AtmosphereRadius+AtmosphereHeight();
     return camera;
@@ -155,34 +158,45 @@ void BuildAerial(uint3 id:SV_DispatchThreadID)
 }
 uint PlanetHash(uint x) { x^=x>>16; x*=0x7feb352d; x^=x>>15; x*=0x846ca68b; return x^(x>>16); }
 float PlanetRandom(uint x) { return (PlanetHash(x)&0xffffff)/16777216.0; }
+// Unit-radius world coordinates; every center stays at precisely the selected altitude.
+float3 PlanetMeteorCenter(uint instance)
+{
+    uint seed=PlanetHash(instance+((uint)(Shell.Seed*16777215)))*11+17;
+    float a=2*AtmospherePi*PlanetRandom(seed)+T*(.2*Shell.Speed);
+    // Isotropic orbital poles and independent phases fill a spherical shell.
+    float y=2*PlanetRandom(seed+1)-1;
+    float longitude=2*AtmospherePi*PlanetRandom(seed+2);
+    float3 pole=float3(sqrt(max(0,1-y*y))*cos(longitude),y,sqrt(max(0,1-y*y))*sin(longitude));
+    float3 axis=abs(pole.y)<.9?float3(0,1,0):float3(1,0,0);
+    float3 u=normalize(cross(pole,axis)),v=cross(pole,u);
+    float altitude=lerp(.002,2,Shell.Alt);
+    return (1+altitude)*(cos(a)*u+sin(a)*v);
+}
 struct MeteorVertex { float4 Position:SV_POSITION; };
 MeteorVertex FroxelGeometryVS(uint vertex:SV_VertexID,uint instance:SV_InstanceID)
 {
-    uint seed=instance*11+17;
-    float a=2*AtmospherePi*PlanetRandom(seed)+T*(.2*Ring.Speed);
-    float b=2*AtmospherePi*PlanetRandom(seed+1);
-    float baseRadius=lerp(1.02,3,Ring.Radius);
-    float tube=min(.15*Ring.Width,.45*(baseRadius-1))*sqrt(PlanetRandom(seed+2));
-    float radius=baseRadius+tube*cos(b);
-    float3 center=float3(radius*cos(a),tube*sin(b),radius*sin(a));
+    uint seed=PlanetHash(instance+((uint)(Shell.Seed*16777215)))*11+17;
+    float altitude=lerp(.002,2,Shell.Alt);
+    float3 center=PlanetMeteorCenter(instance);
     uint face=vertex/3,corner=vertex%3;
     float3 signs=float3((face&1)?1:-1,(face&2)?1:-1,(face&4)?1:-1);
     float3 local=corner==0?float3(signs.x,0,0):corner==1?float3(0,signs.y,0):float3(0,0,signs.z);
-    float spin=2*AtmospherePi*PlanetRandom(seed+3)+T*(.2*Ring.Speed)*lerp(1,5,PlanetRandom(seed+4));
+    float spin=2*AtmospherePi*PlanetRandom(seed+3)+T*(.2*Shell.Speed)*lerp(1,5,PlanetRandom(seed+4));
     local=mul(Ry(spin),mul(Rx(spin*.73),local));
-    float size=min(lerp(.005,.04,Ring.Size),.45*(baseRadius-1))*lerp(.6,1,PlanetRandom(seed+5));
-    float3 world=AtmosphereRadius*mul(Rz(.5*AtmospherePi*Ring.Inclination),center+size*local);
+    float size=min(lerp(.005,.04,Shell.Size),.9*altitude)*lerp(.6,1,PlanetRandom(seed+5));
+    float3 world=AtmosphereRadius*(center+size*local);
     MeteorVertex o; o.Position=ProjectionClip(PlanetDisplayCamera(),world); return o;
 }
 float4 FroxelSurfacePS(MeteorVertex input):SV_TARGET { return float4(0,0,0,1); }
 float4 PS(PSin input):SV_TARGET
 {
-    if(ShowTransmittance) return DisplayOutput(AtmosphereTransmittance.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
-    if(ShowSkyView) return DisplayOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
+    if(Debug.Transmittance) return DisplayOutput(AtmosphereTransmittance.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
+    if(Debug.MultipleScattering) return DisplayOutput(AtmosphereMultipleScattering.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
+    if(Debug.SkyView) return DisplayOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
     uint nx,ny,nz; AerialRadiance.GetDimensions(nx,ny,nz);
-    if(ShowAerial) {
-        float3 uv=float3(input.UV,(.5+AerialSlice*(nz-1))/nz);
-        if(ShowAerialTransmission) return DisplayOutput(AerialTransmission.SampleLevel(AtmosphereSampler,uv,0).rgb);
+    if(Debug.Aerial) {
+        float3 uv=float3(input.UV,(.5+Debug.Slice*(nz-1))/nz);
+        if(Debug.Transmission) return DisplayOutput(AerialTransmission.SampleLevel(AtmosphereSampler,uv,0).rgb);
         return DisplayOutput(AerialRadiance.SampleLevel(AtmosphereSampler,uv,0).rgb);
     }
     ProjectionCamera camera=PlanetDisplayCamera(); float3 ray=ProjectionDirection(camera,input.UV);

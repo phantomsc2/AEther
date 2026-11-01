@@ -1,40 +1,52 @@
 # Planet
 
 Select **Planet**, or launch with `--scene=Planet`. Planet shares exponential,
-RGB single-scattering transport with [Atmosphere](atmosphere.md): two directional
+RGB atmospheric transport with [Atmosphere](atmosphere.md): two directional
 suns, a normalized Draine phase function, and analytic planet occlusion. The
 opaque planet and 1,000 procedural octahedra are black. There is no surface
-lighting, emission, multiple scattering, or meteor shadowing.
+lighting, emission, or meteor shadowing. Multiple scattering uses the Hillaire 2020 isotropic approximation.
 
 ## Default demonstration and controls
 
 The stationary observer is at approximately 1.25 planet radii on +Z, looking at
 the center with a 120-degree vertical FOV. One stationary sun points along +X;
-the second is disabled. One tilted toroidal stream orbits through the shadow
+the second is disabled. Random circular orbits fill a spherical shell and cross the shadow
 on the -X side. Animation uses renderer elapsed time, independently of audio.
-Random phases, offsets, sizes, orientations, and spin rates are deterministic.
+Random orbital poles, phases, sizes, orientations, and spin rates are deterministic. Every meteor center remains at exactly the selected altitude; orbital poles cover the full sphere, including prograde, retrograde, and near-polar orbits.
 
 The solid radius R is 6,360 km. Float controls use the normalized [0,1] editor:
 
 | Control | Physical mapping | Default |
 |---|---|---|
-| Orbit.Azimuth | 0 to 360 degrees | 0 |
-| Orbit.Elevation | -89 to 89 degrees | 0 degrees |
-| Orbit.Altitude | Center distance R * 8.82^value | 1.25R |
+| Camera.Long | 0 to 360 degrees | 0 |
+| Camera.Lat | -89 to 89 degrees | 0 degrees |
+| Camera.Alt | Center distance R * 8.82^value | 1.25R |
 | Atmosphere.ScaleHeight | H = .1868R * 2^(6*(value-.5)) | value .18 |
 | Atmosphere.Density | Density multiplier value^2.53951953 | value .5 |
 | Atmosphere.RayleighScattering | Extinction .01 * RGB * density per km | (.201,.454,.687) |
-| Ring.Radius | Centerline radius 1.02R to 3R | 1.08R |
-| Ring.Speed | Angular speed 0 to .2 radians/second | .08 |
-| Ring.Width | Tube radius 0 to .15R | .015R |
-| Ring.Inclination | Tilt 0 to 90 degrees | 20 degrees |
-| Ring.Size | Octahedron radius .005R to .04R, randomized by .6 to 1 | .007R before variation |
+| Camera.Yaw | Look yaw -180 to 180 degrees relative to center | 0 degrees |
+| Camera.Pitch | Look pitch -90 to 90 degrees | 0 degrees |
+| Camera.Fov | Vertical field of view 30 to 140 degrees | 120 degrees |
+| Shell.Alt | Exact center altitude .002R to 2R above surface | .08R |
+| Shell.Speed | Angular speed 0 to .2 radians/second | .08 |
+| Shell.Size | Octahedron radius .005R to .04R, randomized by .6 to 1 | .007R before variation |
+| Shell.Count | Rounded instance count 0 to 4096 | 1000 |
+| Shell.Seed | Reproducible orbit/phase/size/spin distribution | .5 |
 
-Tube radius and meteor size are each capped at .45 times the centerline's
-height above the surface, preventing intersections even at extreme controls.
-Zero speed freezes both orbit and spin. Camera and sun controls remain editable.
-Sun and phase mappings match Atmosphere. Phase defaults are anisotropy .3 and
-shape .5. View yaw/pitch default to .5 (toward center).
+All controls are organized under Atmosphere, Camera, Debug, Shell, Sun, Sun2, and Transport.
+Atmosphere.Phase contains Anisotropy and Shape (defaults .3 and .5). The other
+atmosphere mappings are unchanged. Sun and Sun2 retain their azimuth, altitude,
+and intensity controls. Camera.Alt retains the previous exponential center-distance
+mapping; its physical height above the surface is R * (8.82^value - 1).
+
+Meteor size is capped at .9 times the selected altitude to keep geometry above
+the surface. There is no shell thickness or orbital inclination slider: randomized
+orbital planes cover all inclinations at the same exact center altitude. Zero speed
+freezes both orbit and spin. Camera and sun controls remain editable.
+
+The old Orbit/View/Ring and top-level debug/phase parameter paths have been replaced
+by the grouped controls. Atmosphere and sun settings with unchanged names survive
+reload; renamed controls start at their new defaults.
 
 ## Transport and lookup tables
 
@@ -70,12 +82,12 @@ changes appearance through foreground scattering, not through surface shading.
 
 Atmosphere changes rebuild all tables. Suns, phase, or orbit position rebuild
 Sky-View and aerial perspective. View direction or aspect changes rebuild only
-aerial perspective. Ring motion and ring controls rebuild neither. Exposure and
+aerial perspective. Shell motion and shell controls rebuild neither. Exposure and
 preview toggles affect display only. Resources are released on deactivation;
 reload failures retain the working effect.
 
-ShowTransmittance and ShowSkyView retain precedence. ShowAerial displays a raw
-volume slice selected by AerialSlice; ShowAerialTransmission selects transmission
+Debug.Transmittance and Debug.SkyView retain precedence. Debug.Aerial displays a raw
+volume slice selected by Debug.Slice; Debug.Transmission selects transmission
 instead of radiance. Raw previews bypass exposure and tone mapping.
 
 GPU markers separate Atmosphere transmittance, Atmosphere sky view, Atmosphere
@@ -84,8 +96,58 @@ checks volume identities/bounds, monotonic transmission, motion/freezing, cache
 invalidation, resize, and reload. PlanetAerialQualityAndTimingsAt720p compares
 finite paths against independent double-precision quadrature, records 32/64-cubed
 image differences, and captures orbital phases. Reports and RGBA captures are
-written to ignored artifacts/planet-aerial at 1280x720. Existing Planet tests
+written to ignored artifacts/planet-aerial at 1280x720. PlanetShellKeepsExactAltitudeInRandomOrbitalPlanes checks exact radius over time and altitude extremes, spherical coverage, and the parameter categories. Existing Planet tests
 continue checking Sky-View, transmittance, limb seams, and physical extremes.
 
 References: [Hillaire 2020](https://diglib.eg.org/items/8a3e5350-18b3-46bd-9274-3add5af88c75)
 and [Frostbite 2016, section 3.5](https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/s2016-pbs-frostbite-sky-clouds-new.pdf).
+
+## Scattering orders
+
+Both scenes expose **Transport** with independent switches:
+
+- **L0 - Surface reflectance (reserved)**: defaults off and has no rendering effect.
+- **L1 - Single scattering**: defaults on and controls only directly sunlit atmospheric scattering.
+- **L2+ - Multiple scattering**: defaults on and controls the approximate higher-order atmospheric source. It remains meaningful with displayed L1 disabled: the LUT's internal seed is not gated by the display switches.
+
+Attenuation and opaque geometry remain unchanged by these switches. L1+L2 equals
+the sum of their separately rendered linear radiances. Both disabled yields black
+radiance while preserving RGB transmission. There is no ground reflection in the
+multiple-scattering builder; adding L0 later requires a separate implementation.
+
+A new 32x32 RGBA32F LUT (16 KiB) stores the unit-source response versus local sun
+zenith cosine and density-focused altitude. Following Hillaire 2020 equations
+5-10, it integrates 64 equal-area sphere directions and 32 midpoint path samples,
+then closes higher orders with M = B / (1-f), per RGB channel. B is the angular
+mean of isotropic single-scattered radiance; f is the angular mean unit-radiance
+scattering transfer. Both include atmospheric extinction and the opaque planet.
+This is constant cost with respect to scattering order, not an exact solution.
+The source construction follows the reference's isotropic phase approximation;
+it is independent of the editable direct-light Draine phase parameters.
+
+The denominator is floored at 0.0001 for optically thick, nonabsorbing extremes.
+This explicitly bounds amplification; those extremes are not physically validated.
+The model still assumes spherical density and does not include meteor/terrain
+shadows or atmospheric absorption. Strongly anisotropic higher orders are not
+resolved. L2+ represents an isotropic source, rather than a directional light field.
+
+The LUT is built after Transmittance and sampled inside the shared Sky-View and
+aerial-perspective integrator. Each sun samples it at its own local zenith angle
+and scales it by its intensity. Local direct-sun occlusion does not suppress the
+indirect source. RGB transmission is unchanged. The LUT is rebuilt only when
+medium properties change, and lazily if L2+ is disabled. Camera, sun, phase,
+geometry, and transport toggles do not invalidate the LUT. Toggling L1/L2+ updates
+Sky-View and aerial radiance; L0 performs no GPU cache work.
+
+The new GPU marker is `Atmosphere multiple scattering`. Planet provides
+Debug.MultipleScattering, and Atmosphere provides ShowMultipleScattering, for raw
+LUT inspection independent of exposure and the L2+ display switch. These previews
+also trigger construction of a stale LUT while L2+ is disabled.
+
+AtmosphereScatteringOrdersAreIndependent checks additivity, independent toggles,
+unchanged transmission, zero density, bounded extreme outputs, invalidation, and
+reload for both scenes at 1280x720. AtmosphereMultipleLutMatchesIndependentClosure
+compares sampled LUT nodes with independent double-precision dense-path integration.
+Legacy numerical fixtures explicitly disable L2+ to continue isolating L1.
+
+Reference: [Hillaire's implementation](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyRayMarching.hlsl), especially NewMultiScattCS and IntegrateScatteredLuminance.

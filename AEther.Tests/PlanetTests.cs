@@ -29,7 +29,7 @@ public partial class ShaderRenderingTests
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
         foreach(float altitude in new[]{0f,1f})
         {
-            PointSet(renderer,"Orbit.Altitude",altitude);renderer.Render(false);
+            PointSet(renderer,"Camera.Alt",altitude);renderer.Render(false);
             var scene=RingReadScene(renderer);
             Assert.That(scene.All(float.IsFinite),Is.True);
             Assert.That(scene[0],Is.EqualTo(altitude==0 ? 1 : 8.82).Within(.01));
@@ -42,9 +42,9 @@ public partial class ShaderRenderingTests
         foreach (var (path, value) in new[] { ("Atmosphere.RayleighScattering.x", .058f), ("Atmosphere.RayleighScattering.y", .135f),
             ("Atmosphere.RayleighScattering.z", .331f), ("Atmosphere.ScaleHeight", (float)(.5+Math.Log2(.55/.1868)/6)),
             ("Atmosphere.Density", (float)Math.Pow(.15,1/2.53951953)),
-            ("Orbit.Azimuth", 0f), ("Orbit.Elevation", .5f), ("Orbit.Altitude", PlanetReferenceOrbit(.25)),
+            ("Camera.Long", 0f), ("Camera.Lat", .5f), ("Camera.Alt", PlanetReferenceOrbit(.25)),
             ("Sun.Azimuth", 0f), ("Sun.Altitude", 2f/3), ("Sun.Intensity", .5f), ("Sun2.Azimuth", .5f), ("Sun2.Altitude", 110f/180), ("Sun2.Intensity", .25f),
-            ("Phase.Anisotropy", .5f), ("View.Azimuth", .5f) }) PointSet(renderer, path, value);
+            ("Atmosphere.Phase.Anisotropy", .5f), ("Camera.Yaw", .5f) }) PointSet(renderer, path, value);
     }
 
     static double PlanetDensity(double h, double scale = .55*AtmosphereR)
@@ -201,22 +201,22 @@ public partial class ShaderRenderingTests
         var original=renderer.ReadPixels(false);
         var originalExposure=renderer.Options.Exposure;
         Draw();Assert.That(renderer.ReadPixels(false),Is.EqualTo(original));
-        PointSet(renderer,"View.Azimuth",0);Draw();
+        PointSet(renderer,"Camera.Yaw",0);Draw();
         Assert.That(RingReadScene(renderer).Where((_,i)=>i%4!=3).Any(v=>v>0),Is.True,"The close observer sees local scattering while looking away");
-        PointSet(renderer,"View.Azimuth",.5f);Draw();
-        foreach (string path in new[] { "Orbit.Azimuth","Orbit.Elevation","Orbit.Altitude","Phase.Anisotropy","Sun2.Intensity" })
+        PointSet(renderer,"Camera.Yaw",.5f);Draw();
+        foreach (string path in new[] { "Camera.Long","Camera.Lat","Camera.Alt","Atmosphere.Phase.Anisotropy","Sun2.Intensity" })
         { PointSet(renderer,path,.7f);Draw("Atmosphere sky view"); }
         foreach (float value in new[] { 0f,1f })
         {
-            PointSet(renderer,"Orbit.Altitude",value);PointSet(renderer,"Orbit.Elevation",value);
+            PointSet(renderer,"Camera.Alt",value);PointSet(renderer,"Camera.Lat",value);
             Draw("Atmosphere sky view");
         }
-        PointSet(renderer,"ShowSkyView",true);Draw();
+        PointSet(renderer,"Debug.SkyView",true);Draw();
         var raw=renderer.ReadPixels(false);
         renderer.SetGraphicsOptions(renderer.Options with { Exposure=8 });Draw();Assert.That(renderer.ReadPixels(false),Is.EqualTo(raw));
         renderer.Resize(1281,721);Draw();
         Assert.That(renderer.ReloadActiveScene(),Is.True,renderer.ShaderError);Draw("Atmosphere transmittance","Atmosphere sky view");
-        Assert.That(renderer.ActiveShader!.Effects[0].Parameters!.GetFloat(PointFind(renderer,"Orbit.Altitude")),Is.EqualTo(1));
+        Assert.That(renderer.ActiveShader!.Effects[0].Parameters!.GetFloat(PointFind(renderer,"Camera.Alt")),Is.EqualTo(1));
         renderer.SelectScene("Atmosphere");renderer.Render(false);
         Assert.That(renderer.ActiveShader!.Effects[0].Parameters!.Items.Any(p=>p.Name=="Orbit"),Is.False);
         renderer.SelectScene("Planet");Draw("Atmosphere transmittance","Atmosphere sky view");
@@ -237,7 +237,7 @@ public partial class ShaderRenderingTests
         PlanetReferenceSettings(renderer);
         // Logarithmic height control centered at .1868R.
         PointSet(renderer,"Atmosphere.ScaleHeight",(float)(.5+Math.Log2(scaleR/.1868)/6));
-        PointSet(renderer,"Orbit.Altitude",PlanetReferenceOrbit(orbit));
+        PointSet(renderer,"Camera.Alt",PlanetReferenceOrbit(orbit));
         renderer.Render(false);
         var sky=AtmosphereRead(renderer,((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
         foreach(var (x,y) in new[]{(0,0),(64,59),(64,70),(128,90),(64,110),(0,127)})
@@ -261,9 +261,9 @@ public partial class ShaderRenderingTests
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
         PlanetReferenceSettings(renderer);
-        foreach(var (path,value) in new[]{("Orbit.Altitude",PlanetReferenceOrbit(0)),("Orbit.Azimuth",.618f),("Orbit.Elevation",.359f),
+        foreach(var (path,value) in new[]{("Camera.Alt",PlanetReferenceOrbit(0)),("Camera.Long",.618f),("Camera.Lat",.359f),
             ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Sun2.Intensity",0f),
-            ("Phase.Anisotropy",.580f),("Phase.Shape",0f)}) PointSet(renderer,path,value);
+            ("Atmosphere.Phase.Anisotropy",.580f),("Atmosphere.Phase.Shape",0f)}) PointSet(renderer,path,value);
         renderer.Render(false);
         var sky=AtmosphereRead(renderer,((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
         foreach(var (x,y) in new[]{(0,0),(64,59),(192,59),(0,70),(64,70),(128,70),(192,70),(64,90),(192,110)})
@@ -284,7 +284,7 @@ public partial class ShaderRenderingTests
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene,timeProvider:clock,profile:profile);
         void Tick(){clock.Advance();renderer.Render(false);renderer.ReadPixels(false);renderer.PollGpuTimings();}
         Tick();
-        for(int i=0;i<16;i++){PointSet(renderer,"Orbit.Azimuth",i%2==0 ? .01f : .02f);Tick();}
+        for(int i=0;i<16;i++){PointSet(renderer,"Camera.Long",i%2==0 ? .01f : .02f);Tick();}
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();Tick();
         for(int i=0;i<280;i++)Tick();
         string directory=Path.GetFullPath(Path.Combine(ShaderDirectory,"..","..","artifacts","planet"));Directory.CreateDirectory(directory);
@@ -299,13 +299,13 @@ public partial class ShaderRenderingTests
         Capture("default");
         renderer.SetGraphicsOptions(renderer.Options with { Exposure=2.616 });Capture("shadow-preset");
         renderer.SetGraphicsOptions(renderer.Options with { Exposure=0 });
-        PointSet(renderer,"ShowSkyView",true);Capture("sky-view");PointSet(renderer,"ShowSkyView",false);
-        renderer.ActiveShader!.Effects[0].Parameters!.Reset();PointSet(renderer,"Orbit.Azimuth",.25f);Capture("terminator");
-        PointSet(renderer,"Orbit.Altitude",0);Capture("low-orbit");
+        PointSet(renderer,"Debug.SkyView",true);Capture("sky-view");PointSet(renderer,"Debug.SkyView",false);
+        renderer.ActiveShader!.Effects[0].Parameters!.Reset();PointSet(renderer,"Camera.Long",.25f);Capture("terminator");
+        PointSet(renderer,"Camera.Alt",0);Capture("low-orbit");
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
-        PointSet(renderer,"Orbit.Altitude",0);PointSet(renderer,"Orbit.Azimuth",.618f);PointSet(renderer,"Orbit.Elevation",.359f);
+        PointSet(renderer,"Camera.Alt",0);PointSet(renderer,"Camera.Long",.618f);PointSet(renderer,"Camera.Lat",.359f);
         PointSet(renderer,"Sun.Altitude",.233f);PointSet(renderer,"Sun.Azimuth",.294f);PointSet(renderer,"Sun.Intensity",.484f);
-        PointSet(renderer,"Sun2.Intensity",0);PointSet(renderer,"Phase.Anisotropy",.580f);PointSet(renderer,"Phase.Shape",0);
-        PointSet(renderer,"View.Altitude",.458f);PointSet(renderer,"View.Azimuth",.469f);Capture("eclipse");
+        PointSet(renderer,"Sun2.Intensity",0);PointSet(renderer,"Atmosphere.Phase.Anisotropy",.580f);PointSet(renderer,"Atmosphere.Phase.Shape",0);
+        PointSet(renderer,"Camera.Pitch",.458f);PointSet(renderer,"Camera.Yaw",.469f);Capture("eclipse");
     }
 }

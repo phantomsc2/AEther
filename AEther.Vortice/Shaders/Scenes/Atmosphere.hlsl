@@ -1,6 +1,7 @@
 #include "../Common/AtmosphereTypes.hlsl"
 cbuffer Parameters
 {
+    TransportSettings Transport = { false, true, true };
     AtmosphereSettings Atmosphere = { float3(.058, .135, .331), 7.0/15.0, .0625 };
     AtmosphereSunSettings Sun = { 0, 2.0/3.0, .5 };
     AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, .25 };
@@ -8,6 +9,7 @@ cbuffer Parameters
     AtmospherePhaseSettings Phase = { .5, .5 };
     bool ShowTransmittance = false;
     bool ShowSkyView = false;
+    bool ShowMultipleScattering = false;
 };
 float AtmosphereScaleHeight() { return lerp(1.0, 16.0, Atmosphere.ScaleHeight); }
 float3 AtmosphereBeta() { return .1 * Atmosphere.RayleighScattering * (16*Atmosphere.Density); }
@@ -43,6 +45,7 @@ float4 PS(PSin input) : SV_TARGET
     // Raw stored RGB: no exposure, tone curve, gamma encoding, or lighting evaluation.
     if (ShowTransmittance)
         return DisplayOutput(AtmosphereTransmittance.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
+    if (ShowMultipleScattering) return DisplayOutput(AtmosphereMultipleScattering.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
     if (ShowSkyView)
         return DisplayOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
     float yaw = 2*AtmospherePi*View.Azimuth, pitch = AtmosphereAltitudeAngle(View.Altitude);

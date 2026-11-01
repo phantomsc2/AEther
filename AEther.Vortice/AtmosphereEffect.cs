@@ -8,11 +8,12 @@ public sealed class AtmosphereEffect : SceneEffect
 {
     internal const int TransmittanceWidth = 256, TransmittanceHeight = 64;
     internal const int SkyViewWidth = 256, SkyViewHeight = 128;
-    readonly ShaderProgram transmittanceProgram, skyViewProgram;
+    readonly ShaderProgram transmittanceProgram, skyViewProgram, multipleProgram;
     readonly int skyViewWidth, skyViewHeight;
     readonly ID3D11SamplerState sampler;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
-    Lookup? transmittance, skyView;
+    Lookup? transmittance, skyView, multipleScattering;
+    bool multipleDirty = true;
     readonly ShaderProgram? aerialProgram;
     readonly FroxelRaster? meteors;
     Volume? aerialRadiance, aerialTransmission;
@@ -28,6 +29,7 @@ public sealed class AtmosphereEffect : SceneEffect
     internal ID3D11Texture3D AerialTransmissionTexture => aerialTransmission!.Texture;
     internal ID3D11Texture2D TransmittanceTexture => transmittance!.Texture;
     internal ID3D11Texture2D SkyViewTexture => skyView!.Texture;
+    internal ID3D11Texture2D MultipleScatteringTexture => multipleScattering!.Texture;
 
     internal AtmosphereEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file,
         int skyViewWidth = SkyViewWidth, int skyViewHeight = SkyViewHeight)
@@ -38,14 +40,16 @@ public sealed class AtmosphereEffect : SceneEffect
         {
             transmittanceProgram = new(device, source, "BuildTransmittance", file, "cs_5_0");
             skyViewProgram = new(device, source, "BuildSkyView", file, "cs_5_0");
+            multipleProgram = new(device, source, "BuildMultipleScattering", file, "cs_5_0");
             if (file == "Planet.hlsl")
             {
                 aerialProgram = new(device, source, "BuildAerial", file, "cs_5_0");
                 meteors = new(device, context, source, file, marker: "Planet meteors");
             }
-            var programs = new[] { Display, transmittanceProgram, skyViewProgram }
+            var programs = new[] { Display, transmittanceProgram, skyViewProgram, multipleProgram }
                 .Concat(aerialProgram == null ? [] : new[] { aerialProgram }).ToArray();
             var bindings = FrameBindings.Concat(["AtmosphereTransmittance", "AtmosphereSkyView", "AtmosphereSampler",
+                "AtmosphereMultipleScattering", "AtmosphereMultipleScatteringOutput",
                 "AtmosphereTransmittanceOutput", "AtmosphereSkyViewOutput", "AerialRadiance", "AerialTransmission", "AerialRadianceOutput", "AerialTransmissionOutput", "FroxelSurfaceDepth"]);
             foreach (var program in programs) program.ValidateBindings(bindings);
             Parameters = ShaderParameters.Merge(programs.Select(p => p.Parameters).Concat(meteors == null ? [] : new[] { meteors.Geometry.Parameters, meteors.Surface.Parameters }));
@@ -75,12 +79,13 @@ public sealed class AtmosphereEffect : SceneEffect
         {
             // Only compare normalized values; all physical interpretation belongs to HLSL.
             var leaves = ShaderParameters.Leaves(parameters!.Items).ToArray();
-            nextAtmosphere = leaves.Where(p => p.Path.StartsWith("Atmosphere.", StringComparison.Ordinal))
+            nextAtmosphere = leaves.Where(p => p.Path.StartsWith("Atmosphere.", StringComparison.Ordinal) && !p.Path.StartsWith("Atmosphere.Phase.", StringComparison.Ordinal))
                 .Select(parameters.GetFloat).ToArray();
             nextSun = leaves.Where(p => p.Path.StartsWith("Sun.", StringComparison.Ordinal)
                 || p.Path.StartsWith("Sun2.", StringComparison.Ordinal)
                 || p.Path.StartsWith("Phase.", StringComparison.Ordinal)
-                || p.Path.StartsWith("Orbit.", StringComparison.Ordinal)).Select(parameters.GetFloat).ToArray();
+                || p.Path is "Transport.L1" or "Transport.L2Plus"
+                || p.Path.StartsWith("Atmosphere.Phase.", StringComparison.Ordinal) || p.Path is "Camera.Alt" or "Camera.Long" or "Camera.Lat").Select(parameters.GetFloat).ToArray();
             rebuildTransmittance |= atmosphereKey == null || !nextAtmosphere.AsSpan().SequenceEqual(atmosphereKey);
             rebuildSky |= sunKey == null || !nextSun.AsSpan().SequenceEqual(sunKey);
         }
@@ -93,12 +98,26 @@ public sealed class AtmosphereEffect : SceneEffect
         outputs["AtmosphereTransmittanceOutput"] = transmittance.Output;
         outputs["AtmosphereSkyViewOutput"] = skyView.Output;
         if (rebuildTransmittance) Run(transmittanceProgram, "Atmosphere transmittance", TransmittanceWidth, TransmittanceHeight);
+        multipleScattering ??= new(Device, 32, 32);
+        textures["AtmosphereMultipleScattering"] = multipleScattering.View;
+        outputs["AtmosphereMultipleScatteringOutput"] = multipleScattering.Output;
+        multipleDirty |= rebuildTransmittance;
+        var multipleToggle = ShaderParameters.Leaves(parameters!.Items).Single(p => p.Path == "Transport.L2Plus");
+        bool showMultiple = ShaderParameters.Leaves(parameters.Items)
+            .Any(p => (p.Path is "Debug.MultipleScattering" or "ShowMultipleScattering") && parameters.GetBoolean(p));
+        if ((parameters.GetBoolean(multipleToggle) || showMultiple) && multipleDirty)
+        {
+            Run(multipleProgram, "Atmosphere multiple scattering", 32, 32);
+            multipleDirty = false;
+            rebuildSky |= parameters.GetBoolean(multipleToggle);
+        }
         if (rebuildSky) Run(skyViewProgram, "Atmosphere sky view", skyViewWidth, skyViewHeight);
         if (aerialProgram != null)
         {
             var key = ReferenceEquals(previous, parameters) && aerialKey != null ? aerialKey : ShaderParameters.Leaves(parameters!.Items)
                 .Where(p => p.Path.StartsWith("Atmosphere.") || p.Path.StartsWith("Sun.") || p.Path.StartsWith("Sun2.")
-                    || p.Path.StartsWith("Phase.") || p.Path.StartsWith("Orbit.") || p.Path.StartsWith("View."))
+                    || p.Path is "Transport.L1" or "Transport.L2Plus"
+                    || p.Path.StartsWith("Phase.") || p.Path.StartsWith("Camera.") || p.Path.StartsWith("View."))
                 .Select(parameters.GetFloat).ToArray();
             float aspect = frame.Width / (float)frame.Height;
             if (AerialSize is < 2 or > 128) throw new InvalidOperationException("Aerial size must be between 2 and 128.");
@@ -117,7 +136,8 @@ public sealed class AtmosphereEffect : SceneEffect
             if (rebuild) Run(aerialProgram, "Atmosphere aerial perspective", AerialSize, AerialSize);
             aerialKey = key; aerialAspect = aspect;
             Unbind();
-            meteors!.Draw(frame, parameters, 1000, buffers, textures, samplers);
+            var count = ShaderParameters.Leaves(parameters!.Items).Single(p => p.Path == "Shell.Count");
+            meteors!.Draw(frame, parameters, (int)MathF.Round(4096 * parameters.GetFloat(count)), buffers, textures, samplers);
         }
         atmosphereKey = nextAtmosphere; sunKey = nextSun; previous = parameters;
 
@@ -137,6 +157,7 @@ public sealed class AtmosphereEffect : SceneEffect
     internal override void Deactivate()
     {
         base.Deactivate(); outputs.Clear();
+        multipleScattering?.Dispose(); multipleScattering = null; multipleDirty = true;
         transmittance?.Dispose(); skyView?.Dispose(); transmittance = null; skyView = null;
         previous = null; atmosphereKey = null; sunKey = null; aerialKey = null;
         aerialRadiance?.Dispose(); aerialTransmission?.Dispose();
@@ -145,7 +166,7 @@ public sealed class AtmosphereEffect : SceneEffect
     }
     public override void Dispose()
     {
-        base.Dispose(); transmittanceProgram?.Dispose(); skyViewProgram?.Dispose(); aerialProgram?.Dispose(); meteors?.Dispose(); sampler?.Dispose();
+        base.Dispose(); transmittanceProgram?.Dispose(); skyViewProgram?.Dispose(); multipleProgram?.Dispose(); aerialProgram?.Dispose(); meteors?.Dispose(); sampler?.Dispose();
     }
 
     sealed class Volume : IDisposable

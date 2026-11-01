@@ -288,7 +288,7 @@ public partial class ShaderRenderingTests
         readonly string temporaryRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
         public string Path { get; }
         public string Scene { get; }
-        public SceneShaders(string scene)
+        public SceneShaders(string scene, bool multipleScattering = false)
         {
             Scene = scene;
             Path = System.IO.Path.Combine(temporaryRoot, "AEther-silence-" + Guid.NewGuid().ToString("N"));
@@ -302,6 +302,14 @@ public partial class ShaderRenderingTests
             }
             File.Copy(System.IO.Path.Combine(ShaderDirectory, "Scenes", scene + ".hlsl"),
                 System.IO.Path.Combine(Path, "Scenes", scene + ".hlsl"));
+            // Legacy numerical fixtures isolate L1; dedicated tests opt into L2+.
+            if (!multipleScattering && scene is "Planet" or "Atmosphere")
+            {
+                var file = System.IO.Path.Combine(Path, "Scenes", scene + ".hlsl");
+                File.WriteAllText(file, File.ReadAllText(file).Replace(
+                    "TransportSettings Transport = { false, true, true };",
+                    "TransportSettings Transport = { false, true, false };"));
+            }
         }
         public void Dispose()
         {
