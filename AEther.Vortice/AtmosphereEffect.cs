@@ -13,10 +13,19 @@ public sealed class AtmosphereEffect : SceneEffect
     readonly ID3D11SamplerState sampler;
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
     Lookup? transmittance, skyView;
+    readonly ShaderProgram? aerialProgram;
+    readonly FroxelRaster? meteors;
+    Volume? aerialRadiance, aerialTransmission;
+    float[]? aerialKey;
+    float aerialAspect;
+    // Internal override permits resolution comparisons without changing the public scene controls.
+    internal int AerialSize { get; set; } = 32;
     ShaderParameters? previous;
     float[]? atmosphereKey, sunKey;
 
     // Internal texture access supports numerical GPU checks without display quantization.
+    internal ID3D11Texture3D AerialRadianceTexture => aerialRadiance!.Texture;
+    internal ID3D11Texture3D AerialTransmissionTexture => aerialTransmission!.Texture;
     internal ID3D11Texture2D TransmittanceTexture => transmittance!.Texture;
     internal ID3D11Texture2D SkyViewTexture => skyView!.Texture;
 
@@ -29,11 +38,17 @@ public sealed class AtmosphereEffect : SceneEffect
         {
             transmittanceProgram = new(device, source, "BuildTransmittance", file, "cs_5_0");
             skyViewProgram = new(device, source, "BuildSkyView", file, "cs_5_0");
-            var programs = new[] { Display, transmittanceProgram, skyViewProgram };
+            if (file == "Planet.hlsl")
+            {
+                aerialProgram = new(device, source, "BuildAerial", file, "cs_5_0");
+                meteors = new(device, context, source, file, marker: "Planet meteors");
+            }
+            var programs = new[] { Display, transmittanceProgram, skyViewProgram }
+                .Concat(aerialProgram == null ? [] : new[] { aerialProgram }).ToArray();
             var bindings = FrameBindings.Concat(["AtmosphereTransmittance", "AtmosphereSkyView", "AtmosphereSampler",
-                "AtmosphereTransmittanceOutput", "AtmosphereSkyViewOutput"]);
+                "AtmosphereTransmittanceOutput", "AtmosphereSkyViewOutput", "AerialRadiance", "AerialTransmission", "AerialRadianceOutput", "AerialTransmissionOutput", "FroxelSurfaceDepth"]);
             foreach (var program in programs) program.ValidateBindings(bindings);
-            Parameters = ShaderParameters.Merge(programs.Select(p => p.Parameters));
+            Parameters = ShaderParameters.Merge(programs.Select(p => p.Parameters).Concat(meteors == null ? [] : new[] { meteors.Geometry.Parameters, meteors.Surface.Parameters }));
             sampler = device.CreateSamplerState(new SamplerDescription
             {
                 Filter = Filter.MinMagLinearMipPoint, AddressU = TextureAddressMode.Clamp,
@@ -79,6 +94,31 @@ public sealed class AtmosphereEffect : SceneEffect
         outputs["AtmosphereSkyViewOutput"] = skyView.Output;
         if (rebuildTransmittance) Run(transmittanceProgram, "Atmosphere transmittance", TransmittanceWidth, TransmittanceHeight);
         if (rebuildSky) Run(skyViewProgram, "Atmosphere sky view", skyViewWidth, skyViewHeight);
+        if (aerialProgram != null)
+        {
+            var key = ReferenceEquals(previous, parameters) && aerialKey != null ? aerialKey : ShaderParameters.Leaves(parameters!.Items)
+                .Where(p => p.Path.StartsWith("Atmosphere.") || p.Path.StartsWith("Sun.") || p.Path.StartsWith("Sun2.")
+                    || p.Path.StartsWith("Phase.") || p.Path.StartsWith("Orbit.") || p.Path.StartsWith("View."))
+                .Select(parameters.GetFloat).ToArray();
+            float aspect = frame.Width / (float)frame.Height;
+            if (AerialSize is < 2 or > 128) throw new InvalidOperationException("Aerial size must be between 2 and 128.");
+            if (aerialRadiance != null && aerialRadiance.Texture.Description.Width != AerialSize)
+            {
+                Unbind();
+                aerialRadiance.Dispose(); aerialTransmission!.Dispose();
+                aerialRadiance = null; aerialTransmission = null;
+            }
+            bool rebuild = aerialRadiance == null || aerialKey == null || !key.AsSpan().SequenceEqual(aerialKey) || aspect != aerialAspect;
+            aerialRadiance ??= new(Device, AerialSize); aerialTransmission ??= new(Device, AerialSize);
+            textures["AerialRadiance"] = aerialRadiance.View;
+            textures["AerialTransmission"] = aerialTransmission.View;
+            outputs["AerialRadianceOutput"] = aerialRadiance.Output;
+            outputs["AerialTransmissionOutput"] = aerialTransmission.Output;
+            if (rebuild) Run(aerialProgram, "Atmosphere aerial perspective", AerialSize, AerialSize);
+            aerialKey = key; aerialAspect = aspect;
+            Unbind();
+            meteors!.Draw(frame, parameters, 1000, buffers, textures, samplers);
+        }
         atmosphereKey = nextAtmosphere; sunKey = nextSun; previous = parameters;
 
         void Run(ShaderProgram program, string marker, int width, int height)
@@ -98,13 +138,31 @@ public sealed class AtmosphereEffect : SceneEffect
     {
         base.Deactivate(); outputs.Clear();
         transmittance?.Dispose(); skyView?.Dispose(); transmittance = null; skyView = null;
-        previous = null; atmosphereKey = null; sunKey = null;
+        previous = null; atmosphereKey = null; sunKey = null; aerialKey = null;
+        aerialRadiance?.Dispose(); aerialTransmission?.Dispose();
+        aerialRadiance = null; aerialTransmission = null;
+        meteors?.Release();
     }
     public override void Dispose()
     {
-        base.Dispose(); transmittanceProgram?.Dispose(); skyViewProgram?.Dispose(); sampler?.Dispose();
+        base.Dispose(); transmittanceProgram?.Dispose(); skyViewProgram?.Dispose(); aerialProgram?.Dispose(); meteors?.Dispose(); sampler?.Dispose();
     }
 
+    sealed class Volume : IDisposable
+    {
+        internal readonly ID3D11Texture3D Texture;
+        internal readonly ID3D11ShaderResourceView View;
+        internal readonly ID3D11UnorderedAccessView Output;
+        internal Volume(ID3D11Device device, int size)
+        {
+            Texture = device.CreateTexture3D(new Texture3DDescription {
+                Width=(uint)size, Height=(uint)size, Depth=(uint)size, MipLevels=1, Format=Format.R16G16B16A16_Float,
+                BindFlags=BindFlags.ShaderResource | BindFlags.UnorderedAccess });
+            try { View=device.CreateShaderResourceView(Texture); Output=device.CreateUnorderedAccessView(Texture); }
+            catch { View?.Dispose(); Texture.Dispose(); throw; }
+        }
+        public void Dispose() { Output.Dispose(); View.Dispose(); Texture.Dispose(); }
+    }
     sealed class Lookup : IDisposable
     {
         internal readonly ID3D11Texture2D Texture;

@@ -8,14 +8,15 @@ namespace AEther.Vortice;
 internal sealed class FroxelRaster : IDisposable
 {
     internal readonly ShaderProgram Geometry, Surface;
+    readonly string marker;
     readonly ID3D11Device device;
     readonly ID3D11DeviceContext context;
     readonly ID3D11DepthStencilState depthState;
     readonly ID3D11RasterizerState rasterState;
     Target? color, depth;
-    internal FroxelRaster(ID3D11Device device, ID3D11DeviceContext context, string source, string file, string[]? extraBindings = null)
+    internal FroxelRaster(ID3D11Device device, ID3D11DeviceContext context, string source, string file, string[]? extraBindings = null, string marker = "Froxel raster")
     {
-        this.device=device; this.context=context;
+        this.device=device; this.context=context; this.marker=marker;
         try
         {
             Geometry=new(device,source,"FroxelGeometryVS",file,"vs_5_0");
@@ -51,9 +52,9 @@ internal sealed class FroxelRaster : IDisposable
             Geometry.Bind(context,parameters,buffers,textures,samplers);
             Surface.Bind(context,parameters,buffers,textures,samplers);
             context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            frame.Marker("Froxel raster",true);
+            frame.Marker(marker,true);
             if(instances>0) context.DrawInstanced(24,(uint)instances,0,0);
-            frame.Marker("Froxel raster",false);
+            frame.Marker(marker,false);
         }
         finally
         {

@@ -147,6 +147,7 @@ public partial class ShaderRenderingTests
         Draw("Atmosphere transmittance", "Atmosphere sky view");
         var effect = (AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var original = renderer.ReadPixels(false);
+        var originalExposure = renderer.Options.Exposure;
         Assert.That(original.Skip(4 * 1280 * 650).Where((_, i) => i % 4 != 3), Is.All.Zero, "Flat black ground");
         Draw(); Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "No time or audio dependence");
         PointSet(renderer, "Sun.Azimuth", .25f); Draw("Atmosphere sky view");
@@ -195,7 +196,7 @@ public partial class ShaderRenderingTests
         renderer.SelectScene("Atmosphere"); Draw("Atmosphere transmittance", "Atmosphere sky view");
         AssertSun2Settings();
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
-        renderer.SetGraphicsOptions(renderer.Options with { Exposure = 0 });
+        renderer.SetGraphicsOptions(renderer.Options with { Exposure = originalExposure });
         renderer.Resize(1280, 720); Draw("Atmosphere transmittance", "Atmosphere sky view");
         Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "Reset restores default sky");
         foreach (string channel in new[] { "x", "y", "z" }) PointSet(renderer, "Atmosphere.RayleighScattering." + channel, 0);

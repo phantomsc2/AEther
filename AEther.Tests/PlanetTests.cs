@@ -43,7 +43,7 @@ public partial class ShaderRenderingTests
             ("Atmosphere.RayleighScattering.z", .331f), ("Atmosphere.ScaleHeight", (float)(.5+Math.Log2(.55/.1868)/6)),
             ("Atmosphere.Density", (float)Math.Pow(.15,1/2.53951953)),
             ("Orbit.Azimuth", 0f), ("Orbit.Elevation", .5f), ("Orbit.Altitude", PlanetReferenceOrbit(.25)),
-            ("Sun.Azimuth", 0f), ("Sun.Altitude", 2f/3), ("Sun.Intensity", .5f),
+            ("Sun.Azimuth", 0f), ("Sun.Altitude", 2f/3), ("Sun.Intensity", .5f), ("Sun2.Azimuth", .5f), ("Sun2.Altitude", 110f/180), ("Sun2.Intensity", .25f),
             ("Phase.Anisotropy", .5f), ("View.Azimuth", .5f) }) PointSet(renderer, path, value);
     }
 
@@ -189,9 +189,9 @@ public partial class ShaderRenderingTests
         using var shaders=new SceneShaders("Planet");
         File.Copy(Path.Combine(ShaderDirectory,"Scenes","Atmosphere.hlsl"),Path.Combine(shaders.Path,"Scenes","Atmosphere.hlsl"));
         using var window=new HiddenWindow();
-        using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
+        using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene,timeProvider:new FroxelClock());
         var markers=new List<string>();
-        renderer.TransportPassMarker=(s,b)=>{if(b && s.StartsWith("Atmosphere ")) markers.Add(s);};
+        renderer.TransportPassMarker=(s,b)=>{if(b && s.StartsWith("Atmosphere ") && s!="Atmosphere aerial perspective") markers.Add(s);};
         void Draw(params string[] expected)
         {
             markers.Clear();renderer.Render(false);Assert.That(markers,Is.EqualTo(expected));
@@ -199,9 +199,10 @@ public partial class ShaderRenderingTests
         }
         Draw("Atmosphere transmittance","Atmosphere sky view");
         var original=renderer.ReadPixels(false);
+        var originalExposure=renderer.Options.Exposure;
         Draw();Assert.That(renderer.ReadPixels(false),Is.EqualTo(original));
         PointSet(renderer,"View.Azimuth",0);Draw();
-        Assert.That(RingReadScene(renderer).Where((_,i)=>i%4!=3),Is.All.Zero,"Looking away from the thinner atmosphere sees space");
+        Assert.That(RingReadScene(renderer).Where((_,i)=>i%4!=3).Any(v=>v>0),Is.True,"The close observer sees local scattering while looking away");
         PointSet(renderer,"View.Azimuth",.5f);Draw();
         foreach (string path in new[] { "Orbit.Azimuth","Orbit.Elevation","Orbit.Altitude","Phase.Anisotropy","Sun2.Intensity" })
         { PointSet(renderer,path,.7f);Draw("Atmosphere sky view"); }
@@ -221,7 +222,7 @@ public partial class ShaderRenderingTests
         renderer.SelectScene("Planet");Draw("Atmosphere transmittance","Atmosphere sky view");
         PointSet(renderer,"Atmosphere.Density",.25f);Draw("Atmosphere transmittance","Atmosphere sky view");
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
-        renderer.SetGraphicsOptions(renderer.Options with { Exposure=0 });renderer.Resize(1280,720);
+        renderer.SetGraphicsOptions(renderer.Options with { Exposure=originalExposure });renderer.Resize(1280,720);
         Draw("Atmosphere transmittance","Atmosphere sky view");Assert.That(renderer.ReadPixels(false),Is.EqualTo(original));
         PointSet(renderer,"Sun.Intensity",0);PointSet(renderer,"Sun2.Intensity",0);Draw("Atmosphere sky view");
         Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero,"No unlit emission");

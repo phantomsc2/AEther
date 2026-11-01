@@ -102,8 +102,9 @@ float3 AtmosphereSegmentScatter(float3 opticalDepth, float3 segmentTransmission)
 
 // Transport is independent of the scene's camera, projection, and opaque body.
 // origin is inside/on the numerical volume; distance ends at its limit or a surface.
-float3 AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps)
+float3 AtmosphereIntegrateTransport(float3 origin, float3 ray, float distance, uint steps, out float3 transmission)
 {
+    transmission=1;
     if (distance<=0) return 0;
     float h0 = max(0,length(origin)-AtmosphereRadius);
     float mu = dot(origin,ray)/(AtmosphereRadius+h0);
@@ -114,7 +115,7 @@ float3 AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps
     float4 coefficients = AtmosphereDraineCoefficients();
     float c = dot(ray,sun), c2 = dot(ray,sun2);
     float phase = AtmosphereDrainePhase(c,coefficients), phase2 = AtmosphereDrainePhase(c2,coefficients);
-    float3 transmission = 1, radiance = 0;
+    float3 radiance = 0;
     [loop] for (uint i=0; i<steps; i++)
     {
         float t = (i+.5)*step;
@@ -136,6 +137,12 @@ float3 AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps
         transmission *= segmentTransmission;
     }
     return max(0,radiance);
+}
+
+float3 AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps)
+{
+    float3 transmission;
+    return AtmosphereIntegrateTransport(origin,ray,distance,steps,transmission);
 }
 
 [numthreads(8,8,1)]

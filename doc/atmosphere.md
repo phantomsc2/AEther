@@ -7,10 +7,10 @@ the flat local horizon are black. There is no ground mesh or ground reflection.
 Two independently controlled white directional suns illuminate the atmosphere,
 without visible disks. Setting either sun's intensity to zero disables it.
 
-For an orbital observer and a solid spherical body, select the
+For an orbital observer, a black solid sphere, and an orbiting stream of black octahedra, select the
 separate [Planet scene](planet.md). Both scenes share finite-path transport and
 the Transmittance builder; their camera, physical scale, control mappings, and
-Sky-View mappings differ. Planet uses a large exponential gas envelope with finite truncation;
+Sky-View mappings differ. Planet additionally caches finite-path aerial perspective in a 32-cubed frustum volume for its meteor cutouts. Planet uses an exponential gas envelope with finite truncation;
 this scene retains its ground-level exponential profile and kilometre-scale controls.
 
 Each scene declares its own controls, defaults, and mappings from normalized
