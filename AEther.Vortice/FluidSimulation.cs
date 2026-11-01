@@ -24,6 +24,8 @@ internal sealed class FluidSimulation : IDisposable
         internal readonly ShaderParameters Values;
         readonly ShaderParameter periodic, viscosity;
         readonly ShaderParameter? vc1Enabled, vc1Strength, vc2Enabled, vc2Strength;
+        readonly ShaderParameter? warmStart;
+        internal bool WarmStart => warmStart != null && Values.GetBoolean(warmStart);
         internal bool Periodic => Values.GetBoolean(periodic);
         internal bool Viscous => Values.GetFloat(viscosity) > 0;
         internal float VC1Strength => Strength(vc1Enabled, vc1Strength);
@@ -51,6 +53,7 @@ internal sealed class FluidSimulation : IDisposable
             }
             vc1Enabled = Optional("VC1Enabled", true); vc1Strength = Optional("VC1Strength", false);
             vc2Enabled = Optional("VC2Enabled", true); vc2Strength = Optional("VC2Strength", false);
+            warmStart = Optional("WarmStart", true);
         }
     }
 
@@ -181,6 +184,10 @@ internal sealed class FluidSimulation : IDisposable
     internal int LastSteps { get; private set; }
     internal int LastMaterialSteps { get; private set; }
     internal int LastDraws { get; private set; }
+    // Retained internally for reproducible profiling against the former solver.
+    internal bool ReferencePressureSolver { get; set; }
+    bool pressureValid;
+    bool pressurePeriodic;
 
     T Own<T>(T resource) where T : IDisposable { resources.Add(resource); return resource; }
     Surface Create(int w, int h, Format format) => Own(new Surface(device, w, h, format));
@@ -236,6 +243,7 @@ internal sealed class FluidSimulation : IDisposable
 
     public void Clear()
     {
+        pressureValid = false;
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
         foreach (var surface in resources.OfType<Surface>()) context.ClearRenderTargetView(surface.Target, new(0, 0, 0, 0));
@@ -359,8 +367,15 @@ internal sealed class FluidSimulation : IDisposable
         Grid(velocity);
         Draw(Pass.Divergence, levels[0].Rhs, v: velocity);
         context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
-        context.ClearRenderTargetView(levels[0].Pressure.Target, new(0, 0, 0, 0));
-        for (int cycle = 0; cycle < 3; cycle++) VCycle(0);
+        // Only the finest pressure is a temporal initial guess. Coarse levels
+        // solve residual corrections and must still start at zero each cycle.
+        bool cold = ReferencePressureSolver || !programs.Configuration.WarmStart || unforced || !pressureValid || pressurePeriodic != PeriodicBoundary;
+        if (cold)
+            context.ClearRenderTargetView(levels[0].Pressure.Target, new(0, 0, 0, 0));
+        // Keep the original budget when there is no usable temporal guess.
+        for (int cycle = 0; cycle < (cold ? 3 : 2); cycle++) VCycle(0);
+        pressureValid = true;
+        pressurePeriodic = PeriodicBoundary;
         Grid(velocity);
         Draw(unforced ? Pass.ProjectUnforced : Pass.Project, nextVelocity, v: velocity, pressure: levels[0].Pressure);
         (velocity, nextVelocity) = (nextVelocity, velocity);
@@ -483,6 +498,23 @@ internal sealed class FluidSimulation : IDisposable
     }
 
     internal float[] ReadVelocity() => ReadFloatSurface(velocity);
+    // Diagnostic only: no reductions/readbacks are added to normal rendering.
+    internal double ReadDivergenceRms()
+    {
+        Grid(velocity);
+        Draw(Pass.Divergence, levels[0].Rhs, v: velocity);
+        var values = ReadFloatSurface(levels[0].Rhs);
+        if (values.Any(v => !float.IsFinite(v))) throw new InvalidOperationException("Nonfinite divergence.");
+        return Math.Sqrt(values.Average(v => (double)v * v));
+    }
+    internal double ReadPressureResidualRms()
+    {
+        Grid(velocity);
+        Draw(Pass.Residual, levels[0].Residual, pressure: levels[0].Pressure, rhs: levels[0].Rhs);
+        var values = ReadFloatSurface(levels[0].Residual);
+        if (values.Any(v => !float.IsFinite(v))) throw new InvalidOperationException("Nonfinite pressure residual.");
+        return Math.Sqrt(values.Average(v => (double)v * v));
+    }
     internal float[] ReadMaterial(int attachment) => ReadFloatSurface(material[attachment]);
     internal void WriteVelocity(float[] values) => WriteFloatSurface(velocity, values);
     internal void WriteMaterial(int attachment, float[] values) => WriteFloatSurface(material[attachment], values);

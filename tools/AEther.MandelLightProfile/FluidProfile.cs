@@ -33,11 +33,16 @@ internal static partial class Program
         {
             if (Option("--case", "all") is var selected && selected != "all" && selected != item.Name) continue;
             using var window = new Form { ClientSize = new(width, height), ShowInTaskbar = false };
+            if (args.Contains("--show")) { window.Show(); Application.DoEvents(); }
             var clock = new FluidProfileClock(rate);
             using var renderer = new Renderer(window.Handle, width, height, 97, 1000, shaderDirectory: tree,
                 timeProvider: clock);
             renderer.SelectScene("MandelFluid");
-            ((FluidEffect)renderer.ActiveShader!.Effects[0]).Options = new FluidOptions(item.Low ? 128 : 512, item.Low ? 128 : 512);
+            ((FluidEffect)renderer.ActiveShader!.Effects[0]).ReferencePressureSolver = args.Contains("--reference-pressure");
+            var defaults = item.Low ? new FluidOptions(128, 128) : new FluidOptions();
+            int gridWidth = int.Parse(Option("--grid-width", defaults.Width.ToString()));
+            int gridHeight = int.Parse(Option("--grid-height", defaults.Height.ToString()));
+            ((FluidEffect)renderer.ActiveShader!.Effects[0]).Options = new FluidOptions(gridWidth, gridHeight);
             Set(renderer, "Fluid.PeriodicBoundary", item.Periodic);
             Set(renderer, "Fluid.Viscosity", item.Viscosity);
             Set(renderer, "Fluid.VC1Enabled", args.Contains("--vc1"));
@@ -92,17 +97,40 @@ internal static partial class Program
             }
             var startup = Tick();
             for (int warm = 0; warm < 24; warm++) Tick();
-            var samples = Enumerable.Range(0, count).Select(_ => Tick()).ToArray();
+            int captureEvery = int.Parse(Option("--capture-every", "0"));
+            var divergence = new List<object>();
+            var samples = Enumerable.Range(0, count).Select(i =>
+            {
+                var sample = Tick();
+                if (captureEvery > 0 && (i + 1) % captureEvery == 0)
+                {
+                    var capture = renderer.ReadPixels(false);
+                    string name = $"{item.Name}-{i + 1:D5}";
+                    File.WriteAllBytes(Path.Combine(output, name + ".rgba"), capture);
+                    Save(capture, width, height, Path.Combine(output, name + ".png"));
+                    var fluid = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
+                    double residual = fluid.ReadPressureResidualRms();
+                    divergence.Add(new { Frame = i + 1, PressureResidualRms = residual, Rms = fluid.ReadDivergenceRms() });
+                }
+                return sample;
+            }).ToArray();
             var summaries = samples.SelectMany(f => f.Keys).Distinct().ToDictionary(k => k,
                 k => new { Median = Quantile(samples.Select(f => f.GetValueOrDefault(k)), .5), P95 = Quantile(samples.Select(f => f.GetValueOrDefault(k)), .95) });
-            Console.WriteLine($"{item.Name}, {renderer.AdapterDescription}, {width}x{height}, {rate} Hz, {renderer.FluidWork}: " +
+            var colorOutput = Field<ColorOutput>(renderer, "output");
+            bool hdr = Field<bool>(colorOutput, "hdrDisplay");
+            Console.WriteLine($"{item.Name}, {renderer.AdapterDescription}, {renderer.OutputDescription}, HDR={hdr}, {width}x{height}, {rate} Hz, {renderer.FluidWork}: " +
                 string.Join(", ", summaries.Select(p => $"{p.Key}={p.Value.Median:F3}/{p.Value.P95:F3}")));
             var pixels = renderer.ReadPixels(false);
             File.WriteAllBytes(Path.Combine(output, item.Name + ".rgba"), pixels);
             Save(pixels, width, height, Path.Combine(output, item.Name + ".png"));
+            var simulation = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
+            void SaveFloats(string name, float[] values) => File.WriteAllBytes(Path.Combine(output, item.Name + name),
+                System.Runtime.InteropServices.MemoryMarshal.AsBytes(values.AsSpan()).ToArray());
+            SaveFloats("-velocity.f32", simulation.ReadVelocity());
+            for (int i = 0; i < simulation.MaterialCount; i++) SaveFloats($"-material{i}.f32", simulation.ReadMaterial(i));
             var projection = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.CheckProjection(((FluidEffect)renderer.ActiveShader!.Effects[0]).Programs);
-            results.Add(new { item.Name, Adapter = renderer.AdapterDescription, Width = width, Height = height, Rate = rate,
-                Frames = count, Startup = startup, Timing = summaries, Samples = samples,
+            results.Add(new { item.Name, Adapter = renderer.AdapterDescription, Output = renderer.OutputDescription, Hdr = hdr, GridWidth = gridWidth, GridHeight = gridHeight, Width = width, Height = height, Rate = rate,
+                ReferencePressure = args.Contains("--reference-pressure"), Frames = count, Startup = startup, Timing = summaries, Samples = samples, Divergence = divergence,
                 ProjectionBefore = projection.Before, ProjectionAfter = projection.After, projection.CurlError });
             File.WriteAllText(Path.Combine(output, "profile.json"), JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true }));
         }

@@ -5,7 +5,10 @@
 cbuffer FluidConstants { float2 GridSize, CellSize; float StepSeconds, SourceAge, VC1Strength, VC2Strength; float CatchupSeconds; float3 UnusedForcing; };
 Texture2D<float2> Velocity;
 Texture2D<float4> Advected;
-int2 WrapCell(int2 p) { int2 size = int2(GridSize); return (p % size + size) % size; }
+// FluidOptions requires power-of-two dimensions. Masking implements positive
+// modulo even for negative neighbor coordinates, without signed integer divides
+// in every periodic pressure/velocity stencil read.
+int2 WrapCell(int2 p) { return p & (int2(GridSize) - 1); }
 Texture2D<float> Pressure;
 Texture2D<float> Rhs;
 Texture2D<float> Correction;

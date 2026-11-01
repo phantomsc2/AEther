@@ -8,6 +8,88 @@ namespace AEther.Tests;
 
 public partial class ShaderRenderingTests
 {
+    [Test, Category("GPU")]
+    public void WarmPressureUsesTwoCyclesAndResetsOnBoundaryChangesAndClear()
+    {
+        using var shaders = new SceneShaders("MandelFluid");
+        using var window = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, 8, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        var effect = (FluidEffect)renderer.ActiveShader!.Effects[0];
+        effect.Options = new FluidOptions(128, 64);
+        clock.Advance(); renderer.Render(false);
+        var fluid = effect.Simulation!;
+        clock.Advance(); renderer.Render(false);
+        int warm = fluid.LastDraws;
+        var periodic = effect.Parameters!.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "PeriodicBoundary");
+        effect.Parameters.SetBoolean(periodic, false);
+        clock.Advance(); renderer.Render(false);
+        int cold = fluid.LastDraws;
+        Assert.That(cold, Is.GreaterThan(warm));
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(warm));
+        fluid.Clear();
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.ReadVelocity().All(float.IsFinite), Is.True);
+        effect.Parameters.SetBoolean(periodic, true);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(cold));
+        var warmStart = effect.Parameters.Items.Single(p => p.Name == "Fluid").Children.Single(p => p.Name == "WarmStart");
+        Assert.That(effect.Parameters.GetBoolean(warmStart), Is.True);
+        effect.Parameters.SetBoolean(warmStart, false);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(cold));
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(cold), "Disabling warm starts keeps three cold cycles on every step.");
+        effect.Parameters.SetBoolean(warmStart, true);
+        clock.Advance(); renderer.Render(false);
+        Assert.That(effect.Simulation, Is.SameAs(fluid));
+        Assert.That(fluid.LastDraws, Is.EqualTo(warm));
+        effect.ReferencePressureSolver = true;
+        clock.Advance(); renderer.Render(false);
+        Assert.That(fluid.LastDraws, Is.EqualTo(cold));
+    }
+    [TestCase(128, 64), TestCase(1024, 512), Category("GPU")]
+    public void PeriodicMaskMatchesSignedModuloThroughFluidTransport(int width, int height)
+    {
+        using var shaders = new SceneShaders("MandelFluid");
+        using var referenceShaders = new SceneShaders("MandelFluid");
+        string file = Path.Combine(referenceShaders.Path, "Common", "FluidSimulation.hlsl");
+        string source = File.ReadAllText(file);
+        string reference = source.Replace("return p & (int2(GridSize) - 1);",
+            "int2 size = int2(GridSize); return (p % size + size) % size;");
+        Assert.That(reference, Is.Not.EqualTo(source));
+        File.WriteAllText(file, reference);
+        using var window = new HiddenWindow();
+        using var referenceWindow = new HiddenWindow();
+        var clock = new RenderClock();
+        using var renderer = new Renderer(window.Handle, 1280, 720, 8, 60,
+            shaderDirectory: shaders.Path, timeProvider: clock, initialScene: shaders.Scene);
+        using var baseline = new Renderer(referenceWindow.Handle, 1280, 720, 8, 60,
+            shaderDirectory: referenceShaders.Path, timeProvider: clock, initialScene: referenceShaders.Scene);
+        foreach (var target in new[] { renderer, baseline })
+            ((FluidEffect)target.ActiveShader!.Effects[0]).Options = new FluidOptions(width, height);
+        for (int frame = 0; frame < 60; frame++)
+        {
+            var values = new double[8 * 8];
+            for (int i = 0; i < values.Length; i += 4)
+            {
+                values[i] = .1 + .1 * Math.Sin(i + frame * .1);
+                values[i + 1] = frame % 12 < 3 ? .12 : 0;
+                values[i + 2] = .08;
+            }
+            foreach (var target in new[] { renderer, baseline })
+                target.PostAudio(new SampleEvent<double>(values, 32, DateTime.UnixEpoch) { AnalysisRow = frame }, 2);
+            clock.Advance(); renderer.Render(false); baseline.Render(false);
+        }
+        var actual = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!;
+        var expected = ((FluidEffect)baseline.ActiveShader!.Effects[0]).Simulation!;
+        Assert.That(actual.ReadVelocity(), Is.EqualTo(expected.ReadVelocity()));
+        for (int i = 0; i < actual.MaterialCount; i++)
+            Assert.That(actual.ReadMaterial(i), Is.EqualTo(expected.ReadMaterial(i)));
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(baseline.ReadPixels(false)));
+    }
 
     [TestCase(false, false), TestCase(true, false), TestCase(false, true), TestCase(true, true), Category("GPU")]
     public void ConfinementActsOnVorticesAndLeavesZeroFlowUnchanged(bool vc1, bool vc2)

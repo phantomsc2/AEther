@@ -15,7 +15,8 @@ struct FluidParameters
     float VC1Strength;
     bool VC2Enabled;
     float VC2Strength;
+    bool WarmStart;          // Reuse pressure with two cycles; off uses three cold cycles.
 };
 
 #define RING_EMITTER_DEFAULTS { 1, .103 }
-#define RING_FLUID_DEFAULTS { 1, .349, 0, 0, true, false, .5, false, .507 }
+#define RING_FLUID_DEFAULTS { 1, .349, 0, 0, true, false, .5, false, .507, true }

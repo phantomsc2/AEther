@@ -188,7 +188,7 @@ public sealed class ShaderPanel : UserControl
         }
         if (parameter.IsBoolean)
         {
-            var checkbox = new CheckBox { Content = parameter.Name, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
+            var checkbox = new CheckBox { Content = parameter.Name == "WarmStart" ? "Warm Start" : parameter.Name, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
             checkbox.Checked += (_, _) => values.SetBoolean(parameter, true);
             checkbox.Unchecked += (_, _) => values.SetBoolean(parameter, false);
             ParameterMenu.Attach(checkbox, () =>

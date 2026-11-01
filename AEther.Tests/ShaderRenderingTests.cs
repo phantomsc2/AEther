@@ -354,7 +354,7 @@ public partial class ShaderRenderingTests
         parameters.SetBoolean(parameters.Items.Single(p => p.Name == "Fluid").Children
             .Single(p => p.Name == "PeriodicBoundary"), periodic);
         clock.Advance(); renderer.Render(false);
-        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, Is.EqualTo(512));
+        Assert.That(((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.Width, Is.EqualTo(new FluidOptions().Width));
         var check = ((FluidEffect)renderer.ActiveShader!.Effects[0]).Simulation!.CheckProjection(((FluidEffect)renderer.ActiveShader!.Effects[0]).Programs);
         TestContext.Progress.WriteLine($"V4 periodic={periodic}: divergence {check.Before:G6} -> {check.After:G6}, curl error {check.CurlError:G6}");
         Assert.That(check.After, Is.LessThan(.01 * check.Before));

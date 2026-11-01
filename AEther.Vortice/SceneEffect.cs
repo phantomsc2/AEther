@@ -110,6 +110,7 @@ public sealed class FluidEffect : SceneEffect
     public override object SizeOptions => Options;
     internal FluidSimulation? Simulation { get; private set; }
     internal FluidSimulation.Programs Programs { get; }
+    internal bool ReferencePressureSolver { get; set; }
 
     internal FluidEffect(string name, ID3D11Device device, ID3D11DeviceContext context, string source, string file,
         FluidOptions options, params Format[] materials) : base(name, device, context, source, file)
@@ -149,6 +150,7 @@ public sealed class FluidEffect : SceneEffect
             frame.ReportError(error.Message);
         }
         var fluid = Simulation!;
+        fluid.ReferencePressureSolver = ReferencePressureSolver;
         fluid.PassMarker = frame.Marker; fluid.DrawMarker = frame.DrawMarker;
         if (frame.Dt > .5) fluid.Clear();
         frame.Marker("Fluid", true);
