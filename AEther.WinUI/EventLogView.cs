@@ -4,7 +4,7 @@ using AEther.Logging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Tabular;
+
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Dispatching;
@@ -20,14 +20,12 @@ public sealed class EventLogView : UserControl
     readonly Button indicator = new() { HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
         Padding = new Thickness(10, 4, 10, 4), MinHeight = 28 };
     readonly StackPanel summary = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
-    readonly TableView table = (TableView)XamlReader.Load("""
-        <tabular:TableView xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    readonly ListView table = (ListView)XamlReader.Load("""
+        <ListView xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                           xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                          xmlns:tabular="using:Microsoft.UI.Xaml.Controls.Tabular"
                           Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                          RowBackground="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                          Density="Compact" CanUserSortColumns="False" IsReadOnly="True">
-            <tabular:TableView.Resources>
+                          SelectionMode="None" HorizontalContentAlignment="Stretch">
+            <ListView.Resources>
                 <Style x:Key="DebugIconStyle" TargetType="FontIcon">
                     <Setter Property="Glyph" Value="&#xEBE8;" />
                     <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -48,29 +46,48 @@ public sealed class EventLogView : UserControl
                     <Setter Property="Glyph" Value="&#xE711;" />
                     <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
                 </Style>
-            </tabular:TableView.Resources>
-            <tabular:TableView.Columns>
-                <tabular:TableViewTextColumn Header="Time" Binding="{Binding Time}" Width="Auto" />
-                <tabular:TableViewTemplateColumn Header="Severity" HeaderToolTip="Severity" Width="Auto"
-                                                CellToolTipBinding="{Binding Severity}">
-                    <tabular:TableViewTemplateColumn.HeaderTemplate>
-                        <DataTemplate>
-                            <FontIcon Glyph="&#xE946;" FontSize="14" AutomationProperties.AccessibilityView="Raw" />
-                        </DataTemplate>
-                    </tabular:TableViewTemplateColumn.HeaderTemplate>
-                    <tabular:TableViewTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <FontIcon Style="{Binding SeverityIconStyle}" FontSize="14"
-                                      AutomationProperties.Name="{Binding Severity}" />
-                        </DataTemplate>
-                    </tabular:TableViewTemplateColumn.CellTemplate>
-                </tabular:TableViewTemplateColumn>
-                <tabular:TableViewTextColumn Header="Source" Binding="{Binding Source}" Width="Auto" MaxWidth="240"
-                                            CellToolTipBinding="{Binding Source}" />
-                <tabular:TableViewTextColumn Header="Message" Binding="{Binding Message}" Width="*"
-                                            CellToolTipBinding="{Binding Message}" />
-            </tabular:TableView.Columns>
-        </tabular:TableView>
+            </ListView.Resources>
+            <ListView.Header>
+                <Grid ColumnSpacing="12" Padding="16,4" HorizontalAlignment="Stretch">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="100" />
+                        <ColumnDefinition Width="24" />
+                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Time" FontWeight="SemiBold" />
+                    <FontIcon Grid.Column="1" Glyph="&#xE946;" FontSize="14" AutomationProperties.Name="Severity" />
+                    <TextBlock Grid.Column="2" Text="Source" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="3" Text="Message" FontWeight="SemiBold" />
+                </Grid>
+            </ListView.Header>
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="MinHeight" Value="24" />
+                    <Setter Property="Padding" Value="12,0" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid ColumnSpacing="12" Padding="4,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Time}" />
+                        <FontIcon Grid.Column="1" Style="{Binding SeverityIconStyle}" FontSize="14"
+                                  AutomationProperties.Name="{Binding Severity}" ToolTipService.ToolTip="{Binding Severity}" />
+                        <TextBlock Grid.Column="2" Text="{Binding Source}" TextTrimming="CharacterEllipsis"
+                                   ToolTipService.ToolTip="{Binding Source}" />
+                        <TextBlock Grid.Column="3" Text="{Binding Message}" TextTrimming="CharacterEllipsis"
+                                   ToolTipService.ToolTip="{Binding Message}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
         """);
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     ScrollViewer? scroller;
@@ -78,7 +95,7 @@ public sealed class EventLogView : UserControl
     long version = -1;
     bool follow = true;
     internal bool IsExpanded => panel.Visibility == Visibility.Visible;
-    internal TableView Events => table;
+    internal ListView Events => table;
     internal StackPanel StatusSummary => summary;
 
     public EventLogView(EventLogStore? store = null)
@@ -98,7 +115,7 @@ public sealed class EventLogView : UserControl
         Content = layout;
         AutomationProperties.SetName(table, "Application event log");
         table.ItemsSource = rows;
-        // The native table builds its scrollers after Loaded, during its first layout.
+        // The list builds its scroll viewer during its first layout.
         table.LayoutUpdated += AttachScroller;
         indicator.Click += (_, _) => Toggle();
         timer.Tick += (_, _) => Refresh();
@@ -192,8 +209,8 @@ public sealed class EventLogView : UserControl
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
         {
             var child = VisualTreeHelper.GetChild(parent, i);
-            // TableView has separate header and body scrollers; only the body follows events.
-            if (child is ScrollViewer { Name: "PART_BodyScroller" } scroll) return scroll;
+            // Locate the scroll viewer created by the list template.
+            if (child is ScrollViewer scroll) return scroll;
             if (FindScroller(child) is { } nested) return nested;
         }
         return null;
