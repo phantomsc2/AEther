@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
-using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -33,7 +32,7 @@ internal sealed class TimingChart : UserControl
     PipelineProfile? profile;
     long origin, lost;
     bool dirty = true;
-    double latestTime;
+    double latestTime, lastSummaryTime;
     double[] ticks = [];
     internal int PointCount => traces[0].SampleCount;
     internal int PlottedPointCount => traces.Sum(t => t.SampleCount);
@@ -52,47 +51,73 @@ internal sealed class TimingChart : UserControl
         metric = definitions[0].Name == "Analysis" ? "chart.processing_update_ms" : "chart.scheduling_update_ms";
         var layout = new Grid();
         layout.ColumnDefinitions.Add(new() { Width = new GridLength(60) });
+        layout.ColumnDefinitions.Add(new() { Width = new GridLength(24) });
+        layout.ColumnDefinitions.Add(new() { Width = new GridLength(2, GridUnitType.Star) });
         layout.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        layout.ColumnDefinitions.Add(new() { Width = new GridLength(100) });
         layout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
 
         layout.Children.Add(yLabels);
+        var unit = new TextBlock { Text = "ms", FontSize = 11, Opacity = .7,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(unit, 1);
+        layout.Children.Add(unit);
         plot.Children.Add(secondBars);
         plot.Children.Add(image);
         cursorLayer.Children.Add(cursor);
         plot.Children.Add(cursorLayer);
-        Grid.SetColumn(plot, 1);
+        Grid.SetColumn(plot, 2);
         layout.Children.Add(plot);
-        var legend = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 6, 0) };
-        var tokens = new TokenView { SelectionMode = ListViewSelectionMode.Multiple, IsWrapped = true,
-            CanRemoveTokens = false, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var legend = new Grid { RowSpacing = 4, ColumnSpacing = 6,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0) };
+        legend.ColumnDefinitions.Add(new() { Width = new GridLength(88) });
+        for (int column = 1; column <= 3; column++)
+            legend.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        legend.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        string[] headings = ["Mean", "Std", "Max"];
+        for (int column = 1; column <= 3; column++)
+            AddCell(new TextBlock { Text = headings[column - 1], FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Right }, 0, column);
+        ToolTipService.SetToolTip(legend, "Milliseconds received since the previous summary update (about 1 second). Std is population standard deviation.");
         for (int i = 0; i < definitions.Length; i++)
         {
+            int index = i;
             var d = definitions[i];
+            legend.RowDefinitions.Add(new() { Height = GridLength.Auto });
             var label = new TextBlock { Text = d.Name, FontSize = 11 };
-            var token = new TokenItem { Content = label, Tag = i, Width = 88, IsRemoveable = false };
+            var token = new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton
+            {
+                Content = label, IsChecked = true, Width = 88, MinWidth = 0, MinHeight = 0,
+                Padding = new Thickness(6, 3, 6, 3), CornerRadius = new CornerRadius(14),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+            };
             var fill = new SolidColorBrush(d.Color);
-            token.Resources["TokenItemBackgroundSelected"] = fill;
-            token.Resources["TokenItemBackgroundPointerOverSelected"] = fill;
-            token.Resources["TokenItemBackgroundPressedSelected"] = fill;
-            token.Resources["TokenItemBorderBrushSelected"] = fill;
-            token.Resources["TokenItemBorderBrushPointerOverSelected"] = fill;
-            token.Resources["TokenItemBorderBrushPressedSelected"] = fill;
+            foreach (string state in new[] { "Checked", "CheckedPointerOver", "CheckedPressed" })
+            {
+                token.Resources["ToggleButtonBackground" + state] = fill;
+                token.Resources["ToggleButtonBorderBrush" + state] = fill;
+                token.Resources["ToggleButtonForeground" + state] = new SolidColorBrush(Microsoft.UI.Colors.Black);
+            }
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(token, d.Name);
             ToolTipService.SetToolTip(token, d.Description);
-            tokens.Items.Add(token);
-            tokens.SelectedItems.Add(token);
+            token.Checked += (_, _) => SetVisible(index, true);
+            token.Unchecked += (_, _) => SetVisible(index, false);
+            AddCell(token, i + 1, 0);
+            AddCell(traces[i].MeanText, i + 1, 1);
+            AddCell(traces[i].StdText, i + 1, 2);
+            AddCell(traces[i].MaxText, i + 1, 3);
         }
-        tokens.SelectionChanged += (_, e) =>
-        {
-            foreach (TokenItem token in e.RemovedItems) SetVisible((int)token.Tag, false);
-            foreach (TokenItem token in e.AddedItems) SetVisible((int)token.Tag, true);
-        };
-        legend.Children.Add(tokens);
-        Grid.SetColumn(legend, 2);
+        Grid.SetColumn(legend, 3);
         layout.Children.Add(legend);
         Content = layout;
         plot.SizeChanged += (_, _) => UpdateLabels();
+
+        void AddCell(FrameworkElement cell, int row, int column)
+        {
+            Grid.SetRow(cell, row);
+            Grid.SetColumn(cell, column);
+            cell.VerticalAlignment = VerticalAlignment.Center;
+            legend.Children.Add(cell);
+        }
     }
 
     // Toggles gate future writes; existing marks remain.
@@ -105,6 +130,7 @@ internal sealed class TimingChart : UserControl
         origin = timestamp;
         lost = 0;
         latestTime = 0;
+        lastSummaryTime = 0;
         LowerLimit = UpperLimit = null;
         ticks = [];
         foreach (var trace in traces)
@@ -113,6 +139,8 @@ internal sealed class TimingChart : UserControl
             trace.Cursor = 0;
             trace.SampleCount = 0;
             trace.Incoming.Clear();
+            trace.Summary.Reset();
+            trace.ShowSummary();
         }
         dirty = true;
         UpdateLabels();
@@ -129,14 +157,25 @@ internal sealed class TimingChart : UserControl
         {
             if (trace.History != null) lost += trace.History.ReadSince(ref trace.Cursor, trace.Incoming);
             else trace.Incoming.Clear();
-            if (!trace.Visible) { trace.Incoming.Clear(); continue; }
             foreach (var sample in trace.Incoming)
             {
+                trace.Summary.Add(sample.Milliseconds);
+                if (!trace.Visible) continue;
                 if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
                 double value = Math.Log10(sample.Milliseconds);
                 min = Math.Min(min, value); max = Math.Max(max, value);
                 trace.SampleCount++;
             }
+            if (!trace.Visible) trace.Incoming.Clear();
+        }
+        if (now - lastSummaryTime >= 1)
+        {
+            foreach (var trace in traces)
+            {
+                trace.ShowSummary();
+                trace.Summary.Reset();
+            }
+            lastSummaryTime = now;
         }
         double previousTime = latestTime;
         latestTime = now;
@@ -151,7 +190,8 @@ internal sealed class TimingChart : UserControl
             if (LowerLimit != lower || UpperLimit != upper)
             {
                 LowerLimit = lower; UpperLimit = upper;
-                ticks = TimingScale.Ticks(lower, upper);
+                ticks = TimingScale.Ticks(lower, upper)
+                    .Where(tick => Math.Abs(tick - Math.Round(tick)) < 1e-12).ToArray();
                 dirty = true;
                 UpdateLabels();
             }
@@ -217,14 +257,14 @@ internal sealed class TimingChart : UserControl
                 yLabels.Children.Add(label);
             }
         }
-        for (int i = 0; i <= HistorySeconds; i++)
+        for (int i = 0; i <= HistorySeconds * 2; i++)
         {
             var bar = new Microsoft.UI.Xaml.Shapes.Rectangle
             {
                 Width = 1 / scale, Height = height,
                 Fill = new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)),
             };
-            Canvas.SetLeft(bar, Math.Floor(Math.Max(0, Math.Ceiling(width * scale) - 1) * i / HistorySeconds) / scale);
+            Canvas.SetLeft(bar, Math.Floor(Math.Max(0, Math.Ceiling(width * scale) - 1) * i / (HistorySeconds * 2)) / scale);
             secondBars.Children.Add(bar);
         }
     }
@@ -276,5 +316,23 @@ internal sealed class TimingChart : UserControl
         internal TimingHistory? History;
         internal long Cursor;
         internal bool Visible = true;
+        internal TimingSummary Summary;
+        internal TextBlock MeanText { get; } = SummaryText();
+        internal TextBlock StdText { get; } = SummaryText();
+        internal TextBlock MaxText { get; } = SummaryText();
+
+        internal void ShowSummary()
+        {
+            MeanText.Text = Format(Summary.Mean);
+            StdText.Text = Format(Summary.StandardDeviation);
+            MaxText.Text = Format(Summary.Max);
+        }
+
+        string Format(double value) => Summary.Count == 0 ? "—" : value.ToString("G3", CultureInfo.CurrentCulture);
+
+        static TextBlock SummaryText() => new()
+        {
+            Text = "—", FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right,
+        };
     }
 }
