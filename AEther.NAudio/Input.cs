@@ -15,12 +15,10 @@ namespace AEther.NAudio
         /// DataAvailable remains the common audio-only callback; subscribe to one or the other
         /// when feeding an analyzer to avoid processing packets twice.
         /// </summary>
-        public event CaptureDataAvailableHandler? PacketAvailable;
         public event TimedSampleDataHandler? TimedDataAvailable;
 
         protected readonly IWaveIn? Device;
         protected readonly WasapiRecorder? WasapiDevice;
-        WaveFormat WaveFormat => WasapiDevice?.WaveFormat ?? Device!.WaveFormat;
 
         public Input(IWaveIn device)
         {
@@ -69,7 +67,6 @@ namespace AEther.NAudio
             TimedDataAvailable?.Invoke(this, buffer, new(
                 valid ? AudioClock.ConvertTimestamp(qpcPosition, 10_000_000) : null,
                 valid ? devicePosition : null, valid ? AudioTimestampQuality.Device : AudioTimestampQuality.Estimated, packetFlags));
-            PacketAvailable?.Invoke(buffer, flags, devicePosition, qpcPosition);
             DataAvailable?.Invoke(this, buffer);
         }
         private void Device_RecordingStopped(object? sender, StoppedEventArgs e)
@@ -82,27 +79,6 @@ namespace AEther.NAudio
             var data = evt.Buffer.AsSpan(0, evt.BytesRecorded);
             TimedDataAvailable?.Invoke(this, data, new(Quality: AudioTimestampQuality.Estimated));
             DataAvailable?.Invoke(this, data);
-        }
-
-        public void Playback()
-        {
-            var wo = new WaveOut();
-            var bwp = new BufferedWaveProvider(WaveFormat)
-            {
-                DiscardOnBufferOverflow = true,
-            };
-            DataAvailable += (sender, data) =>
-            {
-                bwp.AddSamples(data);
-            };
-            Stopped += (sender, error) =>
-            {
-                wo.Stop();
-                wo.Dispose();
-            };
-
-            wo.Init(bwp);
-            wo.Play();
         }
 
         public static SampleFormat ToSampleFormat(WaveFormat format)

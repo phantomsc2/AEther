@@ -145,12 +145,6 @@ public sealed class SwiftProcessor : ISpectrumProcessor
             destination.Span[k] = SpectralMath.Sanitize(2 * GetOutput(k).Magnitude);
     }
 
-    public void Output(Memory<double> destination)
-    {
-        OutputLinear(destination);
-        for (var k = 0; k < bands.Length; ++k) destination.Span[k] = Math.Log10(destination.Span[k]);
-    }
-
     public void OutputComplex(Memory<Complex> destination)
     {
         if (destination.Length < bands.Length) throw new ArgumentException("Spectrum destination is too short.", nameof(destination));

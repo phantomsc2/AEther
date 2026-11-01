@@ -25,7 +25,7 @@ namespace AEther.Tests
                 for (var i = 0; i < batch; ++i)
                     input[i] = .5 * Math.Sin(2 * Math.PI * frequencies[bin] * (offset + i) / rate);
                 processor.Process(input);
-                processor.Output(spectrum);
+                SpectrumTestOutput.Log(processor, spectrum);
                 splitter.Process(spectrum, output);
                 if (offset < rate) continue;
                 minimum = Math.Min(minimum, output[4 * bin + 3]);

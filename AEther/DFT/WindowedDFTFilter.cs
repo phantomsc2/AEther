@@ -10,10 +10,6 @@ namespace AEther
 
         readonly Complex[] States;
         readonly Complex[] Coefficients;
-        readonly double Frequency;
-        readonly double DFTFrequency;
-        readonly double Q;
-        readonly int M;
         readonly double[] Window;
         readonly RingBuffer<double> Buffer;
         int nonzero;
@@ -22,17 +18,16 @@ namespace AEther
         {
 
             Window = window;
-            Frequency = frequency;
-            DFTFrequency = Frequency / sampleRate;
-            Q = 1.0 / (Math.Pow(2, 1.0 / frequencyResolution) - 1);
-            M = (int)Math.Round(Q);
+            var dftFrequency = frequency / sampleRate;
+            var q = 1.0 / (Math.Pow(2, 1.0 / frequencyResolution) - 1);
+            var m = (int)Math.Round(q);
             States = new Complex[Window.Length];
-            var length = (int)Math.Round(M / DFTFrequency);
+            var length = (int)Math.Round(m / dftFrequency);
             Buffer = new(length);
             Coefficients = new Complex[Window.Length];
             for (int j = 0; j < Window.Length; ++j)
             {
-                var bin = M - (Window.Length / 2) + j;
+                var bin = m - (Window.Length / 2) + j;
                 Coefficients[j] = Complex.Exp(2 * Complex.ImaginaryOne * Math.PI * bin / Length);
             }
 

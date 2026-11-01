@@ -1,10 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk" ToolsVersion="Current">
+<Project Sdk="Microsoft.NET.Sdk" ToolsVersion="Current">
   <PropertyGroup>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
     <Nullable>enable</Nullable>
-    <FileUpgradeFlags>40</FileUpgradeFlags>
-    <UpgradeBackupLocation>C:\Users\Ryzen\Google Drive\Projekte\C#\AEther\Backup\AEther.NAudio\</UpgradeBackupLocation>
-    <OldToolsVersion>2.0</OldToolsVersion>
 	<EnablePreviewFeatures>True</EnablePreviewFeatures>
 	<LangVersion>preview</LangVersion>
   </PropertyGroup>

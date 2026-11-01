@@ -39,13 +39,7 @@ namespace AEther
             var cosines = GetWindowCosines(windowFunction);
             var window = CreateWindow(cosines);
 
-            if (cosines.Length == 1)
-            {
-                Filters = domain
-                    .Select(f => new DFTFilter(f, domain.Resolution, sampleRate))
-                    .ToArray();
-            }
-            else if (useSIMD && Vector.IsHardwareAccelerated)
+            if (cosines.Length > 1 && useSIMD && Vector.IsHardwareAccelerated)
             {
                 Filters = domain
                     .Select(f => new WindowedDFTFilterSIMD(f, domain.Resolution, sampleRate, window))
@@ -61,18 +55,6 @@ namespace AEther
             frequencies = Filters.Select(f => harmonic * sampleRate / f.Length).ToArray();
         }
 
-        public static double GetAWeighting(double f)
-        {
-            var f2 = f * f;
-            var n = Math.Pow(12194.0, 2) * f2 * f2;
-            var d1 = f2 + Math.Pow(20.6, 2);
-            var d2 = f2 + Math.Pow(107.7, 2);
-            var d3 = f2 + Math.Pow(737.9, 2);
-            var d4 = f2 + Math.Pow(12194.0, 2);
-            var r = n / (d1 * Math.Sqrt(d2 * d3) * d4);
-            return r;
-        }
-
         public static double[] CreateWindow(double[] cosines)
         {
             var window = new double[2 * cosines.Length - 1];
@@ -83,16 +65,6 @@ namespace AEther
                 window[cosines.Length - 1 - j] = window[cosines.Length - 1 + j] = coeff;
             }
             return window;
-        }
-
-        public void Output(Memory<double> dst)
-        {
-            for (int k = 0; k < Filters.Length; ++k)
-            {
-                var filter = Filters[k];
-                var bin = 2 * filter.GetOutput().Magnitude;
-                dst.Span[k] = Math.Log10(SpectralMath.Sanitize(bin));
-            }
         }
 
         /// <summary>Linear magnitudes; exact zero is retained without a log floor.</summary>

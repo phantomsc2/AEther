@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace AEther;
 
-/// <summary>Causal spectrum in coherent linear amplitude or log10 amplitude units.</summary>
+/// <summary>Causal spectrum in coherent linear amplitude units.</summary>
 public interface ISpectrumProcessor
 {
     void Process(ReadOnlyMemory<double> samples);
@@ -12,7 +12,6 @@ public interface ISpectrumProcessor
     void OutputComplex(Memory<Complex> destination);
     /// <summary>Actual carrier centers, including finite-DFT bin quantization.</summary>
     ReadOnlyMemory<double> Frequencies { get; }
-    void Output(Memory<double> destination);
     void Reset();
 }
 

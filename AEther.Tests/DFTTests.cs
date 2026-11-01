@@ -9,7 +9,7 @@ namespace AEther.Tests
     {
         static IDFTFilter Filter(string kind, double frequency, double[] window) => kind switch
         {
-            "rect" => new DFTFilter(frequency, 8, 48000),
+            "rect" => new WindowedDFTFilter(frequency, 8, 48000, window),
             "scalar" => new WindowedDFTFilter(frequency, 8, 48000, window),
             _ => new WindowedDFTFilterSIMD(frequency, 8, 48000, window),
         };
@@ -79,8 +79,8 @@ namespace AEther.Tests
             simd.Process(input);
             var expected = new double[domain.Length];
             var actual = new double[domain.Length];
-            scalar.Output(expected);
-            simd.Output(actual);
+            SpectrumTestOutput.Log(scalar, expected);
+            SpectrumTestOutput.Log(simd, actual);
             for (var i = 0; i < expected.Length; ++i)
                 Assert.That(actual[i], Is.EqualTo(expected[i]).Within(1e-9));
         }
@@ -93,7 +93,7 @@ namespace AEther.Tests
                 .Select(i => .7 * Math.Sin(2 * Math.PI * 1000 * i / 48000 + .37)).ToArray();
             processor.Process(samples);
             var output = new double[1];
-            processor.Output(output);
+            SpectrumTestOutput.Log(processor, output);
             Assert.That(Math.Pow(10, output[0]), Is.EqualTo(.7).Within(1e-10));
         }
 

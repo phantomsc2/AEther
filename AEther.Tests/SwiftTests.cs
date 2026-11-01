@@ -134,7 +134,7 @@ public class SwiftTests
             Assert.That(b.GetOutput(k), Is.EqualTo(Complex.Zero));
         }
         var linear = new double[domain.Length]; var log = new double[domain.Length];
-        a.OutputLinear(linear); a.Output(log);
+        a.OutputLinear(linear); SpectrumTestOutput.Log(a, log);
         Assert.That(linear, Is.All.Zero); Assert.That(log, Is.All.EqualTo(double.NegativeInfinity));
         a.Process(new[] { 1e-180, 0.0 }); a.OutputLinear(linear);
         Assert.That(linear, Is.All.GreaterThan(0));

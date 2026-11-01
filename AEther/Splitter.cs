@@ -148,8 +148,11 @@ public sealed class Splitter
             }
             Results[k] = new JointEvidence(sine * Unit, transient * Unit, Math.Max(0, background) * Unit,
                 rms * Unit, Magnitude[k], width, Count);
-            EvidenceOutput.Write(Results[k].Sine, Results[k].Transient, Results[k].Background,
-                Magnitude[k], output.Span.Slice(k * Splitter.OutputStride, Splitter.OutputStride));
+            var dst = output.Span.Slice(k * OutputStride, OutputStride);
+            dst[0] = Math.Max(0, Results[k].Sine);
+            dst[1] = Math.Max(0, Results[k].Transient);
+            dst[2] = Results[k].Background;
+            dst[3] = Magnitude[k];
         }
     }
 

@@ -15,7 +15,7 @@ public class DFTSilenceTests
         {
             var window = DFTProcessor.CreateWindow(cosines);
             foreach (IDFTFilter filter in new IDFTFilter[] {
-                new DFTFilter(500, 4, 8000), new WindowedDFTFilter(500, 4, 8000, window),
+                new WindowedDFTFilter(500, 4, 8000, window),
                 new WindowedDFTFilterSIMD(500, 4, 8000, window) })
             foreach (bool chunks in new[] { false, true })
             {
@@ -52,11 +52,11 @@ public class DFTSilenceTests
         var domain = new Domain(500, 4, 2);
         var processor = new DFTProcessor(domain, 8000, simd);
         var log = new double[2]; var linear = new double[2];
-        processor.Output(log); processor.OutputLinear(linear);
+        SpectrumTestOutput.Log(processor, log); processor.OutputLinear(linear);
         Assert.That(log, Is.All.EqualTo(double.NegativeInfinity));
         Assert.That(linear, Is.All.Zero);
         processor.Process(Enumerable.Repeat(1e-100, 20).ToArray());
-        processor.Output(log); processor.OutputLinear(linear);
+        SpectrumTestOutput.Log(processor, log); processor.OutputLinear(linear);
         Assert.That(linear, Is.All.GreaterThan(0));
         Assert.That(log, Is.All.LessThan(-90));
     }
