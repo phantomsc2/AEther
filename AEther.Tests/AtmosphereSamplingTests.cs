@@ -25,7 +25,7 @@ public partial class ShaderRenderingTests
         renderer.Render(false);
         var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var trans=AtmosphereRead(renderer,effect.TransmittanceTexture);
-        var sky=AtmosphereRead(renderer,effect.SkyViewTexture);
+        var sky=AtmosphereReadSky(renderer,effect);
         Assert.That(trans.All(float.IsFinite) && sky.All(float.IsFinite),Is.True);
         double scale=scene=="Planet" ? .55*AtmosphereR : 8,top=AtmosphereR+10*scale;
         double limit=Math.Sqrt(top*top-AtmosphereR*AtmosphereR);
@@ -60,7 +60,7 @@ public partial class ShaderRenderingTests
             }
             // The reference uses midpoint attenuation; GPU segments integrate their
             // constant extinction exactly and interpolate the sunlight LUT.
-            for(int c=0;c<3;c++) Assert.That(sky[4*(y*(int)effect.SkyViewTexture.Description.Width+x)+c],
+            for(int c=0;c<3;c++) Assert.That(sky[4*(y*(int)effect.SkySunTexture.Description.Width+x)+c],
                 Is.EqualTo(expected[c]).Within(Math.Max(.0005,expected[c]*.035)),$"{scene} ({x},{y}) channel {c}");
         }
     }

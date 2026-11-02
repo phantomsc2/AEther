@@ -18,16 +18,16 @@ public partial class ShaderRenderingTests
         void Draw(){markers.Clear();renderer.Render(false);}
         Draw();var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         Assert.That(markers,Does.Contain("Atmosphere multiple scattering"));
-        var both=AtmosphereRead(renderer,effect.SkyViewTexture);
+        var both=AtmosphereReadSky(renderer,effect);
         var trans=AtmosphereRead(renderer,effect.TransmittanceTexture);
         var lut=AtmosphereRead(renderer,effect.MultipleScatteringTexture);
         Assert.That(lut.All(v=>float.IsFinite(v) && v>=0),Is.True);
         Assert.That(lut.Where((_,i)=>i%4!=3).Max(),Is.GreaterThan(.00001));
         var aerialTrans=scene=="Planet"?ReadFroxelVolume(renderer,effect.AerialTransmissionTexture):null;
-        PointSet(renderer,"Transport.L2Plus",false);Draw();var single=AtmosphereRead(renderer,effect.SkyViewTexture);
+        PointSet(renderer,"Transport.L2Plus",false);Draw();var single=AtmosphereReadSky(renderer,effect);
         Assert.That(markers,Does.Not.Contain("Atmosphere multiple scattering"));
         PointSet(renderer,"Transport.L1",false);PointSet(renderer,"Transport.L2Plus",true);Draw();
-        var multiple=AtmosphereRead(renderer,effect.SkyViewTexture);
+        var multiple=AtmosphereReadSky(renderer,effect);
         Assert.That(multiple.Where((_,i)=>i%4!=3).Max(),Is.GreaterThan(.001),"L2+ remains visible without displayed L1");
         for(int i=0;i<both.Length;i++) if(i%4!=3) Assert.That(both[i],Is.EqualTo(single[i]+multiple[i]).Within(Math.Max(.00002,both[i]*.00002)),"Order additivity");
         Assert.That(AtmosphereRead(renderer,effect.TransmittanceTexture),Is.EqualTo(trans));
@@ -37,12 +37,12 @@ public partial class ShaderRenderingTests
         Assert.That(markers,Does.Not.Contain("Atmosphere sky view"));
         PointSet(renderer,"Sun.Azimuth",.1f);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere multiple scattering"));
         PointSet(renderer,"Transport.L2Plus",false);Draw();
-        Assert.That(AtmosphereRead(renderer,effect.SkyViewTexture).Where((_,i)=>i%4!=3),Is.All.Zero);
+        Assert.That(AtmosphereReadSky(renderer,effect).Where((_,i)=>i%4!=3),Is.All.Zero);
         PointSet(renderer,"Atmosphere.Density",.3f);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere multiple scattering"));
         PointSet(renderer,"Transport.L2Plus",true);Draw();Assert.That(markers,Does.Contain("Atmosphere multiple scattering"));
         PointSet(renderer,"Atmosphere.Density",0);Draw();
         Assert.That(AtmosphereRead(renderer,effect.MultipleScatteringTexture).Where((_,i)=>i%4!=3),Is.All.Zero);
-        Assert.That(AtmosphereRead(renderer,effect.SkyViewTexture).Where((_,i)=>i%4!=3),Is.All.Zero);
+        Assert.That(AtmosphereReadSky(renderer,effect).Where((_,i)=>i%4!=3),Is.All.Zero);
         foreach(float value in new[]{.001f,1f}) {
             PointSet(renderer,"Atmosphere.Density",value);Draw();
             Assert.That(AtmosphereRead(renderer,effect.MultipleScatteringTexture).All(v=>float.IsFinite(v) && v>=0),Is.True);
@@ -107,9 +107,9 @@ public partial class ShaderRenderingTests
         if(scene=="Planet") {
             PlanetReferenceSettings(renderer);PointSet(renderer,"Sun.Azimuth",.5f);PointSet(renderer,"Sun.Altitude",.5f);PointSet(renderer,"Sun2.Intensity",0);
             Tick();var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
-            var indirect=AtmosphereRead(renderer,effect.SkyViewTexture);
+            var indirect=AtmosphereReadSky(renderer,effect);
             PointSet(renderer,"Transport.L1",true);PointSet(renderer,"Transport.L2Plus",false);Tick();
-            var direct=AtmosphereRead(renderer,effect.SkyViewTexture);
+            var direct=AtmosphereReadSky(renderer,effect);
             Assert.That(direct.Take(3),Is.All.Zero,"Disk-center ray is in planet shadow");
             Assert.That(indirect.Take(3).Max(),Is.GreaterThan(.00001),"Indirect light reaches the direct-sun shadow");
         }

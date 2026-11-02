@@ -66,7 +66,7 @@ float PlanetAngularScale(float limb)
 // Separate disk and annulus row ranges prevent interpolation across the opaque limb.
 // Disk rows concentrate near the limb; non-disk rows cover the rest of the sphere,
 // with scale-height-dependent spacing concentrating rows around the dense medium.
-float3 PlanetLutDirection(uint2 id, uint width, uint height)
+float3 PlanetLutDirection(float2 id, uint width, uint height)
 {
     uint halfHeight = height/2;
     bool disk = id.y<halfHeight;
@@ -94,13 +94,13 @@ float2 PlanetLutUV(float3 ray, bool disk, uint width, uint height)
 void BuildSkyView(uint3 id : SV_DispatchThreadID)
 {
     uint width,height;
-    AtmosphereSkyViewOutput.GetDimensions(width,height);
+    AtmosphereSkySunOutput.GetDimensions(width,height);
     if (id.x>=width || id.y>=height) return;
     float3 origin = PlanetObserver(), ray = PlanetLutDirection(id.xy,width,height);
     float2 shell;
     if (!PlanetSphere(origin,ray,AtmosphereRadius+AtmosphereHeight(),shell))
     {
-        AtmosphereSkyViewOutput[id.xy] = float4(0,0,0,1);
+        AtmosphereStoreSky(id.xy,(AtmosphereTransport)0);
         return;
     }
     bool disk = id.y<height/2;
@@ -113,7 +113,7 @@ void BuildSkyView(uint3 id : SV_DispatchThreadID)
         end = max(begin,surface.x);
     }
     float3 entry = origin+begin*ray;
-    AtmosphereSkyViewOutput[id.xy] = float4(AtmosphereIntegrate(entry,ray,max(0,end-begin),AtmosphereSkySteps),1);
+    AtmosphereStoreSky(id.xy,AtmosphereIntegrate(entry,ray,max(0,end-begin),AtmosphereSkySteps));
 }
 
 ProjectionCamera PlanetDisplayCamera()
@@ -129,13 +129,21 @@ ProjectionCamera PlanetDisplayCamera()
     camera.Far=length(camera.Origin)+AtmosphereRadius+AtmosphereHeight();
     return camera;
 }
-Texture3D<float4> AerialRadiance, AerialTransmission;
-RWTexture3D<float4> AerialRadianceOutput, AerialTransmissionOutput;
+Texture3D<float4> AerialSun, AerialSun2, AerialMultiple, AerialTransmission;
+RWTexture3D<float4> AerialSunOutput, AerialSun2Output, AerialMultipleOutput, AerialTransmissionOutput;
+float3 PlanetSampleAerial(float3 uv, float3 ray)
+{
+    AtmosphereTransport light;
+    light.Sun=AerialSun.SampleLevel(AtmosphereSampler,uv,0).rgb;
+    light.Sun2=AerialSun2.SampleLevel(AtmosphereSampler,uv,0).rgb;
+    light.Multiple=AerialMultiple.SampleLevel(AtmosphereSampler,uv,0).rgb;
+    return AtmosphereCompose(light,ray);
+}
 Texture2D<float> FroxelSurfaceDepth;
 [numthreads(8,8,1)]
 void BuildAerial(uint3 id:SV_DispatchThreadID)
 {
-    uint nx,ny,nz; AerialRadianceOutput.GetDimensions(nx,ny,nz);
+    uint nx,ny,nz; AerialSunOutput.GetDimensions(nx,ny,nz);
     if(id.x>=nx || id.y>=ny) return;
     ProjectionCamera camera=PlanetDisplayCamera();
     float3 ray=ProjectionDirection(camera,float2(id.xy)/float2(nx-1,ny-1));
@@ -144,14 +152,16 @@ void BuildAerial(uint3 id:SV_DispatchThreadID)
     bool ground=PlanetSphere(camera.Origin,ray,AtmosphereRadius,body);
     float begin=atmosphere?max(0,shell.x):0, end=atmosphere?shell.y:0;
     if(ground) end=min(end,max(0,body.x));
-    float3 a=0,t=1; float previous=0;
+    AtmosphereTransport a=(AtmosphereTransport)0; float3 t=1; float previous=0;
     for(uint k=0;k<nz;k++)
     {
         float w=k/(float)(nz-1);
         float distance=ProjectionRayDistance(camera,ray,camera.Far*w*w);
         float lo=max(previous,begin),hi=min(distance,end);
-        if(hi>lo) { float3 ts; float3 segment=AtmosphereIntegrateTransport(camera.Origin+ray*lo,ray,hi-lo,4,ts); a+=t*segment; t*=ts; }
-        AerialRadianceOutput[uint3(id.xy,k)]=float4(min(a,65504),1);
+        if(hi>lo) { float3 ts; AtmosphereTransport segment=AtmosphereIntegrateTransport(camera.Origin+ray*lo,ray,hi-lo,4,ts); a.Sun+=t*segment.Sun; a.Sun2+=t*segment.Sun2; a.Multiple+=t*segment.Multiple; t*=ts; }
+        AerialSunOutput[uint3(id.xy,k)]=float4(min(a.Sun,65504),1);
+        AerialSun2Output[uint3(id.xy,k)]=float4(min(a.Sun2,65504),1);
+        AerialMultipleOutput[uint3(id.xy,k)]=float4(min(a.Multiple,65504),1);
         AerialTransmissionOutput[uint3(id.xy,k)]=float4(t,1);
         previous=distance;
     }
@@ -192,14 +202,19 @@ float4 PS(PSin input):SV_TARGET
 {
     if(Debug.Transmittance) return DisplayOutput(AtmosphereTransmittance.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
     if(Debug.MultipleScattering) return DisplayOutput(AtmosphereMultipleScattering.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
-    if(Debug.SkyView) return DisplayOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
-    uint nx,ny,nz; AerialRadiance.GetDimensions(nx,ny,nz);
+    if(Debug.SkyView) {
+        uint w,h; AtmosphereSkySun.GetDimensions(w,h);
+        float2 id=clamp(input.UV*float2(w,h)-.5,0,float2(w-1,h-1));
+        return DisplayOutput(AtmosphereCompose(AtmosphereSampleSky(input.UV),PlanetLutDirection(id,w,h)));
+    }
+    ProjectionCamera camera=PlanetDisplayCamera(); float3 ray=ProjectionDirection(camera,input.UV);
+    uint nx,ny,nz; AerialSun.GetDimensions(nx,ny,nz);
     if(Debug.Aerial) {
         float3 uv=float3(input.UV,(.5+Debug.Slice*(nz-1))/nz);
         if(Debug.Transmission) return DisplayOutput(AerialTransmission.SampleLevel(AtmosphereSampler,uv,0).rgb);
-        return DisplayOutput(AerialRadiance.SampleLevel(AtmosphereSampler,uv,0).rgb);
+        float2 unit=saturate((input.UV*float2(nx,ny)-.5)/float2(nx-1,ny-1));
+        return DisplayOutput(PlanetSampleAerial(uv,ProjectionDirection(camera,unit)));
     }
-    ProjectionCamera camera=PlanetDisplayCamera(); float3 ray=ProjectionDirection(camera,input.UV);
     float2 surface; bool disk=PlanetSphere(camera.Origin,ray,AtmosphereRadius,surface);
     float depth=FroxelSurfaceDepth.Load(int3((int2)input.Position.xy,0));
     float endpoint=disk?max(0,surface.x)*dot(ray,camera.Forward):camera.Far;
@@ -209,9 +224,9 @@ float4 PS(PSin input):SV_TARGET
     if(meteor) {
         float3 unit=float3(input.UV,sqrt(saturate(endpoint/camera.Far)));
         float3 uv=(.5+unit*(float3(nx,ny,nz)-1))/float3(nx,ny,nz);
-        return LinearOutput(AerialRadiance.SampleLevel(AtmosphereSampler,uv,0).rgb);
+        return LinearOutput(min(PlanetSampleAerial(uv,ray),65504));
     }
-    uint width,height; AtmosphereSkyView.GetDimensions(width,height);
-    float3 radiance=AtmosphereSkyView.SampleLevel(AtmosphereSampler,PlanetLutUV(ray,disk,width,height),0).rgb;
+    uint width,height; AtmosphereSkySun.GetDimensions(width,height);
+    float3 radiance=AtmosphereCompose(AtmosphereSampleSky(PlanetLutUV(ray,disk,width,height)),ray);
     return LinearOutput(min(radiance,65504));
 }

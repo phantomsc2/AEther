@@ -20,10 +20,10 @@ public partial class ShaderRenderingTests
         void Draw() { markers.Clear(); renderer.Render(false); }
         Draw();
         var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
-        Assert.That(effect.AerialRadianceTexture.Description.Width,Is.EqualTo(32));
+        Assert.That(effect.AerialSunTexture.Description.Width,Is.EqualTo(32));
         Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
         Assert.That(markers,Does.Contain("Planet meteors"));
-        var a=ReadFroxelVolume(renderer,effect.AerialRadianceTexture);
+        var a=AtmosphereReadAerial(renderer,effect);
         var t=ReadFroxelVolume(renderer,effect.AerialTransmissionTexture);
         Assert.That(a.All(v=>float.IsFinite(v) && v>=0),Is.True);
         Assert.That(t.All(v=>float.IsFinite(v) && v>=0 && v<=1),Is.True);
@@ -45,7 +45,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer,"Camera.Fov",.7f);Draw();
         Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));Assert.That(markers,Does.Not.Contain("Atmosphere sky view"));
         PointSet(renderer,"Atmosphere.Phase.Strength",.6f);Draw();
-        Assert.That(markers,Does.Contain("Atmosphere sky view"));Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
+        Assert.That(markers,Does.Not.Contain("Atmosphere sky view"));Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
         Assert.That(markers,Does.Not.Contain("Atmosphere transmittance"));
         PointSet(renderer,"Shell.Count",0);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
         PointSet(renderer,"Debug.Aerial",true);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));
@@ -53,7 +53,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer,"Debug.Aerial",false);
         renderer.Resize(1281,720);Draw();Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
         PointSet(renderer,"Atmosphere.Density",0);Draw();
-        a=ReadFroxelVolume(renderer,effect.AerialRadianceTexture);t=ReadFroxelVolume(renderer,effect.AerialTransmissionTexture);
+        a=AtmosphereReadAerial(renderer,effect);t=ReadFroxelVolume(renderer,effect.AerialTransmissionTexture);
         Assert.That(a.Where((_,i)=>i%4!=3),Is.All.Zero);Assert.That(t,Is.All.EqualTo(1));
         Assert.That(renderer.ReadPixels(false).Where((_,i)=>i%4!=3),Is.All.Zero);
         Assert.That(renderer.ReloadActiveScene(),Is.True,renderer.ShaderError);Draw();
@@ -94,7 +94,7 @@ public partial class ShaderRenderingTests
         for(int phase=0;phase<3;phase++) { for(int i=0;i<180;i++) clock.Advance();Tick();File.WriteAllBytes(Path.Combine(directory,$"orbit-{phase}-1280x720.rgba"),renderer.ReadPixels()); }
         // Independent finite-path reference: radial inward camera ray, clear noon light.
         PlanetReferenceSettings(renderer);PointSet(renderer,"Sun2.Intensity",0);Tick();
-        var a=ReadFroxelVolume(renderer,effect.AerialRadianceTexture);
+        var a=AtmosphereReadAerial(renderer,effect);
         var tr=ReadFroxelVolume(renderer,effect.AerialTransmissionTexture);
         double r=2.94*AtmosphereR*Math.Pow(3,.25),H=.55*AtmosphereR,top=AtmosphereR+10*H;
         double far=r+top;
@@ -116,7 +116,7 @@ public partial class ShaderRenderingTests
                 bool shadow=mu<0 && radius*radius*(1-mu*mu)<AtmosphereR*AtmosphereR;
                 if(!shadow) {
                     double sunColumn=PlanetColumn(radius,mu,AtmosphereReferenceDistance(radius,mu,top));
-                    for(int ch=0;ch<3;ch++) expected[ch]+=20*(3*(1+c*c)/(16*Math.PI))*beta[ch]*density*ds*Math.Exp(-beta[ch]*(column+.5*density*ds+sunColumn));
+                    for(int ch=0;ch<3;ch++) expected[ch]+=20*AtmosphereReferencePhase(c,.855,.25)*beta[ch]*density*ds*Math.Exp(-beta[ch]*(column+.5*density*ds+sunColumn));
                 }
                 column+=density*ds;
             }

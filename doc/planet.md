@@ -80,10 +80,10 @@ changes appearance through foreground scattering, not through surface shading.
 
 ## Updates, previews, and verification
 
-Atmosphere changes rebuild all tables. Suns, phase, or orbit position rebuild
+Atmosphere density/color/scale changes rebuild all tables. Suns or orbit position rebuild
 Sky-View and aerial perspective. View direction or aspect changes rebuild only
 aerial perspective. Shell motion and shell controls rebuild neither. Exposure and
-preview toggles affect display only. Resources are released on deactivation;
+preview toggles and both phase controls affect display only. Resources are released on deactivation;
 reload failures retain the working effect.
 
 Debug.Transmittance and Debug.SkyView retain precedence. Debug.Aerial displays a raw
@@ -173,3 +173,24 @@ The narrowest lobe is limited visually by Sky-View angular resolution.
 GPU tests check the centered preset, phase normalization, extreme anisotropy,
 and absence of direct emission at 1280x720. Default captures are written to
 artifacts/scattering-suns.
+## Phase evaluation at display resolution
+
+Sky-View stores phase-free single scattering for Sun and Sun2 separately,
+plus combined isotropic multiple scattering. Planet aerial perspective uses
+the same split in three RGBA16F volumes, alongside its transmission volume.
+All components share one transport march at the existing resolutions and step counts.
+The display interpolates transport first, then evaluates the exact Rayleigh + HG
+phase for each sun using the actual pixel ray:
+
+```text
+radiance = singleSun * phase(dot(ray, sun))
+         + singleSun2 * phase(dot(ray, sun2)) + multiple
+```
+
+Intensity and transport toggles retain their existing rebuild semantics. Phase
+edits rebuild neither Sky-View nor aerial perspective. Debug previews reconstruct
+radiance using the represented LUT/volume direction and bypass exposure as before.
+Meteor cutouts use the same per-pixel phase at their finite-path endpoint.
+No filtering, blur, peak clamping, larger LUTs, or extra integration passes are added.
+Default Planet texture storage increases by 1.5 MiB (1 MiB for Sky-View,
+0.5 MiB for aerial components).

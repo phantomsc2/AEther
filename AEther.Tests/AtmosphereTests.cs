@@ -96,7 +96,7 @@ public partial class ShaderRenderingTests
         renderer.Render(false);
         var effect = (AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var trans = AtmosphereRead(renderer, effect.TransmittanceTexture);
-        var sky = AtmosphereRead(renderer, effect.SkyViewTexture);
+        var sky = AtmosphereReadSky(renderer,effect);
         Assert.That(trans.All(v => float.IsFinite(v) && v >= 0 && v <= 1), Is.True);
         Assert.That(sky.All(v => float.IsFinite(v) && v >= 0), Is.True);
         double H = Math.Sqrt(AtmosphereTop * AtmosphereTop - AtmosphereR * AtmosphereR);
@@ -158,7 +158,7 @@ public partial class ShaderRenderingTests
         var originalExposure = renderer.Options.Exposure;
         Assert.That(original.Skip(4 * 1280 * 650).Where((_, i) => i % 4 != 3), Is.All.Zero, "Flat black ground");
         Draw(); Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "No time or audio dependence");
-        PointSet(renderer, "Phase.Strength", 0f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Phase.Strength", 0f); Draw();
         var rotationOriginal = renderer.ReadPixels(false);
         PointSet(renderer, "Sun.Azimuth", .25f); Draw("Atmosphere sky view");
         PointSet(renderer, "Sun2.Azimuth", .75f); Draw("Atmosphere sky view");
@@ -181,8 +181,8 @@ public partial class ShaderRenderingTests
         PointSet(renderer, "Sun.Altitude", .5f); Draw("Atmosphere sky view");
         PointSet(renderer, "Sun2.Intensity", .35f); Draw("Atmosphere sky view");
         PointSet(renderer, "Sun2.Altitude", .6f); Draw("Atmosphere sky view");
-        PointSet(renderer, "Phase.Anisotropy", .8f); Draw("Atmosphere sky view");
-        PointSet(renderer, "Phase.Strength", .75f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Phase.Anisotropy", .8f); Draw();
+        PointSet(renderer, "Phase.Strength", .75f); Draw();
         PointSet(renderer, "Atmosphere.ScaleHeight", .6f); Draw("Atmosphere transmittance", "Atmosphere sky view");
         renderer.Resize(1281, 721); Draw();
         Assert.That(effect.TransmittanceTexture.Description.Width, Is.EqualTo(256));
@@ -213,7 +213,7 @@ public partial class ShaderRenderingTests
         Draw("Atmosphere transmittance", "Atmosphere sky view");
         effect = (AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         Assert.That(AtmosphereRead(renderer, effect.TransmittanceTexture), Is.All.EqualTo(1));
-        Assert.That(AtmosphereRead(renderer, effect.SkyViewTexture).Where((_, i) => i % 4 != 3), Is.All.Zero);
+        Assert.That(AtmosphereReadSky(renderer,effect).Where((_, i) => i % 4 != 3), Is.All.Zero);
         Assert.That(renderer.ReadPixels(false).Where((_, i) => i % 4 != 3), Is.All.Zero);
         // Exercise supported parameter endpoints, including optically thick and thin atmospheres.
         foreach (float value in new[] { 0f, 1f })
@@ -224,7 +224,7 @@ public partial class ShaderRenderingTests
             PointSet(renderer, "Sun.Intensity", 1);
             Draw("Atmosphere transmittance", "Atmosphere sky view");
             Assert.That(AtmosphereRead(renderer, effect.TransmittanceTexture).All(v => float.IsFinite(v) && v >= 0 && v <= 1), Is.True);
-            Assert.That(AtmosphereRead(renderer, effect.SkyViewTexture).All(v => float.IsFinite(v) && v >= 0), Is.True);
+            Assert.That(AtmosphereReadSky(renderer,effect).All(v => float.IsFinite(v) && v >= 0), Is.True);
         }
     }
 
@@ -244,7 +244,7 @@ public partial class ShaderRenderingTests
         float[] Read()
         {
             renderer.Render(false);
-            return AtmosphereRead(renderer, ((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
+            return AtmosphereReadSky(renderer,(AtmosphereEffect)renderer.ActiveShader!.Effects[0]);
         }
         void Equal(float[] actual, float[] expected, string message)
         {

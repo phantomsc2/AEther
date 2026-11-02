@@ -77,12 +77,12 @@ HG(c,g) = (1-g*g)/(4*pi*q^(3/2))
 p(c) = (Rayleigh(c) + strength*HG(c,g))/(1+strength)
 ```
 The function integrates to one over solid angle. Coefficients are calculated
-once per Sky-View texel and the phase is evaluated once per sun outside the
-segment loop, using reciprocal square root rather than a general power.
+once per display pixel and the phase is evaluated once per sun after
+transport interpolation, using reciprocal square root rather than a general power.
 
 ## LUTs and data flow
 
-The effect owns three RGBA32F textures, requiring 784 KiB combined, with no mipmaps
+The effect owns five RGBA32F textures, requiring 1808 KiB combined, with no mipmaps
 or temporal accumulation. RGB contains the transport result; alpha is one.
 
 **Transmittance (256 x 64)** stores attenuation from a point to the atmosphere
@@ -92,8 +92,9 @@ ground. Vertical position is `sqrt((h/(h+H))*(11/10))`, where h is altitude and 
 includes downward rays that miss the planet. Ground-intersecting sun rays are
 rejected analytically before lookup. Generation uses 128 uniform midpoint segments.
 
-**Sky-View (256 x 128)** stores the summed radiance from both suns for the ground
-observer. Azimuth spans world directions from 0 to 360 degrees, with fixed +Z
+**Sky-View (256 x 128)** stores three separate RGBA32F textures: phase-free
+single scattering for each sun, plus combined multiple-scattering radiance.
+The shared raymarch computes all components for the ground observer. Azimuth spans world directions from 0 to 360 degrees, with fixed +Z
 (0 degrees) as the reference and both seam endpoints stored. The top row is
 zenith and the bottom row is the horizon:
 
@@ -108,14 +109,14 @@ This puts more samples near the horizon. Both LUTs map parameter endpoints to
 texel centers and use clamped bilinear filtering. Sky generation integrates 64
 uniformly spaced path segments, evaluating density and sunlight at segment
 midpoints. Each segment uses the analytic constant-coefficient scattering integral
-and Beer-Lambert camera attenuation. Each sun has its own Rayleigh + HG phase evaluation and
-planet occlusion evaluation. Their intensity-weighted incident radiance is added
-within each segment; density, optical depth, and camera attenuation are shared.
+and Beer-Lambert camera attenuation. Each sun has its own planet occlusion evaluation. Intensity-weighted single
+scattering is stored separately for each source; higher orders share a third
+texture. Density, optical depth, and camera attenuation are shared.
 Zero-intensity suns skip their sunlight evaluation. Sun attenuation comes from Transmittance;
 there is no nested sunlight integration. Stable small-optical-depth expressions
 preserve the zero-scattering limit and avoid cancellation in thin segments.
 
-Both LUTs use equal-length distance intervals and midpoint samples. The segment
+The LUT builders use equal-length distance intervals and midpoint samples. The segment
 length is calculated once per ray; Sky-View also hoists scattering coefficient
 times segment length and reuses segment transmission for scattering and camera
 attenuation. Nonlinear path sampling and its toggle have been removed. The 10H
@@ -139,7 +140,7 @@ not normally exposed sky images. Transmittance takes precedence when both are on
 | First frame, successful reload, or scene reactivation | Build Transmittance, Multiple Scattering, and Sky-View |
 | Any `Atmosphere` parameter | Build Transmittance, then Multiple Scattering if enabled, then Sky-View |
 | Azimuth, altitude, or intensity of either sun | Build Sky-View only |
-| Either `Phase` parameter | Build Sky-View only |
+| Either `Phase` parameter | Display only; all transport caches reused |
 | View direction, exposure, debug toggles, or canvas size | Display only |
 
 The render thread compares relevant normalized values from immutable parameter
@@ -272,3 +273,24 @@ The narrowest lobe is limited visually by Sky-View angular resolution.
 GPU tests check the centered preset, phase normalization, extreme anisotropy,
 and absence of direct emission at 1280x720. Default captures are written to
 artifacts/scattering-suns.
+## Phase evaluation at display resolution
+
+Sky-View stores phase-free single scattering for Sun and Sun2 separately,
+plus combined isotropic multiple scattering. Planet aerial perspective uses
+the same split in three RGBA16F volumes, alongside its transmission volume.
+All components share one transport march at the existing resolutions and step counts.
+The display interpolates transport first, then evaluates the exact Rayleigh + HG
+phase for each sun using the actual pixel ray:
+
+```text
+radiance = singleSun * phase(dot(ray, sun))
+         + singleSun2 * phase(dot(ray, sun2)) + multiple
+```
+
+Intensity and transport toggles retain their existing rebuild semantics. Phase
+edits rebuild neither Sky-View nor aerial perspective. Debug previews reconstruct
+radiance using the represented LUT/volume direction and bypass exposure as before.
+Meteor cutouts use the same per-pixel phase at their finite-path endpoint.
+No filtering, blur, peak clamping, larger LUTs, or extra integration passes are added.
+Default Planet texture storage increases by 1.5 MiB (1 MiB for Sky-View,
+0.5 MiB for aerial components).

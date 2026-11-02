@@ -35,21 +35,25 @@ float2 AtmosphereSkyCoordinates(float3 direction)
 void BuildSkyView(uint3 id : SV_DispatchThreadID)
 {
     uint width,height;
-    AtmosphereSkyViewOutput.GetDimensions(width,height);
+    AtmosphereSkySunOutput.GetDimensions(width,height);
     if (id.x>=width || id.y>=height) return;
     float3 ray = AtmosphereSkyDirection(float2(id.xy)/float2(width-1,height-1));
     float distance = AtmosphereDistanceToTop(0,ray.y);
-    AtmosphereSkyViewOutput[id.xy] = float4(AtmosphereIntegrate(
-        float3(0,AtmosphereRadius,0),ray,distance,AtmosphereSkySteps),1);
+    AtmosphereStoreSky(id.xy,AtmosphereIntegrate(
+        float3(0,AtmosphereRadius,0),ray,distance,AtmosphereSkySteps));
 }
 float4 PS(PSin input) : SV_TARGET
 {
-    // Raw stored RGB: no exposure, tone curve, gamma encoding, or lighting evaluation.
+    // Reconstructed linear radiance previews bypass exposure and display encoding.
     if (ShowTransmittance)
         return DisplayOutput(AtmosphereTransmittance.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
     if (ShowMultipleScattering) return DisplayOutput(AtmosphereMultipleScattering.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
     if (ShowSkyView)
-        return DisplayOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,input.UV,0).rgb);
+        {
+        uint w,h; AtmosphereSkySun.GetDimensions(w,h);
+        float2 unit=saturate((input.UV*float2(w,h)-.5)/float2(w-1,h-1));
+        return DisplayOutput(AtmosphereCompose(AtmosphereSampleSky(input.UV),AtmosphereSkyDirection(unit)));
+    }
     float yaw = 2*AtmospherePi*View.Azimuth, pitch = AtmosphereAltitudeAngle(View.Altitude);
     float3 forward = AtmosphereDirection(yaw,pitch);
     float3 right = float3(cos(yaw),0,-sin(yaw));
@@ -58,8 +62,7 @@ float4 PS(PSin input) : SV_TARGET
     float3 direction = ProjectionDirection(camera,input.UV);
     if (direction.y<0) return LinearOutput(0);
     uint width,height;
-    AtmosphereSkyView.GetDimensions(width,height);
-    return LinearOutput(min(AtmosphereSkyView.SampleLevel(AtmosphereSampler,
-        AtmosphereTexelUV(AtmosphereSkyCoordinates(direction),width,height),0).rgb
-        ,65504));
+    AtmosphereSkySun.GetDimensions(width,height);
+    return LinearOutput(min(AtmosphereCompose(AtmosphereSampleSky(
+        AtmosphereTexelUV(AtmosphereSkyCoordinates(direction),width,height)),direction),65504));
 }

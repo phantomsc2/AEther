@@ -5,12 +5,12 @@
 // and AtmosphereBeta() before including this transport implementation.
 #include "AtmosphereTypes.hlsl"
 Texture2D<float4> AtmosphereTransmittance;
-Texture2D<float4> AtmosphereSkyView;
+Texture2D<float4> AtmosphereSkySun, AtmosphereSkySun2, AtmosphereSkyMultiple;
 Texture2D<float4> AtmosphereMultipleScattering;
 RWTexture2D<float4> AtmosphereMultipleScatteringOutput;
 SamplerState AtmosphereSampler;
 RWTexture2D<float4> AtmosphereTransmittanceOutput;
-RWTexture2D<float4> AtmosphereSkyViewOutput;
+RWTexture2D<float4> AtmosphereSkySunOutput, AtmosphereSkySun2Output, AtmosphereSkyMultipleOutput;
 
 // Numerical truncation only: exp(-10) is about 0.0045% of base density.
 static const float AtmosphereExtent = 10;
@@ -160,52 +160,64 @@ void BuildMultipleScattering(uint3 id:SV_DispatchThreadID)
     float3 multiple=seed/max(1-transfer,1e-4);
     AtmosphereMultipleScatteringOutput[id.xy]=float4(multiple,1);
 }
-// Transport is independent of the scene's camera, projection, and opaque body.
-// origin is inside/on the numerical volume; distance ends at its limit or a surface.
-float3 AtmosphereIntegrateTransport(float3 origin, float3 ray, float distance, uint steps, out float3 transmission)
+// Phase-free single scattering from each sun, plus isotropic higher orders.
+struct AtmosphereTransport { float3 Sun, Sun2, Multiple; };
+float3 AtmosphereCompose(AtmosphereTransport light, float3 ray)
+{
+    float4 coefficients=AtmospherePhaseCoefficients();
+    float3 sun=AtmosphereDirection(2*AtmospherePi*Sun.Azimuth,AtmosphereAltitudeAngle(Sun.Altitude));
+    float3 sun2=AtmosphereDirection(2*AtmospherePi*Sun2.Azimuth,AtmosphereAltitudeAngle(Sun2.Altitude));
+    return light.Sun*AtmospherePhase(dot(ray,sun),coefficients)
+         + light.Sun2*AtmospherePhase(dot(ray,sun2),coefficients)+light.Multiple;
+}
+AtmosphereTransport AtmosphereSampleSky(float2 uv)
+{
+    AtmosphereTransport light;
+    light.Sun=AtmosphereSkySun.SampleLevel(AtmosphereSampler,uv,0).rgb;
+    light.Sun2=AtmosphereSkySun2.SampleLevel(AtmosphereSampler,uv,0).rgb;
+    light.Multiple=AtmosphereSkyMultiple.SampleLevel(AtmosphereSampler,uv,0).rgb;
+    return light;
+}
+void AtmosphereStoreSky(uint2 id, AtmosphereTransport light)
+{
+    AtmosphereSkySunOutput[id]=float4(light.Sun,1);
+    AtmosphereSkySun2Output[id]=float4(light.Sun2,1);
+    AtmosphereSkyMultipleOutput[id]=float4(light.Multiple,1);
+}
+// The phase is constant along a ray to a distant sun; evaluate it after interpolation.
+AtmosphereTransport AtmosphereIntegrateTransport(float3 origin, float3 ray, float distance, uint steps, out float3 transmission)
 {
     transmission=1;
-    if (distance<=0) return 0;
-    float h0 = max(0,length(origin)-AtmosphereRadius);
-    float mu = dot(origin,ray)/(AtmosphereRadius+h0);
-    float step = distance/steps;
-    float3 betaStep = AtmosphereBeta()*step;
-    float3 sun = AtmosphereDirection(2*AtmospherePi*Sun.Azimuth,AtmosphereAltitudeAngle(Sun.Altitude));
-    float3 sun2 = AtmosphereDirection(2*AtmospherePi*Sun2.Azimuth,AtmosphereAltitudeAngle(Sun2.Altitude));
-    float4 coefficients = AtmospherePhaseCoefficients();
-    float c = dot(ray,sun), c2 = dot(ray,sun2);
-    float phase = AtmospherePhase(c,coefficients), phase2 = AtmospherePhase(c2,coefficients);
-    float3 radiance = 0;
-    [loop] for (uint i=0; i<steps; i++)
+    AtmosphereTransport light=(AtmosphereTransport)0;
+    if(distance<=0) return light;
+    float h0=max(0,length(origin)-AtmosphereRadius),mu=dot(origin,ray)/(AtmosphereRadius+h0);
+    float step=distance/steps;
+    float3 betaStep=AtmosphereBeta()*step;
+    float3 sun=AtmosphereDirection(2*AtmospherePi*Sun.Azimuth,AtmosphereAltitudeAngle(Sun.Altitude));
+    float3 sun2=AtmosphereDirection(2*AtmospherePi*Sun2.Azimuth,AtmosphereAltitudeAngle(Sun2.Altitude));
+    float c=dot(ray,sun),c2=dot(ray,sun2);
+    [loop] for(uint i=0;i<steps;i++)
     {
-        float t = (i+.5)*step;
-        float h = AtmosphereAltitudeAlongRay(h0,mu,t);
-        float3 tau = betaStep*AtmosphereDensityAtAltitude(h);
-        float3 segmentTransmission = exp(-tau);
-        float3 incoming = 0;
-        [branch] if (Sun.Intensity>0)
+        float t=(i+.5)*step,h=AtmosphereAltitudeAlongRay(h0,mu,t);
+        float3 tau=betaStep*AtmosphereDensityAtAltitude(h),ts=exp(-tau);
+        float3 scatter=transmission*AtmosphereSegmentScatter(tau,ts);
+        [branch] if(Sun.Intensity>0)
         {
-            float sunMu = clamp((dot(origin,sun)+t*c)/(AtmosphereRadius+h),-1,1);
-                        float3 source=0;
-            if(Transport.L1) source+=AtmosphereSunTransmittance(h,sunMu)*phase;
-            if(Transport.L2Plus) source+=AtmosphereMultipleSource(h,sunMu);
-            incoming+=source*(40*Sun.Intensity);
+            float sunMu=clamp((dot(origin,sun)+t*c)/(AtmosphereRadius+h),-1,1);
+            if(Transport.L1) light.Sun+=scatter*AtmosphereSunTransmittance(h,sunMu)*(40*Sun.Intensity);
+            if(Transport.L2Plus) light.Multiple+=scatter*AtmosphereMultipleSource(h,sunMu)*(40*Sun.Intensity);
         }
-        [branch] if (Sun2.Intensity>0)
+        [branch] if(Sun2.Intensity>0)
         {
-            float sunMu = clamp((dot(origin,sun2)+t*c2)/(AtmosphereRadius+h),-1,1);
-                        float3 source=0;
-            if(Transport.L1) source+=AtmosphereSunTransmittance(h,sunMu)*phase2;
-            if(Transport.L2Plus) source+=AtmosphereMultipleSource(h,sunMu);
-            incoming+=source*(40*Sun2.Intensity);
+            float sunMu=clamp((dot(origin,sun2)+t*c2)/(AtmosphereRadius+h),-1,1);
+            if(Transport.L1) light.Sun2+=scatter*AtmosphereSunTransmittance(h,sunMu)*(40*Sun2.Intensity);
+            if(Transport.L2Plus) light.Multiple+=scatter*AtmosphereMultipleSource(h,sunMu)*(40*Sun2.Intensity);
         }
-        radiance += transmission*incoming*AtmosphereSegmentScatter(tau,segmentTransmission);
-        transmission *= segmentTransmission;
+        transmission*=ts;
     }
-    return max(0,radiance);
+    return light;
 }
-
-float3 AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps)
+AtmosphereTransport AtmosphereIntegrate(float3 origin, float3 ray, float distance, uint steps)
 {
     float3 transmission;
     return AtmosphereIntegrateTransport(origin,ray,distance,steps,transmission);

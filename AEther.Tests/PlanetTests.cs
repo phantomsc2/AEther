@@ -34,7 +34,7 @@ public partial class ShaderRenderingTests
             Assert.That(scene.All(float.IsFinite),Is.True);
             Assert.That(scene[0],Is.EqualTo(altitude==0 ? 1 : 8.82).Within(.01));
             var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
-            Assert.That(AtmosphereRead(renderer,effect.SkyViewTexture).All(float.IsFinite),Is.True);
+            Assert.That(AtmosphereReadSky(renderer,effect).All(float.IsFinite),Is.True);
         }
     }
     static void PlanetReferenceSettings(Renderer renderer)
@@ -147,8 +147,8 @@ public partial class ShaderRenderingTests
         PlanetReferenceSettings(renderer);
         renderer.Render(false);
         var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
-        Assert.That((effect.SkyViewTexture.Description.Width,effect.SkyViewTexture.Description.Height),Is.EqualTo((256u,128u)));
-        var sky=AtmosphereRead(renderer,effect.SkyViewTexture);
+        Assert.That((effect.SkySunTexture.Description.Width,effect.SkySunTexture.Description.Height),Is.EqualTo((256u,128u)));
+        var sky=AtmosphereReadSky(renderer,effect);
         var transmittance=AtmosphereRead(renderer,effect.TransmittanceTexture);
         // At U=0 rays point straight outward: the exponential column has a closed form.
         double scale=.55*AtmosphereR,limit=10*scale;
@@ -204,7 +204,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer,"Camera.Yaw",0);Draw();
         Assert.That(RingReadScene(renderer).Where((_,i)=>i%4!=3).Any(v=>v>0),Is.True,"The close observer sees local scattering while looking away");
         PointSet(renderer,"Camera.Yaw",.5f);Draw();
-        foreach (string path in new[] { "Camera.Long","Camera.Lat","Camera.Alt","Atmosphere.Phase.Anisotropy","Sun2.Intensity" })
+        foreach (string path in new[] { "Camera.Long","Camera.Lat","Camera.Alt","Sun2.Intensity" })
         { PointSet(renderer,path,.7f);Draw("Atmosphere sky view"); }
         foreach (float value in new[] { 0f,1f })
         {
@@ -239,7 +239,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer,"Atmosphere.ScaleHeight",(float)(.5+Math.Log2(scaleR/.1868)/6));
         PointSet(renderer,"Camera.Alt",PlanetReferenceOrbit(orbit));
         renderer.Render(false);
-        var sky=AtmosphereRead(renderer,((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
+        var sky=AtmosphereReadSky(renderer,(AtmosphereEffect)renderer.ActiveShader!.Effects[0]);
         foreach(var (x,y) in new[]{(0,0),(64,59),(64,70),(128,90),(64,110),(0,127)})
         {
             var expected=PlanetReference(x,y,scaleR*AtmosphereR,orbit);
@@ -265,7 +265,7 @@ public partial class ShaderRenderingTests
             ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Sun2.Intensity",0f),
             ("Atmosphere.Phase.Anisotropy",AtmosphereAnisotropySlider(.95*.580)),("Atmosphere.Phase.Strength",AtmosphereStrengthSlider(.25))}) PointSet(renderer,path,value);
         renderer.Render(false);
-        var sky=AtmosphereRead(renderer,((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
+        var sky=AtmosphereReadSky(renderer,(AtmosphereEffect)renderer.ActiveShader!.Effects[0]);
         foreach(var (x,y) in new[]{(0,0),(64,59),(192,59),(0,70),(64,70),(128,70),(192,70),(64,90),(192,110)})
         {
             var expected=PlanetReference(x,y,orbit:0,eclipse:true);
