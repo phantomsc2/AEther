@@ -15,7 +15,6 @@ cbuffer Parameters
     PlanetCameraSettings Camera = { .1024908, 0, .5, .5, .5, .81818182 };
     ShellSettings Shell = { .03903904, .4, .05714286, .244140625, .5 };
     AtmosphereSunSettings Sun = { 232.0/360,.5,.5 };
-    AtmosphereSunSettings Sun2 = { .5,110.0/180.0,0 };
     PlanetDebugSettings Debug = { false,false,false,false,false,.5 };
 };
 #define ATMOSPHERE_PHASE Atmosphere.Phase
@@ -129,13 +128,12 @@ ProjectionCamera PlanetDisplayCamera()
     camera.Far=length(camera.Origin)+AtmosphereRadius+AtmosphereHeight();
     return camera;
 }
-Texture3D<float4> AerialSun, AerialSun2, AerialMultiple, AerialTransmission;
-RWTexture3D<float4> AerialSunOutput, AerialSun2Output, AerialMultipleOutput, AerialTransmissionOutput;
+Texture3D<float4> AerialSun, AerialMultiple, AerialTransmission;
+RWTexture3D<float4> AerialSunOutput, AerialMultipleOutput, AerialTransmissionOutput;
 float3 PlanetSampleAerial(float3 uv, float3 ray)
 {
     AtmosphereTransport light;
     light.Sun=AerialSun.SampleLevel(AtmosphereSampler,uv,0).rgb;
-    light.Sun2=AerialSun2.SampleLevel(AtmosphereSampler,uv,0).rgb;
     light.Multiple=AerialMultiple.SampleLevel(AtmosphereSampler,uv,0).rgb;
     return AtmosphereCompose(light,ray);
 }
@@ -158,9 +156,8 @@ void BuildAerial(uint3 id:SV_DispatchThreadID)
         float w=k/(float)(nz-1);
         float distance=ProjectionRayDistance(camera,ray,camera.Far*w*w);
         float lo=max(previous,begin),hi=min(distance,end);
-        if(hi>lo) { float3 ts; AtmosphereTransport segment=AtmosphereIntegrateTransport(camera.Origin+ray*lo,ray,hi-lo,4,ts); a.Sun+=t*segment.Sun; a.Sun2+=t*segment.Sun2; a.Multiple+=t*segment.Multiple; t*=ts; }
+        if(hi>lo) { float3 ts; AtmosphereTransport segment=AtmosphereIntegrateTransport(camera.Origin+ray*lo,ray,hi-lo,4,ts); a.Sun+=t*segment.Sun; a.Multiple+=t*segment.Multiple; t*=ts; }
         AerialSunOutput[uint3(id.xy,k)]=float4(min(a.Sun,65504),1);
-        AerialSun2Output[uint3(id.xy,k)]=float4(min(a.Sun2,65504),1);
         AerialMultipleOutput[uint3(id.xy,k)]=float4(min(a.Multiple,65504),1);
         AerialTransmissionOutput[uint3(id.xy,k)]=float4(t,1);
         previous=distance;

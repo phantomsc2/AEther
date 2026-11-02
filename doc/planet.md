@@ -1,16 +1,16 @@
 # Planet
 
 Select **Planet**, or launch with `--scene=Planet`. Planet shares exponential,
-RGB atmospheric transport with [Atmosphere](atmosphere.md): two directional
-suns, a normalized Rayleigh + HG phase function, and analytic planet occlusion. The
+RGB atmospheric transport with [Atmosphere](atmosphere.md): a directional
+sun, a normalized Rayleigh + HG phase function, and analytic planet occlusion. The
 opaque planet and 1,000 procedural octahedra are black. There is no surface
 lighting, emission, or meteor shadowing. Multiple scattering uses the Hillaire 2020 isotropic approximation.
 
 ## Default demonstration and controls
 
 The stationary observer is at approximately 1.25 planet radii on +Z, looking at
-the center with a 120-degree vertical FOV. The primary sun has azimuth 232 degrees, zero altitude, and an 8-degree angular radius, partially eclipsed by the planet;
-the second is disabled. Random circular orbits fill a spherical shell and cross the shadow
+the center with a 120-degree vertical FOV. The sun has azimuth 232 degrees and zero altitude, with its scattering
+peak partially eclipsed by the planet. Random circular orbits fill a spherical shell and cross the shadow
 behind the planet. Animation uses renderer elapsed time, independently of audio.
 Random orbital poles, phases, sizes, orientations, and spin rates are deterministic. Every meteor center remains at exactly the selected altitude; orbital poles cover the full sphere, including prograde, retrograde, and near-polar orbits.
 
@@ -33,9 +33,9 @@ The solid radius R is 6,360 km. Float controls use the normalized [0,1] editor:
 | Shell.Count | Rounded instance count 0 to 4096 | 1000 |
 | Shell.Seed | Reproducible orbit/phase/size/spin distribution | .5 |
 
-All controls are organized under Atmosphere, Camera, Debug, Shell, Sun, Sun2, and Transport.
+All controls are organized under Atmosphere, Camera, Debug, Shell, Sun, and Transport.
 Atmosphere.Phase contains Anisotropy and Shape (defaults .3 and .5). The other
-atmosphere mappings are unchanged. Sun and Sun2 retain their azimuth, altitude,
+atmosphere mappings are unchanged. Sun retains its azimuth, altitude,
 and intensity controls. Camera.Alt retains the previous exponential center-distance
 mapping; its physical height above the surface is R * (8.82^value - 1).
 
@@ -56,8 +56,9 @@ boundary-distance U, and density-focused altitude V. Sky-View uses 256x128
 RGBA32F and 64 midpoint segments. Its separate disk/annulus bands duplicate the
 solid limb to prevent interpolation across different path endpoints.
 
-The aerial cache contains two **32x32x32 RGBA16F** volumes (512 KiB combined):
-cumulative RGB radiance A and transmission T. XY nodes span the viewport;
+The aerial cache contains three **32x32x32 RGBA16F** volumes (768 KiB combined):
+phase-free single scattering, multiple-scattering radiance, and transmission T.
+Radiance A is reconstructed per pixel. XY nodes span the viewport;
 Z nodes span camera-forward depth quadratically, including identity at zero.
 The far bound is camera-center distance plus numerical atmosphere radius.
 Each compute thread integrates one XY column through successive depth intervals,
@@ -80,7 +81,7 @@ changes appearance through foreground scattering, not through surface shading.
 
 ## Updates, previews, and verification
 
-Atmosphere density/color/scale changes rebuild all tables. Suns or orbit position rebuild
+Atmosphere density/color/scale changes rebuild all tables. Sun or orbit position changes rebuild
 Sky-View and aerial perspective. View direction or aspect changes rebuild only
 aerial perspective. Shell motion and shell controls rebuild neither. Exposure and
 preview toggles and both phase controls affect display only. Resources are released on deactivation;
@@ -132,7 +133,7 @@ shadows or atmospheric absorption. Strongly anisotropic higher orders are not
 resolved. L2+ represents an isotropic source, rather than a directional light field.
 
 The LUT is built after Transmittance and sampled inside the shared Sky-View and
-aerial-perspective integrator. Each sun samples it at its own local zenith angle
+aerial-perspective integrator. The sun samples it at its own local zenith angle
 and scales it by its intensity. Local direct-sun occlusion does not suppress the
 indirect source. RGB transmission is unchanged. The LUT is rebuilt only when
 medium properties change, and lazily if L2+ is disabled. Camera, sun, phase,
@@ -152,9 +153,9 @@ Legacy numerical fixtures explicitly disable L2+ to continue isolating L1.
 
 Reference: [Hillaire's implementation](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyRayMarching.hlsl), especially NewMultiScattCS and IntegrateScatteredLuminance.
 
-## Scattering suns
+## Scattering sun
 
-Suns have no direct disk emission, angular radius, or Background Emission toggle.
+The sun has no direct disk emission, angular radius, or Background Emission toggle.
 Their bright cores come entirely from the HG scattering lobe. Disabling both
 scattering orders, or setting density to zero, leaves no visible sun. Planet and
 meteor cutouts retain their existing finite-path scattering and occlusion.
@@ -175,16 +176,14 @@ and absence of direct emission at 1280x720. Default captures are written to
 artifacts/scattering-suns.
 ## Phase evaluation at display resolution
 
-Sky-View stores phase-free single scattering for Sun and Sun2 separately,
-plus combined isotropic multiple scattering. Planet aerial perspective uses
-the same split in three RGBA16F volumes, alongside its transmission volume.
+Sky-View stores phase-free single scattering and isotropic multiple scattering separately. Planet aerial perspective uses
+the same split in two RGBA16F volumes, alongside its transmission volume.
 All components share one transport march at the existing resolutions and step counts.
 The display interpolates transport first, then evaluates the exact Rayleigh + HG
-phase for each sun using the actual pixel ray:
+phase for the sun using the actual pixel ray:
 
 ```text
-radiance = singleSun * phase(dot(ray, sun))
-         + singleSun2 * phase(dot(ray, sun2)) + multiple
+radiance = singleSun * phase(dot(ray, sun)) + multiple
 ```
 
 Intensity and transport toggles retain their existing rebuild semantics. Phase
@@ -192,5 +191,5 @@ edits rebuild neither Sky-View nor aerial perspective. Debug previews reconstruc
 radiance using the represented LUT/volume direction and bypass exposure as before.
 Meteor cutouts use the same per-pixel phase at their finite-path endpoint.
 No filtering, blur, peak clamping, larger LUTs, or extra integration passes are added.
-Default Planet texture storage increases by 1.5 MiB (1 MiB for Sky-View,
-0.5 MiB for aerial components).
+Default Planet texture storage is 2.016 MiB, including the shared transmittance
+and multiple-scattering lookup tables. Removing the second light saves 0.75 MiB.

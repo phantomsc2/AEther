@@ -30,7 +30,7 @@ public partial class ShaderRenderingTests
     }
 
     [TestCase("Atmosphere"),TestCase("Planet"),Category("GPU")]
-    public void AtmosphereSunsAreScatteringOnlyAt720p(string scene)
+    public void AtmosphereSunIsScatteringOnlyAt720p(string scene)
     {
         using var shaders=new SceneShaders(scene,multipleScattering:true,referenceAtmosphere:false);
         using var window=new HiddenWindow();

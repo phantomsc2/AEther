@@ -4,7 +4,6 @@ cbuffer Parameters
     TransportSettings Transport = { false, true, true };
     AtmosphereSettings Atmosphere = { float3(.5,.5,.5), .5, .5 };
     AtmosphereSunSettings Sun = { .150, .536, .827 };
-    AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, 0 };
     AtmosphereViewSettings View = { .223, .536 };
     AtmospherePhaseSettings Phase = { .5, .5 };
     bool ShowTransmittance = false;

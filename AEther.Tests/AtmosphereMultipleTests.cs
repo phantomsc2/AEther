@@ -105,8 +105,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer,"Transport.L2Plus",false);Tick();File.WriteAllBytes(Path.Combine(directory,scene+"-single-1280x720.rgba"),renderer.ReadPixels());
         PointSet(renderer,"Transport.L1",false);PointSet(renderer,"Transport.L2Plus",true);Tick();File.WriteAllBytes(Path.Combine(directory,scene+"-multiple-1280x720.rgba"),renderer.ReadPixels());
         if(scene=="Planet") {
-            PlanetReferenceSettings(renderer);PointSet(renderer,"Sun.Azimuth",.5f);PointSet(renderer,"Sun.Altitude",.5f);PointSet(renderer,"Sun2.Intensity",0);
-            Tick();var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
+            PlanetReferenceSettings(renderer);PointSet(renderer,"Sun.Azimuth",.5f);PointSet(renderer,"Sun.Altitude",.5f);Tick();var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
             var indirect=AtmosphereReadSky(renderer,effect);
             PointSet(renderer,"Transport.L1",true);PointSet(renderer,"Transport.L2Plus",false);Tick();
             var direct=AtmosphereReadSky(renderer,effect);

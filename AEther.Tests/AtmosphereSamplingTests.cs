@@ -18,10 +18,9 @@ public partial class ShaderRenderingTests
         if(shadowed && scene=="Planet")
         {
             foreach(var (path,value) in new[]{("Camera.Alt",PlanetReferenceOrbit(0)),("Camera.Long",.618f),("Camera.Lat",.359f),
-                ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Sun2.Intensity",0f),
-                ("Atmosphere.Phase.Anisotropy",AtmosphereAnisotropySlider(.95*.580)),("Atmosphere.Phase.Strength",AtmosphereStrengthSlider(.25))}) PointSet(renderer,path,value);
+                ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Atmosphere.Phase.Anisotropy",AtmosphereAnisotropySlider(.95*.580)),("Atmosphere.Phase.Strength",AtmosphereStrengthSlider(.25))}) PointSet(renderer,path,value);
         }
-        else if(shadowed) {PointSet(renderer,"Sun.Altitude",.48f);PointSet(renderer,"Sun2.Intensity",0);}
+        else if(shadowed) {PointSet(renderer,"Sun.Altitude",.48f);}
         renderer.Render(false);
         var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var trans=AtmosphereRead(renderer,effect.TransmittanceTexture);
@@ -52,11 +51,6 @@ public partial class ShaderRenderingTests
             {
                 double az=2*Math.PI*x/255,el=.5*Math.PI*Math.Pow(1-y/127.0,2);
                 expected=AtmosphereReferenceSky(az,el,shadowed ? -.02*Math.PI : Math.PI/6,steps:64);
-                if(!shadowed)
-                {
-                    var second=AtmosphereReferenceSky(az,el,Math.PI/9,Math.PI,10,steps:64);
-                    for(int c=0;c<3;c++) expected[c]+=second[c];
-                }
             }
             // The reference uses midpoint attenuation; GPU segments integrate their
             // constant extinction exactly and interpolate the sunlight LUT.

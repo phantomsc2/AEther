@@ -4,8 +4,8 @@ Select **Atmosphere** in the scene picker, or launch with `--scene=Atmosphere`.
 The scene is independent of audio and time. The observer stays at ground level
 on a planet with radius 6,360 km. The atmosphere is spherical; directions below
 the flat local horizon are black. There is no ground mesh or ground reflection.
-Two independently controlled white directional suns illuminate the atmosphere,
-without visible disks. Setting either sun's intensity to zero disables it.
+A white directional sun illuminates the atmosphere,
+without visible disks. Setting the sun's intensity to zero disables it.
 
 For an orbital observer, a black solid sphere, and an orbiting shell of black octahedra, select the
 separate [Planet scene](planet.md). Both scenes share finite-path transport and
@@ -45,9 +45,6 @@ are applied in HLSL; there are no changes to the shared settings UI.
 | `Sun.Azimuth` | 0 to 360 degrees | 54 degrees |
 | `Sun.Altitude` | -90 to 90 degrees | 6.48 degrees |
 | `Sun.Intensity` | 0 to 40 relative white irradiance | 33.08 |
-| `Sun2.Azimuth` | 0 to 360 degrees | 180 degrees |
-| `Sun2.Altitude` | -90 to 90 degrees | 20 degrees |
-| `Sun2.Intensity` | 0 to 40 relative white irradiance | 0 |
 | `View.Azimuth` | 0 to 360 degrees | 80.28 degrees |
 | `View.Altitude` | -90 to 90 degrees | 6.48 degrees |
 | `Phase.Anisotropy` | HG g: 0 to 0.9975, logarithmic peak width | 0.95 at midpoint |
@@ -61,13 +58,13 @@ straight up or down remains well defined. Intensity is relative to the renderer'
 linear illumination scale, not calibrated solar irradiance in W/m2. Global
 Graphics Exposure controls the displayed sky through the shared presentation pass.
 
-Both suns share the phase parameters. Rayleigh is always present. Strength zero
+The sun uses the phase parameters. Rayleigh is always present. Strength zero
 gives pure Rayleigh; increasing strength adds HG while preserving total energy.
 The midpoint preset reproduces the reference sunset: the former RGB controls
 (0.049, 0.135, 0.490), density 0.059, scale height 16 km, g=0.95, strength=0.288.
 The new RGB curves use exponents (4.3510744405, 2.8889686876, 1.0291463457),
 preserving zero and the original maximum per channel. The density curve also
-preserves vacuum and its original maximum. Sun2 is disabled by default.
+preserves vacuum and its original maximum.
 
 ```text
 c = dot(view direction, direction to sun)
@@ -82,7 +79,7 @@ transport interpolation, using reciprocal square root rather than a general powe
 
 ## LUTs and data flow
 
-The effect owns five RGBA32F textures, requiring 1808 KiB combined, with no mipmaps
+The effect owns four RGBA32F textures, requiring 1296 KiB combined, with no mipmaps
 or temporal accumulation. RGB contains the transport result; alpha is one.
 
 **Transmittance (256 x 64)** stores attenuation from a point to the atmosphere
@@ -92,8 +89,8 @@ ground. Vertical position is `sqrt((h/(h+H))*(11/10))`, where h is altitude and 
 includes downward rays that miss the planet. Ground-intersecting sun rays are
 rejected analytically before lookup. Generation uses 128 uniform midpoint segments.
 
-**Sky-View (256 x 128)** stores three separate RGBA32F textures: phase-free
-single scattering for each sun, plus combined multiple-scattering radiance.
+**Sky-View (256 x 128)** stores two separate RGBA32F textures: phase-free
+single scattering and multiple-scattering radiance.
 The shared raymarch computes all components for the ground observer. Azimuth spans world directions from 0 to 360 degrees, with fixed +Z
 (0 degrees) as the reference and both seam endpoints stored. The top row is
 zenith and the bottom row is the horizon:
@@ -109,10 +106,9 @@ This puts more samples near the horizon. Both LUTs map parameter endpoints to
 texel centers and use clamped bilinear filtering. Sky generation integrates 64
 uniformly spaced path segments, evaluating density and sunlight at segment
 midpoints. Each segment uses the analytic constant-coefficient scattering integral
-and Beer-Lambert camera attenuation. Each sun has its own planet occlusion evaluation. Intensity-weighted single
-scattering is stored separately for each source; higher orders share a third
-texture. Density, optical depth, and camera attenuation are shared.
-Zero-intensity suns skip their sunlight evaluation. Sun attenuation comes from Transmittance;
+and Beer-Lambert camera attenuation. The sun has its own planet occlusion evaluation. Intensity-weighted single
+scattering and higher orders are stored in separate textures. Density, optical depth, and camera attenuation are shared.
+Zero sun intensity skips sunlight evaluation. Sun attenuation comes from Transmittance;
 there is no nested sunlight integration. Stable small-optical-depth expressions
 preserve the zero-scattering limit and avoid cancellation in thin segments.
 
@@ -159,22 +155,20 @@ dotnet run --project tools/AEther.Smoke -- . --shader-authoring-only
 The GPU tests compare LUT texels with independent double-precision direct
 quadrature at sun altitudes 30, 0, and -3 degrees, including zenith and horizon.
 Combined-sky tests compare with summed independent references at different sun
-azimuths/altitudes, and verify additivity, swapped/coincident suns, independent
-planet occlusion, disabled suns, and rotational consistency with the camera.
+azimuths/altitudes, and verify planet occlusion, zero intensity, and rotational
+consistency with the camera.
 They also check bounds, symmetry, seam continuity, view poles, zero scattering,
 parameter extremes, raw display/exposure behavior, cache invalidation, reset,
 resize, switching, and reload rollback.
 GPU phase tests compare angular values with the analytic formula and integrate
 them numerically over solid angle to verify normalization, including isotropic,
-Rayleigh, HG, Cornette-Shanks, and the supported forward/backward extremes.
+the normalized Rayleigh + HG mixture, including the maximum forward peak.
 
 `AtmosphereTimingAndCapturesAt720p` measures initial construction, parameter-driven
 updates, and cached display separately using GPU timestamps at 1280x720 on the
-repository-selected adapter, separately with one and two enabled suns. It writes
-`timings-one-sun.txt`, `timings-two-suns.txt`, and RGBA8 captures for the two-sun
-default, single-sun day/sunset/twilight, night, and both raw LUTs to ignored
-`artifacts/atmosphere`. The second sun is disabled for the single-sun captures;
-both default suns are restored for raw LUT captures.
+repository-selected adapter. It writes `timings.txt` and RGBA8 captures for the
+default, sunset, twilight, night, and raw LUT views to ignored
+`artifacts/atmosphere`.
 An additional `hg-forward-lobe` capture uses g=0.8 with a single sun.
 Readbacks bound the GPU queue; their CPU duration is excluded from GPU timings.
 
@@ -232,7 +226,7 @@ shadows or atmospheric absorption. Strongly anisotropic higher orders are not
 resolved. L2+ represents an isotropic source, rather than a directional light field.
 
 The LUT is built after Transmittance and sampled inside the shared Sky-View and
-aerial-perspective integrator. Each sun samples it at its own local zenith angle
+aerial-perspective integrator. The sun samples it at its own local zenith angle
 and scales it by its intensity. Local direct-sun occlusion does not suppress the
 indirect source. RGB transmission is unchanged. The LUT is rebuilt only when
 medium properties change, and lazily if L2+ is disabled. Camera, sun, phase,
@@ -252,9 +246,9 @@ Legacy numerical fixtures explicitly disable L2+ to continue isolating L1.
 
 Reference: [Hillaire's implementation](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyRayMarching.hlsl), especially NewMultiScattCS and IntegrateScatteredLuminance.
 
-## Scattering suns
+## Scattering sun
 
-Suns have no direct disk emission, angular radius, or Background Emission toggle.
+The sun has no direct disk emission, angular radius, or Background Emission toggle.
 Their bright cores come entirely from the HG scattering lobe. Disabling both
 scattering orders, or setting density to zero, leaves no visible sun. Planet and
 meteor cutouts retain their existing finite-path scattering and occlusion.
@@ -275,16 +269,14 @@ and absence of direct emission at 1280x720. Default captures are written to
 artifacts/scattering-suns.
 ## Phase evaluation at display resolution
 
-Sky-View stores phase-free single scattering for Sun and Sun2 separately,
-plus combined isotropic multiple scattering. Planet aerial perspective uses
-the same split in three RGBA16F volumes, alongside its transmission volume.
+Sky-View stores phase-free single scattering and isotropic multiple scattering separately. Planet aerial perspective uses
+the same split in two RGBA16F volumes, alongside its transmission volume.
 All components share one transport march at the existing resolutions and step counts.
 The display interpolates transport first, then evaluates the exact Rayleigh + HG
-phase for each sun using the actual pixel ray:
+phase for the sun using the actual pixel ray:
 
 ```text
-radiance = singleSun * phase(dot(ray, sun))
-         + singleSun2 * phase(dot(ray, sun2)) + multiple
+radiance = singleSun * phase(dot(ray, sun)) + multiple
 ```
 
 Intensity and transport toggles retain their existing rebuild semantics. Phase
@@ -292,5 +284,5 @@ edits rebuild neither Sky-View nor aerial perspective. Debug previews reconstruc
 radiance using the represented LUT/volume direction and bypass exposure as before.
 Meteor cutouts use the same per-pixel phase at their finite-path endpoint.
 No filtering, blur, peak clamping, larger LUTs, or extra integration passes are added.
-Default Planet texture storage increases by 1.5 MiB (1 MiB for Sky-View,
-0.5 MiB for aerial components).
+Default Planet texture storage is 2.016 MiB, including the shared transmittance
+and multiple-scattering lookup tables. Removing the second light saves 0.75 MiB.

@@ -93,7 +93,7 @@ public partial class ShaderRenderingTests
         effect.AerialSize=32;PointSet(renderer,"Shell.Speed",.4f);
         for(int phase=0;phase<3;phase++) { for(int i=0;i<180;i++) clock.Advance();Tick();File.WriteAllBytes(Path.Combine(directory,$"orbit-{phase}-1280x720.rgba"),renderer.ReadPixels()); }
         // Independent finite-path reference: radial inward camera ray, clear noon light.
-        PlanetReferenceSettings(renderer);PointSet(renderer,"Sun2.Intensity",0);Tick();
+        PlanetReferenceSettings(renderer);Tick();
         var a=AtmosphereReadAerial(renderer,effect);
         var tr=ReadFroxelVolume(renderer,effect.AerialTransmissionTexture);
         double r=2.94*AtmosphereR*Math.Pow(3,.25),H=.55*AtmosphereR,top=AtmosphereR+10*H;
@@ -138,7 +138,7 @@ public partial class ShaderRenderingTests
         using var window=new HiddenWindow();var clock=new FroxelClock();
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,timeProvider:clock,initialScene:shaders.Scene);
         var values=renderer.ActiveShader!.Effects[0].Parameters!;
-        Assert.That(values.Items.Select(p=>p.Name),Is.EqualTo(new[]{"Atmosphere","Camera","Debug","Shell","Sun","Sun2","Transport"}));
+        Assert.That(values.Items.Select(p=>p.Name),Is.EqualTo(new[]{"Atmosphere","Camera","Debug","Shell","Sun","Transport"}));
         foreach(float altitude in new[]{0f,.03903904f,1f}) foreach(long frame in new[]{0L,1200L}) {
             PointSet(renderer,"Shell.Alt",altitude);clock.Frame=frame;renderer.Render(false);
             var pixels=RingReadScene(renderer);double radius=1+.002+1.998*altitude;
