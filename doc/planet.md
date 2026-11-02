@@ -2,16 +2,16 @@
 
 Select **Planet**, or launch with `--scene=Planet`. Planet shares exponential,
 RGB atmospheric transport with [Atmosphere](atmosphere.md): two directional
-suns, a normalized Draine phase function, and analytic planet occlusion. The
+suns, a normalized Rayleigh + HG phase function, and analytic planet occlusion. The
 opaque planet and 1,000 procedural octahedra are black. There is no surface
 lighting, emission, or meteor shadowing. Multiple scattering uses the Hillaire 2020 isotropic approximation.
 
 ## Default demonstration and controls
 
 The stationary observer is at approximately 1.25 planet radii on +Z, looking at
-the center with a 120-degree vertical FOV. One stationary sun points along +X;
+the center with a 120-degree vertical FOV. The primary sun has azimuth 232 degrees, zero altitude, and an 8-degree angular radius, partially eclipsed by the planet;
 the second is disabled. Random circular orbits fill a spherical shell and cross the shadow
-on the -X side. Animation uses renderer elapsed time, independently of audio.
+behind the planet. Animation uses renderer elapsed time, independently of audio.
 Random orbital poles, phases, sizes, orientations, and spin rates are deterministic. Every meteor center remains at exactly the selected altitude; orbital poles cover the full sphere, including prograde, retrograde, and near-polar orbits.
 
 The solid radius R is 6,360 km. Float controls use the normalized [0,1] editor:
@@ -106,9 +106,9 @@ and [Frostbite 2016, section 3.5](https://media.contentapi.ea.com/content/dam/ea
 
 Both scenes expose **Transport** with independent switches:
 
-- **L0 - Surface reflectance (reserved)**: defaults off and has no rendering effect.
-- **L1 - Single scattering**: defaults on and controls only directly sunlit atmospheric scattering.
-- **L2+ - Multiple scattering**: defaults on and controls the approximate higher-order atmospheric source. It remains meaningful with displayed L1 disabled: the LUT's internal seed is not gated by the display switches.
+- **Surface**: defaults off and has no rendering effect.
+- **Single Scattering**: defaults on and controls only directly sunlit atmospheric scattering.
+- **Multiple Scattering (approx)**: defaults on and controls the approximate higher-order atmospheric source. It remains meaningful with displayed L1 disabled: the LUT's internal seed is not gated by the display switches.
 
 Attenuation and opaque geometry remain unchanged by these switches. L1+L2 equals
 the sum of their separately rendered linear radiances. Both disabled yields black
@@ -123,7 +123,7 @@ mean of isotropic single-scattered radiance; f is the angular mean unit-radiance
 scattering transfer. Both include atmospheric extinction and the opaque planet.
 This is constant cost with respect to scattering order, not an exact solution.
 The source construction follows the reference's isotropic phase approximation;
-it is independent of the editable direct-light Draine phase parameters.
+it is independent of the editable direct-light phase parameters.
 
 The denominator is floored at 0.0001 for optically thick, nonabsorbing extremes.
 This explicitly bounds amplification; those extremes are not physically validated.
@@ -151,3 +151,25 @@ compares sampled LUT nodes with independent double-precision dense-path integrat
 Legacy numerical fixtures explicitly disable L2+ to continue isolating L1.
 
 Reference: [Hillaire's implementation](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyRayMarching.hlsl), especially NewMultiScattCS and IntegrateScatteredLuminance.
+
+## Scattering suns
+
+Suns have no direct disk emission, angular radius, or Background Emission toggle.
+Their bright cores come entirely from the HG scattering lobe. Disabling both
+scattering orders, or setting density to zero, leaves no visible sun. Planet and
+meteor cutouts retain their existing finite-path scattering and occlusion.
+
+The shared phase controls are centered on g=0.95 and HG strength=0.288:
+
+```text
+g = 1 - 0.05^(2*Anisotropy)
+strength = Strength^1.7958592832
+p(c) = (Rayleigh(c) + strength*HG(c,g))/(1+strength)
+```
+
+Anisotropy zero is g=0; midpoint is g=0.95; maximum is g=0.9975.
+Strength zero gives pure Rayleigh; midpoint is 0.288; maximum is 1.
+The narrowest lobe is limited visually by Sky-View angular resolution.
+GPU tests check the centered preset, phase normalization, extreme anisotropy,
+and absence of direct emission at 1280x720. Default captures are written to
+artifacts/scattering-suns.

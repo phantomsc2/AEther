@@ -22,9 +22,9 @@ their respective scene shaders.
 
 ## Physical model and controls
 
-The model uses direct single scattering plus approximate multiple scattering with a normalized Draine phase function and
+The model uses direct single scattering plus approximate multiple scattering with a normalized Rayleigh + HG phase function and
 Rayleigh-derived RGB scattering coefficients. Density decreases exponentially
-with height. Integration stops at 10 scale heights (80 km by default), where
+with height. Integration stops at 10 scale heights (160 km by default), where
 density is approximately 0.0000454 of surface density; the remaining tail is
 discarded. There is no outer taper or separate height control.
 Scattering equals extinction: there are no
@@ -39,19 +39,19 @@ are applied in HLSL; there are no changes to the shared settings UI.
 
 | Control | Physical mapping | Default |
 |---|---|---|
-| `Atmosphere.RayleighScattering` | Each RGB component: 0 to 0.1 / km | (0.0058, 0.0135, 0.0331) / km |
-| `Atmosphere.ScaleHeight` | 1 to 16 km | 8 km |
-| `Atmosphere.Density` | Scattering/extinction density multiplier, 0 to 16 | 1 (slider 0.0625) |
-| `Sun.Azimuth` | 0 to 360 degrees | 0 degrees |
-| `Sun.Altitude` | -90 to 90 degrees | 30 degrees |
-| `Sun.Intensity` | 0 to 40 relative white irradiance | 20 |
+| `Atmosphere.RayleighScattering` | RGB power curves, 0 to 0.1 / km | (0.0049, 0.0135, 0.049) / km at midpoint |
+| `Atmosphere.ScaleHeight` | 16 * 2^(8*(slider-0.5)) km: 1 to 256 km | 16 km at midpoint |
+| `Atmosphere.Density` | 16 * slider^4.0831412353 | 0.944 at midpoint |
+| `Sun.Azimuth` | 0 to 360 degrees | 54 degrees |
+| `Sun.Altitude` | -90 to 90 degrees | 6.48 degrees |
+| `Sun.Intensity` | 0 to 40 relative white irradiance | 33.08 |
 | `Sun2.Azimuth` | 0 to 360 degrees | 180 degrees |
 | `Sun2.Altitude` | -90 to 90 degrees | 20 degrees |
-| `Sun2.Intensity` | 0 to 40 relative white irradiance | 10 |
-| `View.Azimuth` | 0 to 360 degrees | 0 degrees |
-| `View.Altitude` | -90 to 90 degrees | 10 degrees |
-| `Phase.Anisotropy` | Draine g: -0.95 to 0.95 | 0 (slider 0.5) |
-| `Phase.Shape` | Draine a: 0 to 2 | 1 (slider 0.5) |
+| `Sun2.Intensity` | 0 to 40 relative white irradiance | 0 |
+| `View.Azimuth` | 0 to 360 degrees | 80.28 degrees |
+| `View.Altitude` | -90 to 90 degrees | 6.48 degrees |
+| `Phase.Anisotropy` | HG g: 0 to 0.9975, logarithmic peak width | 0.95 at midpoint |
+| `Phase.Strength` | HG strength: 0 to 1, power curve | 0.288 at midpoint |
 | `ShowTransmittance` | Display the raw Transmittance LUT | Off |
 | `ShowSkyView` | Display the raw Sky-View LUT | Off |
 
@@ -61,20 +61,21 @@ straight up or down remains well defined. Intensity is relative to the renderer'
 linear illumination scale, not calibrated solar irradiance in W/m2. Global
 Graphics Exposure controls the displayed sky through the shared presentation pass.
 
-Both suns share the medium's phase parameters. Positive g produces a forward
-lobe, negative g a backward lobe; limiting its magnitude to 0.95 avoids the
-singularity at magnitude one. Shape a=0 gives Henyey-Greenstein, a=1 gives
-Cornette-Shanks. The defaults g=0, a=1 reproduce the previous Rayleigh angular
-response; g=0, a=0 is isotropic. For example, slider Anisotropy approximately
-0.921053 gives g=0.8. High g concentrates energy in a narrow lobe, whose sharpness
-is ultimately limited by the Sky-View texture resolution.
+Both suns share the phase parameters. Rayleigh is always present. Strength zero
+gives pure Rayleigh; increasing strength adds HG while preserving total energy.
+The midpoint preset reproduces the reference sunset: the former RGB controls
+(0.049, 0.135, 0.490), density 0.059, scale height 16 km, g=0.95, strength=0.288.
+The new RGB curves use exponents (4.3510744405, 2.8889686876, 1.0291463457),
+preserving zero and the original maximum per channel. The density curve also
+preserves vacuum and its original maximum. Sun2 is disabled by default.
 
 ```text
 c = dot(view direction, direction to sun)
-q = 1 + g*g - 2*g*c
-p(c) = (1-g*g)*(1+a*c*c) / (4*pi*(1+a*(1+2*g*g)/3)*q^(3/2))
+q = (1-g)^2 + 2*g*(1-c)
+Rayleigh(c) = 3*(1+c*c)/(16*pi)
+HG(c,g) = (1-g*g)/(4*pi*q^(3/2))
+p(c) = (Rayleigh(c) + strength*HG(c,g))/(1+strength)
 ```
-
 The function integrates to one over solid angle. Coefficients are calculated
 once per Sky-View texel and the phase is evaluated once per sun outside the
 segment loop, using reciprocal square root rather than a general power.
@@ -107,7 +108,7 @@ This puts more samples near the horizon. Both LUTs map parameter endpoints to
 texel centers and use clamped bilinear filtering. Sky generation integrates 64
 uniformly spaced path segments, evaluating density and sunlight at segment
 midpoints. Each segment uses the analytic constant-coefficient scattering integral
-and Beer-Lambert camera attenuation. Each sun has its own Draine phase evaluation and
+and Beer-Lambert camera attenuation. Each sun has its own Rayleigh + HG phase evaluation and
 planet occlusion evaluation. Their intensity-weighted incident radiance is added
 within each segment; density, optical depth, and camera attenuation are shared.
 Zero-intensity suns skip their sunlight evaluation. Sun attenuation comes from Transmittance;
@@ -173,7 +174,7 @@ repository-selected adapter, separately with one and two enabled suns. It writes
 default, single-sun day/sunset/twilight, night, and both raw LUTs to ignored
 `artifacts/atmosphere`. The second sun is disabled for the single-sun captures;
 both default suns are restored for raw LUT captures.
-An additional `draine-forward-lobe` capture uses g=0.8, a=1 with a single sun.
+An additional `hg-forward-lobe` capture uses g=0.8 with a single sun.
 Readbacks bound the GPU queue; their CPU duration is excluded from GPU timings.
 
 `AtmosphereQualityTradeoffsAt720p("Atmosphere")` compares 64, 128, and 256 linear
@@ -204,9 +205,9 @@ and [Bruneton and Neyret, Precomputed Atmospheric Scattering](https://scispace.c
 
 Both scenes expose **Transport** with independent switches:
 
-- **L0 - Surface reflectance (reserved)**: defaults off and has no rendering effect.
-- **L1 - Single scattering**: defaults on and controls only directly sunlit atmospheric scattering.
-- **L2+ - Multiple scattering**: defaults on and controls the approximate higher-order atmospheric source. It remains meaningful with displayed L1 disabled: the LUT's internal seed is not gated by the display switches.
+- **Surface**: defaults off and has no rendering effect.
+- **Single Scattering**: defaults on and controls only directly sunlit atmospheric scattering.
+- **Multiple Scattering (approx)**: defaults on and controls the approximate higher-order atmospheric source. It remains meaningful with displayed L1 disabled: the LUT's internal seed is not gated by the display switches.
 
 Attenuation and opaque geometry remain unchanged by these switches. L1+L2 equals
 the sum of their separately rendered linear radiances. Both disabled yields black
@@ -221,7 +222,7 @@ mean of isotropic single-scattered radiance; f is the angular mean unit-radiance
 scattering transfer. Both include atmospheric extinction and the opaque planet.
 This is constant cost with respect to scattering order, not an exact solution.
 The source construction follows the reference's isotropic phase approximation;
-it is independent of the editable direct-light Draine phase parameters.
+it is independent of the editable direct-light phase parameters.
 
 The denominator is floored at 0.0001 for optically thick, nonabsorbing extremes.
 This explicitly bounds amplification; those extremes are not physically validated.
@@ -249,3 +250,25 @@ compares sampled LUT nodes with independent double-precision dense-path integrat
 Legacy numerical fixtures explicitly disable L2+ to continue isolating L1.
 
 Reference: [Hillaire's implementation](https://github.com/sebh/UnrealEngineSkyAtmosphere/blob/master/Resources/RenderSkyRayMarching.hlsl), especially NewMultiScattCS and IntegrateScatteredLuminance.
+
+## Scattering suns
+
+Suns have no direct disk emission, angular radius, or Background Emission toggle.
+Their bright cores come entirely from the HG scattering lobe. Disabling both
+scattering orders, or setting density to zero, leaves no visible sun. Planet and
+meteor cutouts retain their existing finite-path scattering and occlusion.
+
+The shared phase controls are centered on g=0.95 and HG strength=0.288:
+
+```text
+g = 1 - 0.05^(2*Anisotropy)
+strength = Strength^1.7958592832
+p(c) = (Rayleigh(c) + strength*HG(c,g))/(1+strength)
+```
+
+Anisotropy zero is g=0; midpoint is g=0.95; maximum is g=0.9975.
+Strength zero gives pure Rayleigh; midpoint is 0.288; maximum is 1.
+The narrowest lobe is limited visually by Sky-View angular resolution.
+GPU tests check the centered preset, phase normalization, extreme anisotropy,
+and absence of direct emission at 1280x720. Default captures are written to
+artifacts/scattering-suns.

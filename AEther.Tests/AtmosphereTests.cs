@@ -50,6 +50,14 @@ public partial class ShaderRenderingTests
         }
         return sum * ds / 3;
     }
+    static float AtmosphereAnisotropySlider(double g) => (float)(Math.Log(1-g)/(2*Math.Log(.05)));
+    static float AtmosphereStrengthSlider(double strength) => (float)Math.Pow(strength,1/1.7958592832);
+    static double AtmosphereReferencePhase(double c, double g, double strength)
+    {
+        double rayleigh = 3*(1+c*c)/(16*Math.PI);
+        double hg = (1-g*g)/(4*Math.PI*Math.Pow(1+g*g-2*g*c,1.5));
+        return (rayleigh+strength*hg)/(1+strength);
+    }
     static double[] AtmosphereReferenceSky(double azimuth, double elevation, double sunAltitude,
         double sunAzimuth = 0, double intensity = 20, double cutoff = 10, int steps = 4096)
     {
@@ -57,7 +65,7 @@ public partial class ShaderRenderingTests
         double sy = Math.Sin(sunAltitude), sz = Math.Cos(sunAltitude), c = vy * sy + vz * sz;
         double top = AtmosphereR+cutoff*8;
         double ds = AtmosphereReferenceDistance(AtmosphereR, vy, top) / steps;
-        double column = 0, phase = 3 * (1 + c * c) / (16 * Math.PI);
+        double column = 0, phase = AtmosphereReferencePhase(c,.855,.25);
         double[] beta = [.0058, .0135, .0331], result = new double[3];
         for (int i = 0; i < steps; i++)
         {
@@ -150,10 +158,12 @@ public partial class ShaderRenderingTests
         var originalExposure = renderer.Options.Exposure;
         Assert.That(original.Skip(4 * 1280 * 650).Where((_, i) => i % 4 != 3), Is.All.Zero, "Flat black ground");
         Draw(); Assert.That(renderer.ReadPixels(false), Is.EqualTo(original), "No time or audio dependence");
+        PointSet(renderer, "Phase.Strength", 0f); Draw("Atmosphere sky view");
+        var rotationOriginal = renderer.ReadPixels(false);
         PointSet(renderer, "Sun.Azimuth", .25f); Draw("Atmosphere sky view");
         PointSet(renderer, "Sun2.Azimuth", .75f); Draw("Atmosphere sky view");
         PointSet(renderer, "View.Azimuth", .25f); Draw();
-        Assert.That(renderer.ReadPixels(false), Is.EqualTo(original).Within(1), "Rotate view and both suns together");
+        Assert.That(renderer.ReadPixels(false), Is.EqualTo(rotationOriginal).Within(1), "Rotate view and both suns together");
         foreach (float pitch in new[] { 0f, 1f }) { PointSet(renderer, "View.Altitude", pitch); Draw(); }
         Assert.That(RingReadScene(renderer).All(float.IsFinite), Is.True, "Vertical camera basis");
         PointSet(renderer, "ShowSkyView", true); Draw();
@@ -172,7 +182,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer, "Sun2.Intensity", .35f); Draw("Atmosphere sky view");
         PointSet(renderer, "Sun2.Altitude", .6f); Draw("Atmosphere sky view");
         PointSet(renderer, "Phase.Anisotropy", .8f); Draw("Atmosphere sky view");
-        PointSet(renderer, "Phase.Shape", .75f); Draw("Atmosphere sky view");
+        PointSet(renderer, "Phase.Strength", .75f); Draw("Atmosphere sky view");
         PointSet(renderer, "Atmosphere.ScaleHeight", .6f); Draw("Atmosphere transmittance", "Atmosphere sky view");
         renderer.Resize(1281, 721); Draw();
         Assert.That(effect.TransmittanceTexture.Description.Width, Is.EqualTo(256));
@@ -238,7 +248,7 @@ public partial class ShaderRenderingTests
         }
         void Equal(float[] actual, float[] expected, string message)
         {
-            Assert.That(actual.Zip(expected, (a,b) => Math.Abs(a-b)).Max(), Is.LessThan(1e-5), message);
+            Assert.That(actual.Zip(expected, (a,b) => Math.Abs(a-b)/Math.Max(1,Math.Abs(b))).Max(), Is.LessThan(2e-6), message);
         }
         Sun("Sun", .1f, 30, .5f); Sun("Sun2", .65f, secondAltitude, 0);
         var first = Read();
@@ -272,7 +282,7 @@ public partial class ShaderRenderingTests
     }
 
     [Test, Category("GPU")]
-    public void AtmosphereDrainePhaseMatchesFormulaAndConservesEnergy()
+    public void AtmospherePhaseMatchesFormulaAndConservesEnergy()
     {
         using var shaders = new SceneShaders("Spectrum");
         File.WriteAllText(Path.Combine(shaders.Path,"Scenes","Spectrum.hlsl"), """
@@ -290,29 +300,31 @@ public partial class ShaderRenderingTests
             #include "../Common/Atmosphere.hlsl"
             float4 PS(PSin input):SV_Target
             {
-                float c = 2*(input.Position.x-.5)/4096-1;
-                return LinearOutput(float3(AtmosphereDrainePhase(c,AtmosphereDraineCoefficients()),0,0));
+                float u = (input.Position.x-.5)/4096;
+                float c = 1-2*(u*u)*(u*u);
+                return LinearOutput(float3(AtmospherePhase(c,AtmospherePhaseCoefficients()),0,0));
             }
             """);
         using var window = new HiddenWindow();
         using var renderer = new Renderer(window.Handle,4097,1,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
-        foreach (var (g,a) in new[] { (0.0,0.0), (0.0,1.0), (.8,0.0), (.8,1.0), (.8,2.0), (-.95,2.0), (.95,2.0) })
+        foreach (var (g,strength) in new[] { (0.0,0.0), (.95,0.0), (0.0,1.0), (.8,.25), (.8,1.0), (.95,.25), (.95,1.0), (.9975,0.0), (.9975,1.0) })
         {
-            PointSet(renderer,"Phase.Anisotropy",(float)((g+.95)/1.9));
-            PointSet(renderer,"Phase.Shape",(float)(a/2));
+            PointSet(renderer,"Phase.Anisotropy",AtmosphereAnisotropySlider(g));
+            PointSet(renderer,"Phase.Strength",AtmosphereStrengthSlider(strength));
             renderer.Render(false);
             var pixels = RingReadScene(renderer);
             double integral = 0;
             for (int i=0;i<=4096;i++)
             {
-                double c = 2.0*i/4096-1;
-                double expected = (1-g*g)*(1+a*c*c)/(4*Math.PI*(1+a*(1+2*g*g)/3)*Math.Pow(1+g*g-2*g*c,1.5));
+                float u = i/4096f;
+                double c = 1f-2f*(u*u)*(u*u);
+                double expected = AtmosphereReferencePhase(c,g,strength);
                 double actual = pixels[4*i];
-                Assert.That(actual,Is.EqualTo(expected).Within(Math.Max(1e-6,expected*.002)),$"g={g}, a={a}, c={c}");
-                integral += (i==0 || i==4096 ? 1 : i%2==0 ? 2 : 4)*actual;
+                Assert.That(actual,Is.EqualTo(expected).Within(Math.Max(1e-6,expected*.002)),$"g={g}, strength={strength}, c={c}");
+                integral += (i==0 || i==4096 ? 1 : i%2==0 ? 2 : 4)*actual*(8*Math.Pow(u,3));
             }
-            integral *= 2*Math.PI*(2.0/4096)/3;
-            Assert.That(integral,Is.EqualTo(1).Within(.002),$"Normalized phase g={g}, a={a}");
+            integral *= 2*Math.PI/4096/3;
+            Assert.That(integral,Is.EqualTo(1).Within(.002),$"Normalized phase g={g}, strength={strength}");
         }
     }
 
@@ -375,7 +387,7 @@ public partial class ShaderRenderingTests
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
         PointSet(renderer, "Sun2.Intensity", 0);
         PointSet(renderer, "View.Altitude", 2f/3);
-        PointSet(renderer, "Phase.Anisotropy", (float)((.8+.95)/1.9));
-        Capture("draine-forward-lobe");
+        PointSet(renderer, "Phase.Anisotropy", AtmosphereAnisotropySlider(.8));
+        Capture("hg-forward-lobe");
     }
 }

@@ -44,7 +44,7 @@ public partial class ShaderRenderingTests
         PointSet(renderer,"Camera.Yaw",.55f);Draw();Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
         PointSet(renderer,"Camera.Fov",.7f);Draw();
         Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));Assert.That(markers,Does.Not.Contain("Atmosphere sky view"));
-        PointSet(renderer,"Atmosphere.Phase.Shape",.6f);Draw();
+        PointSet(renderer,"Atmosphere.Phase.Strength",.6f);Draw();
         Assert.That(markers,Does.Contain("Atmosphere sky view"));Assert.That(markers,Does.Contain("Atmosphere aerial perspective"));
         Assert.That(markers,Does.Not.Contain("Atmosphere transmittance"));
         PointSet(renderer,"Shell.Count",0);Draw();Assert.That(markers,Does.Not.Contain("Atmosphere aerial perspective"));

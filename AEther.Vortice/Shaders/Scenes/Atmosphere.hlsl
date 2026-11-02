@@ -2,17 +2,19 @@
 cbuffer Parameters
 {
     TransportSettings Transport = { false, true, true };
-    AtmosphereSettings Atmosphere = { float3(.058, .135, .331), 7.0/15.0, .0625 };
-    AtmosphereSunSettings Sun = { 0, 2.0/3.0, .5 };
-    AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, .25 };
-    AtmosphereViewSettings View = { 0, 100.0/180.0 };
+    AtmosphereSettings Atmosphere = { float3(.5,.5,.5), .5, .5 };
+    AtmosphereSunSettings Sun = { .150, .536, .827 };
+    AtmosphereSunSettings Sun2 = { .5, 110.0/180.0, 0 };
+    AtmosphereViewSettings View = { .223, .536 };
     AtmospherePhaseSettings Phase = { .5, .5 };
     bool ShowTransmittance = false;
     bool ShowSkyView = false;
     bool ShowMultipleScattering = false;
 };
-float AtmosphereScaleHeight() { return lerp(1.0, 16.0, Atmosphere.ScaleHeight); }
-float3 AtmosphereBeta() { return .1 * Atmosphere.RayleighScattering * (16*Atmosphere.Density); }
+// Midpoints reproduce the reference sunset; power curves retain vacuum and maximum scattering.
+float AtmosphereScaleHeight() { return 16*exp2(8*(Atmosphere.ScaleHeight-.5)); }
+float3 AtmosphereBeta() { return .1*pow(Atmosphere.RayleighScattering,float3(4.3510744405,2.8889686876,1.0291463457))
+        * (16*pow(Atmosphere.Density,4.0831412353)); }
 #include "../Common/Atmosphere.hlsl"
 #include "../Common/Projection.hlsl"
 
@@ -57,6 +59,7 @@ float4 PS(PSin input) : SV_TARGET
     if (direction.y<0) return LinearOutput(0);
     uint width,height;
     AtmosphereSkyView.GetDimensions(width,height);
-    return LinearOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,
-        AtmosphereTexelUV(AtmosphereSkyCoordinates(direction),width,height),0).rgb);
+    return LinearOutput(min(AtmosphereSkyView.SampleLevel(AtmosphereSampler,
+        AtmosphereTexelUV(AtmosphereSkyCoordinates(direction),width,height),0).rgb
+        ,65504));
 }

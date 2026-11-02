@@ -11,10 +11,10 @@ struct PlanetDebugSettings { bool Transmittance, SkyView, Aerial, Transmission, 
 cbuffer Parameters
 {
     TransportSettings Transport = { false, true, true };
-    PlanetAtmosphereSettings Atmosphere = { float3(.201,.454,.687), .18, .5, { .3,.5 } };
+    PlanetAtmosphereSettings Atmosphere = { float3(.201,.454,.687), .18, .5, { .5,.5 } };
     PlanetCameraSettings Camera = { .1024908, 0, .5, .5, .5, .81818182 };
     ShellSettings Shell = { .03903904, .4, .05714286, .244140625, .5 };
-    AtmosphereSunSettings Sun = { .25,.5,.5 };
+    AtmosphereSunSettings Sun = { 232.0/360,.5,.5 };
     AtmosphereSunSettings Sun2 = { .5,110.0/180.0,0 };
     PlanetDebugSettings Debug = { false,false,false,false,false,.5 };
 };
@@ -212,5 +212,6 @@ float4 PS(PSin input):SV_TARGET
         return LinearOutput(AerialRadiance.SampleLevel(AtmosphereSampler,uv,0).rgb);
     }
     uint width,height; AtmosphereSkyView.GetDimensions(width,height);
-    return LinearOutput(AtmosphereSkyView.SampleLevel(AtmosphereSampler,PlanetLutUV(ray,disk,width,height),0).rgb);
+    float3 radiance=AtmosphereSkyView.SampleLevel(AtmosphereSampler,PlanetLutUV(ray,disk,width,height),0).rgb;
+    return LinearOutput(min(radiance,65504));
 }

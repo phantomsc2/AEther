@@ -58,7 +58,7 @@ public partial class ShaderRenderingTests
             {
                 foreach(var (key,value) in new[]{("Camera.Alt",PlanetReferenceOrbit(0)),("Camera.Long",.618f),("Camera.Lat",.359f),
                     ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Sun2.Intensity",0f),
-                    ("Atmosphere.Phase.Anisotropy",.580f),("Atmosphere.Phase.Shape",0f)}) PointSet(renderer,key,value);
+                    ("Atmosphere.Phase.Anisotropy",AtmosphereAnisotropySlider(.95*.580)),("Atmosphere.Phase.Strength",AtmosphereStrengthSlider(.25))}) PointSet(renderer,key,value);
             }
             else {PointSet(renderer,"Sun.Altitude",.48f);PointSet(renderer,"Sun2.Intensity",0);}
             Tick();images[steps]=[day,RingReadScene(renderer)];

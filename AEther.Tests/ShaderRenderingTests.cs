@@ -288,7 +288,7 @@ public partial class ShaderRenderingTests
         readonly string temporaryRoot = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath());
         public string Path { get; }
         public string Scene { get; }
-        public SceneShaders(string scene, bool multipleScattering = false)
+        public SceneShaders(string scene, bool multipleScattering = false, bool referenceAtmosphere = true)
         {
             Scene = scene;
             Path = System.IO.Path.Combine(temporaryRoot, "AEther-silence-" + Guid.NewGuid().ToString("N"));
@@ -310,6 +310,24 @@ public partial class ShaderRenderingTests
                     "TransportSettings Transport = { false, true, true };",
                     "TransportSettings Transport = { false, true, false };"));
             }
+            // Keep independent numerical fixtures at their original physical settings.
+            // The centered-preset test opts out and exercises the production defaults.
+            if (referenceAtmosphere && scene == "Atmosphere")
+            {
+                var file = System.IO.Path.Combine(Path, "Scenes", scene + ".hlsl");
+                var source = File.ReadAllText(file);
+                double[] oldRgb = [.058,.135,.331], exponents = [4.3510744405,2.8889686876,1.0291463457];
+                var rgb = oldRgb.Select((v,i) => (float)Math.Pow(v,1/exponents[i])).ToArray();
+                var density = (float)Math.Pow(.0625,1/4.0831412353);
+                string F(float v) => v.ToString("R",System.Globalization.CultureInfo.InvariantCulture);
+                source = source.Replace("float3(.5,.5,.5), .5, .5",
+                    $"float3({F(rgb[0])},{F(rgb[1])},{F(rgb[2])}), .375, {F(density)}")
+                    .Replace("{ .150, .536, .827 }", "{ 0, 2.0/3.0, .5 }")
+                    .Replace("{ .5, 110.0/180.0, 0 }", "{ .5, 110.0/180.0, .25 }")
+                    .Replace("{ .223, .536 }", "{ 0, 100.0/180.0 }")
+                    .Replace("Phase = { .5, .5 }", $"Phase = {{ {F(AtmosphereAnisotropySlider(.855))}, {F(AtmosphereStrengthSlider(.25))} }}");
+                File.WriteAllText(file,source);
+            }
         }
         public void Dispose()
         {
@@ -318,13 +336,6 @@ public partial class ShaderRenderingTests
             Directory.Delete(Path, true);
         }
     }
-
-
-
-
-
-
-
     [Test, Category("GPU")]
     public void GraphicsHistoryChangesPreserveFluidAndShaderState()
     {

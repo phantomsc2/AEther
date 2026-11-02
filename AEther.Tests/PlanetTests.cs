@@ -44,7 +44,7 @@ public partial class ShaderRenderingTests
             ("Atmosphere.Density", (float)Math.Pow(.15,1/2.53951953)),
             ("Camera.Long", 0f), ("Camera.Lat", .5f), ("Camera.Alt", PlanetReferenceOrbit(.25)),
             ("Sun.Azimuth", 0f), ("Sun.Altitude", 2f/3), ("Sun.Intensity", .5f), ("Sun2.Azimuth", .5f), ("Sun2.Altitude", 110f/180), ("Sun2.Intensity", .25f),
-            ("Atmosphere.Phase.Anisotropy", .5f), ("Camera.Yaw", .5f) }) PointSet(renderer, path, value);
+            ("Atmosphere.Phase.Anisotropy", AtmosphereAnisotropySlider(.855)), ("Atmosphere.Phase.Strength", AtmosphereStrengthSlider(.25)), ("Camera.Yaw", .5f) }) PointSet(renderer, path, value);
     }
 
     static double PlanetDensity(double h, double scale = .55*AtmosphereR)
@@ -93,7 +93,7 @@ public partial class ShaderRenderingTests
                     sy:-wx*Math.Sin(el)*Math.Sin(az)+wy*Math.Cos(el)-wz*Math.Sin(el)*Math.Cos(az),
                     sz:wx*Math.Cos(el)*Math.Sin(az)+wy*Math.Sin(el)+wz*Math.Cos(el)*Math.Cos(az),intensity);
             }).ToArray();
-        double g=eclipse ? -.95+1.9*.580 : 0, a=eclipse ? 0 : 1;
+        double g=eclipse ? .95*.580 : .855;
         for (int i=0;i<steps;i++)
         {
             double t = begin+(i+.5)*ds, px = t*dx, py=t*dy, pz=r+t*dz;
@@ -104,7 +104,7 @@ public partial class ShaderRenderingTests
                 if (mu<0 && radius*radius*mu*mu>radius*radius-AtmosphereR*AtmosphereR) continue;
                 double sunColumn=PlanetColumn(radius,mu,AtmosphereReferenceDistance(radius,mu,top),scale);
                 double c=dx*sx+dy*sy+dz*sz;
-                double phase=(1-g*g)*(1+a*c*c)/(4*Math.PI*(1+a*(1+2*g*g)/3)*Math.Pow(1+g*g-2*g*c,1.5));
+                double phase=AtmosphereReferencePhase(c,g,.25);
                 for (int channel=0;channel<3;channel++)
                     result[channel]+=intensity*phase*beta[channel]*density*ds*
                         Math.Exp(-beta[channel]*(column+.5*density*ds+sunColumn));
@@ -263,7 +263,7 @@ public partial class ShaderRenderingTests
         PlanetReferenceSettings(renderer);
         foreach(var (path,value) in new[]{("Camera.Alt",PlanetReferenceOrbit(0)),("Camera.Long",.618f),("Camera.Lat",.359f),
             ("Sun.Altitude",.233f),("Sun.Azimuth",.294f),("Sun.Intensity",.484f),("Sun2.Intensity",0f),
-            ("Atmosphere.Phase.Anisotropy",.580f),("Atmosphere.Phase.Shape",0f)}) PointSet(renderer,path,value);
+            ("Atmosphere.Phase.Anisotropy",AtmosphereAnisotropySlider(.95*.580)),("Atmosphere.Phase.Strength",AtmosphereStrengthSlider(.25))}) PointSet(renderer,path,value);
         renderer.Render(false);
         var sky=AtmosphereRead(renderer,((AtmosphereEffect)renderer.ActiveShader!.Effects[0]).SkyViewTexture);
         foreach(var (x,y) in new[]{(0,0),(64,59),(192,59),(0,70),(64,70),(128,70),(192,70),(64,90),(192,110)})
@@ -305,7 +305,7 @@ public partial class ShaderRenderingTests
         renderer.ActiveShader!.Effects[0].Parameters!.Reset();
         PointSet(renderer,"Camera.Alt",0);PointSet(renderer,"Camera.Long",.618f);PointSet(renderer,"Camera.Lat",.359f);
         PointSet(renderer,"Sun.Altitude",.233f);PointSet(renderer,"Sun.Azimuth",.294f);PointSet(renderer,"Sun.Intensity",.484f);
-        PointSet(renderer,"Sun2.Intensity",0);PointSet(renderer,"Atmosphere.Phase.Anisotropy",.580f);PointSet(renderer,"Atmosphere.Phase.Shape",0);
+        PointSet(renderer,"Sun2.Intensity",0);PointSet(renderer,"Atmosphere.Phase.Anisotropy",AtmosphereAnisotropySlider(.95*.580));PointSet(renderer,"Atmosphere.Phase.Strength",AtmosphereStrengthSlider(.25));
         PointSet(renderer,"Camera.Pitch",.458f);PointSet(renderer,"Camera.Yaw",.469f);Capture("eclipse");
     }
 }

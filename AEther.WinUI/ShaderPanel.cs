@@ -13,7 +13,7 @@ public sealed class ShaderPanel : UserControl
     Renderer? renderer;
     // Allows restarting a preview after renderer changes without losing its scene.
     public string? SelectedScene { get; private set; } = Environment.GetCommandLineArgs()
-        .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..];
+        .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..] ?? "Planet";
     public event EventHandler? SceneChanged;
 
     public ShaderPanel()
@@ -188,7 +188,7 @@ public sealed class ShaderPanel : UserControl
         }
         if (parameter.IsBoolean)
         {
-            var checkbox = new CheckBox { Content = parameter.Path switch { "Transport.L0" => "L0 - Surface reflectance (reserved)", "Transport.L1" => "L1 - Single scattering", "Transport.L2Plus" => "L2+ - Multiple scattering", _ => parameter.Name == "WarmStart" ? "Warm Start" : parameter.Name }, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
+            var checkbox = new CheckBox { Content = parameter.Path switch { "Transport.L0" => "Surface", "Transport.L1" => "Single Scattering", "Transport.L2Plus" => "Multiple Scattering (approx)", _ => parameter.Name == "WarmStart" ? "Warm Start" : parameter.Name }, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
             checkbox.Checked += (_, _) => values.SetBoolean(parameter, true);
             checkbox.Unchecked += (_, _) => values.SetBoolean(parameter, false);
             ParameterMenu.Attach(checkbox, () =>

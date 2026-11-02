@@ -24,20 +24,21 @@ float AtmosphereDensityAtAltitude(float h)
 #ifndef ATMOSPHERE_PHASE
 #define ATMOSPHERE_PHASE Phase
 #endif
-// Draine (2003), normalized over 4*pi. Shape a=0 gives HG, a=1 gives Cornette-Shanks.
-// Coefficients are uniform and evaluated once per Sky-View texel, outside integration.
-float4 AtmosphereDraineCoefficients()
+// Normalized Rayleigh + HG. Coefficients are evaluated outside integration.
+float4 AtmospherePhaseCoefficients()
 {
-    float g = lerp(-.95,.95,ATMOSPHERE_PHASE.Anisotropy), a = 2*ATMOSPHERE_PHASE.Shape;
-    float g2 = g*g;
-    float k = (1-g2)/(4*AtmospherePi*(1+a*(1+2*g2)/3));
-    return float4(1+g2,2*g,k,a);
+    // Exponential peak width: g=0 at zero, .95 at midpoint, .9975 at maximum.
+    float g = 1-pow(.05,2*ATMOSPHERE_PHASE.Anisotropy);
+    float s = pow(ATMOSPHERE_PHASE.Strength,1.7958592832);
+    return float4((1-g)*(1-g),2*g,(1-g*g)/(4*AtmospherePi),s);
 }
-float AtmosphereDrainePhase(float c, float4 coefficients)
+float AtmospherePhase(float c, float4 coefficients)
 {
     c = clamp(c,-1,1);
-    float r = rsqrt(max(1e-6,coefficients.x-coefficients.y*c));
-    return coefficients.z*(1+coefficients.w*c*c)*r*r*r;
+    float rayleigh = 3*(1+c*c)/(16*AtmospherePi);
+    float r = rsqrt(coefficients.x+coefficients.y*(1-c));
+    float hg = coefficients.z*r*r*r;
+    return (rayleigh+coefficients.w*hg)/(1+coefficients.w);
 }
 float AtmosphereAltitudeAngle(float value) { return AtmospherePi * (value - .5); }
 float3 AtmosphereDirection(float azimuth, float altitude)
@@ -171,9 +172,9 @@ float3 AtmosphereIntegrateTransport(float3 origin, float3 ray, float distance, u
     float3 betaStep = AtmosphereBeta()*step;
     float3 sun = AtmosphereDirection(2*AtmospherePi*Sun.Azimuth,AtmosphereAltitudeAngle(Sun.Altitude));
     float3 sun2 = AtmosphereDirection(2*AtmospherePi*Sun2.Azimuth,AtmosphereAltitudeAngle(Sun2.Altitude));
-    float4 coefficients = AtmosphereDraineCoefficients();
+    float4 coefficients = AtmospherePhaseCoefficients();
     float c = dot(ray,sun), c2 = dot(ray,sun2);
-    float phase = AtmosphereDrainePhase(c,coefficients), phase2 = AtmosphereDrainePhase(c2,coefficients);
+    float phase = AtmospherePhase(c,coefficients), phase2 = AtmospherePhase(c2,coefficients);
     float3 radiance = 0;
     [loop] for (uint i=0; i<steps; i++)
     {
