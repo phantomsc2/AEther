@@ -324,7 +324,7 @@ public partial class ShaderRenderingTests
                     $"float3({F(rgb[0])},{F(rgb[1])},{F(rgb[2])}), .375, {F(density)}")
                     .Replace("{ .150, .536, .827 }", "{ 0, 2.0/3.0, .5 }")
                     .Replace("{ .223, .536 }", "{ 0, 100.0/180.0 }")
-                    .Replace("Phase = { .5, .5 }", $"Phase = {{ {F(AtmosphereAnisotropySlider(.855))}, {F(AtmosphereStrengthSlider(.25))} }}");
+                    .Replace("Phase = { .5, .5, false }", $"Phase = {{ {F(AtmosphereAnisotropySlider(.855))}, {F(AtmosphereStrengthSlider(.25))}, false }}");
                 File.WriteAllText(file,source);
             }
         }

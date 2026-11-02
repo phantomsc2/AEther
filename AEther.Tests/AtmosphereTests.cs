@@ -226,7 +226,7 @@ public partial class ShaderRenderingTests
             {
                 AtmosphereSettings Atmosphere = { float3(.058,.135,.331), 7.0/15.0, .0625 };
                 AtmosphereSunSettings Sun = { 0, 2.0/3.0, .5 };
-                AtmospherePhaseSettings Phase = { .5, .5 };
+                AtmospherePhaseSettings Phase = { .5, .5, false };
                 TransportSettings Transport = { false, true, false };
             };
             float AtmosphereScaleHeight() { return lerp(1.0,16.0,Atmosphere.ScaleHeight); }

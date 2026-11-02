@@ -50,12 +50,17 @@ public partial class ShaderRenderingTests
         Assert.That(renderer.ReloadActiveScene(),Is.True,renderer.ShaderError);Draw();Assert.That(markers,Does.Contain("Atmosphere multiple scattering"));
     }
 
-    [Test,Category("GPU")]
-    public void AtmosphereMultipleLutMatchesIndependentClosure()
+    [TestCase(false),TestCase(true),Category("GPU")]
+    public void AtmosphereMultipleLutMatchesIndependentClosure(bool phaseSeed)
     {
         using var shaders=new SceneShaders("Atmosphere",multipleScattering:true);
         using var window=new HiddenWindow();
         using var renderer=new Renderer(window.Handle,1280,720,8,60,shaderDirectory:shaders.Path,initialScene:shaders.Scene);
+        PointSet(renderer,"Phase.UseForMultipleScattering",phaseSeed);
+        if(phaseSeed) {
+            PointSet(renderer,"Phase.Anisotropy",AtmosphereAnisotropySlider(.5));
+            PointSet(renderer,"Phase.Strength",AtmosphereStrengthSlider(.25));
+        }
         renderer.Render(false);var effect=(AtmosphereEffect)renderer.ActiveShader!.Effects[0];
         var lut=AtmosphereRead(renderer,effect.MultipleScatteringTexture);
         double[] beta=[.0058,.0135,.0331];
@@ -65,6 +70,7 @@ public partial class ShaderRenderingTests
             for(int j=0;j<64;j++) {
                 double mu=1-2*((j/8)+.5)/8,phi=2*Math.PI*((j%8)+.5)/8;
                 double cosine=mu*sunMu+Math.Sqrt((1-mu*mu)*(1-sunMu*sunMu))*Math.Cos(phi);
+                double phase=phaseSeed?AtmosphereReferencePhase(cosine,.5,.25):1/(4*Math.PI);
                 double distance=AtmosphereReferenceDistance(r,mu);
                 if(mu<0 && r*r*(1-mu*mu)<AtmosphereR*AtmosphereR) distance=-r*mu-Math.Sqrt(AtmosphereR*AtmosphereR-r*r*(1-mu*mu));
                 const int n=256;double ds=distance/n,column=0;
@@ -74,7 +80,7 @@ public partial class ShaderRenderingTests
                     bool shadow=sm<0 && radius*radius*(1-sm*sm)<AtmosphereR*AtmosphereR;
                     if(!shadow) {
                         double sunColumn=AtmosphereReferenceColumn(radius,sm,AtmosphereReferenceDistance(radius,sm));
-                        for(int c=0;c<3;c++) seed[c]+=beta[c]*density*ds*Math.Exp(-beta[c]*(column+.5*density*ds+sunColumn))/(64*4*Math.PI);
+                        for(int c=0;c<3;c++) seed[c]+=beta[c]*density*ds*Math.Exp(-beta[c]*(column+.5*density*ds+sunColumn))*phase/64;
                     }
                     column+=density*ds;
                 }

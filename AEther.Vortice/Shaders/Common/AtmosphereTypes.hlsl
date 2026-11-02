@@ -14,5 +14,5 @@ struct AtmosphereSettings
 };
 struct AtmosphereSunSettings { float Azimuth, Altitude, Intensity; };
 struct AtmosphereViewSettings { float Azimuth, Altitude; };
-struct AtmospherePhaseSettings { float Anisotropy, Strength; };
+struct AtmospherePhaseSettings { float Anisotropy, Strength; bool UseForMultipleScattering; };
 #endif

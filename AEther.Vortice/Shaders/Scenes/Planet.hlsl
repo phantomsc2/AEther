@@ -11,7 +11,7 @@ struct PlanetDebugSettings { bool Transmittance, SkyView, Aerial, Transmission, 
 cbuffer Parameters
 {
     TransportSettings Transport = { false, true, true };
-    PlanetAtmosphereSettings Atmosphere = { float3(.201,.454,.687), .18, .5, { .5,.5 } };
+    PlanetAtmosphereSettings Atmosphere = { float3(.201,.454,.687), .18, .5, { .5,.5,false } };
     PlanetCameraSettings Camera = { .1024908, 0, .5, .5, .5, .81818182 };
     ShellSettings Shell = { .03903904, .4, .05714286, .244140625, .5 };
     AtmosphereSunSettings Sun = { 232.0/360,.5,.5 };

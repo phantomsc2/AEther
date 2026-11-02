@@ -26,7 +26,7 @@ public sealed class AtmosphereEffect : SceneEffect
     internal int AerialSize { get; set; } = 32;
     internal bool ExperimentalHalfSky { get; set; }
     ShaderParameters? previous;
-    float[]? atmosphereKey, sunKey;
+    float[]? atmosphereKey, sunKey, multiplePhaseKey;
 
     // Internal texture access supports numerical GPU checks without display quantization.
     internal ID3D11Texture3D AerialSunTexture => aerialSun!.Texture;
@@ -131,6 +131,16 @@ public sealed class AtmosphereEffect : SceneEffect
         multipleScattering ??= new(Device, 32, 32);
         textures["AtmosphereMultipleScattering"] = multipleScattering.View;
         outputs["AtmosphereMultipleScatteringOutput"] = multipleScattering.Output;
+        var phaseLeaves = ShaderParameters.Leaves(parameters!.Items)
+            .Where(p => p.Path.StartsWith("Phase.", StringComparison.Ordinal) || p.Path.StartsWith("Atmosphere.Phase.", StringComparison.Ordinal))
+            .ToArray();
+        bool phaseSeed = parameters.GetBoolean(phaseLeaves.Single(p => p.Name == "UseForMultipleScattering"));
+        float[] nextMultiplePhase = phaseSeed
+            ? [1, .. phaseLeaves.Where(p => !p.IsBoolean).Select(parameters.GetFloat)]
+            : [0];
+        multipleDirty |= multiplePhaseKey == null || !nextMultiplePhase.AsSpan().SequenceEqual(multiplePhaseKey);
+        multiplePhaseKey = nextMultiplePhase;
+        bool rebuiltMultiple = false;
         multipleDirty |= rebuildTransmittance;
         var multipleToggle = ShaderParameters.Leaves(parameters!.Items).Single(p => p.Path == "Transport.L2Plus");
         bool showMultiple = ShaderParameters.Leaves(parameters.Items)
@@ -139,6 +149,7 @@ public sealed class AtmosphereEffect : SceneEffect
         {
             Run(multipleProgram, "Atmosphere multiple scattering", 32, 32);
             multipleDirty = false;
+            rebuiltMultiple = true;
             rebuildSky |= parameters.GetBoolean(multipleToggle);
         }
         if (rebuildSky) Run(skyViewProgram, "Atmosphere sky view", skyViewWidth, skyViewHeight);
@@ -157,7 +168,7 @@ public sealed class AtmosphereEffect : SceneEffect
                 aerialSun.Dispose(); aerialMultiple!.Dispose(); aerialTransmission!.Dispose();
                 aerialSun = null; aerialMultiple = null; aerialTransmission = null;
             }
-            bool rebuild = aerialSun == null || aerialKey == null || !key.AsSpan().SequenceEqual(aerialKey) || aspect != aerialAspect;
+            bool rebuild = (rebuiltMultiple && parameters.GetBoolean(multipleToggle)) || aerialSun == null || aerialKey == null || !key.AsSpan().SequenceEqual(aerialKey) || aspect != aerialAspect;
             aerialSun ??= new(Device, AerialSize); aerialTransmission ??= new(Device, AerialSize);
             aerialMultiple ??= new(Device, AerialSize);
             textures["AerialMultiple"] = aerialMultiple.View;
@@ -193,7 +204,7 @@ public sealed class AtmosphereEffect : SceneEffect
         multipleScattering?.Dispose(); multipleScattering = null; multipleDirty = true;
         skyMultiple?.Dispose(); skyMultiple = null;
         transmittance?.Dispose(); skySun?.Dispose(); transmittance = null; skySun = null;
-        cameraKey = null; previous = null; atmosphereKey = null; sunKey = null; aerialKey = null;
+        cameraKey = null; previous = null; atmosphereKey = null; sunKey = null; aerialKey = null; multiplePhaseKey = null;
         aerialSun?.Dispose(); aerialMultiple?.Dispose(); aerialTransmission?.Dispose();
         aerialSun = null; aerialMultiple = null; aerialTransmission = null;
         meteors?.Release();

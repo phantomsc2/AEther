@@ -5,7 +5,7 @@ cbuffer Parameters
     AtmosphereSettings Atmosphere = { float3(.5,.5,.5), .5, .5 };
     AtmosphereSunSettings Sun = { .150, .536, .827 };
     AtmosphereViewSettings View = { .223, .536 };
-    AtmospherePhaseSettings Phase = { .5, .5 };
+    AtmospherePhaseSettings Phase = { .5, .5, false };
     bool ShowTransmittance = false;
     bool ShowSkyView = false;
     bool ShowMultipleScattering = false;

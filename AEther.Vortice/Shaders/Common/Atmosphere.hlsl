@@ -116,6 +116,8 @@ float3 AtmosphereMultipleSource(float h, float sunMu)
 }
 // Hillaire 2020 eqs. 5-10: isotropic seed and geometric-series closure.
 // Independent of the display's L1/L2 toggles, sun intensity, and camera.
+// Optionally retain first-bounce phase; all later scattering remains isotropic.
+// The fixed 64-direction quadrature can undersample narrow HG peaks.
 [numthreads(8,8,1)]
 void BuildMultipleScattering(uint3 id:SV_DispatchThreadID)
 {
@@ -127,6 +129,7 @@ void BuildMultipleScattering(uint3 id:SV_DispatchThreadID)
     float sunMu=2*uv.x-1;
     float3 sun=float3(sqrt(saturate(1-sunMu*sunMu)),sunMu,0);
     float3 beta=AtmosphereBeta(),seed=0,transfer=0;
+    float4 phaseCoefficients=AtmospherePhaseCoefficients();
     const uint directions=64,steps=32;
     [loop] for(uint j=0;j<directions;j++)
     {
@@ -140,6 +143,7 @@ void BuildMultipleScattering(uint3 id:SV_DispatchThreadID)
             float b=r*mu,c=h*(2*AtmosphereRadius+h);
             distance=c/max(-b+sqrt(max(0,b*b-c)),1e-6);
         }
+        float seedPhase=AtmospherePhase(dot(ray,sun),phaseCoefficients);
         float ds=distance/steps;
         float3 t=1,a=0;
         [loop] for(uint i=0;i<steps;i++)
@@ -148,8 +152,8 @@ void BuildMultipleScattering(uint3 id:SV_DispatchThreadID)
             float sampleH=AtmosphereAltitudeAlongRay(h,mu,d);
             float3 tau=beta*ds*AtmosphereDensityAtAltitude(sampleH),ts=exp(-tau);
             float sampleSunMu=clamp((r*sunMu+d*dot(ray,sun))/(AtmosphereRadius+sampleH),-1,1);
-            a+=t*AtmosphereSunTransmittance(sampleH,sampleSunMu)
-                *AtmosphereSegmentScatter(tau,ts)/(4*AtmospherePi);
+            float3 source=t*AtmosphereSunTransmittance(sampleH,sampleSunMu)*AtmosphereSegmentScatter(tau,ts);
+            a+=ATMOSPHERE_PHASE.UseForMultipleScattering ? source*seedPhase : source/(4*AtmospherePi);
             t*=ts;
         }
         seed+=a/directions;
