@@ -26,15 +26,15 @@ float3 AtmosphereBeta() { return .01 * Atmosphere.RayleighScattering * Atmospher
 #include "../Common/Atmosphere.hlsl"
 #include "../Common/Projection.hlsl"
 
-float3 PlanetObserver()
+float3 PlanetCalculateObserver()
 {
     return AtmosphereDirection(2*AtmospherePi*Camera.Long,lerp(-89.0,89.0,Camera.Lat)*AtmospherePi/180)
         *(AtmosphereRadius*pow(8.82,Camera.Alt)); // Surface at zero, original 8.82R maximum.
 }
-ProjectionCamera PlanetCamera()
+ProjectionCamera PlanetCalculateCamera()
 {
     float azimuth = 2*AtmospherePi*Camera.Long;
-    float3 origin = PlanetObserver(), forward = -normalize(origin);
+    float3 origin = PlanetCalculateObserver(), forward = -normalize(origin);
     float3 right = float3(-cos(azimuth),0,sin(azimuth));
     return MakeProjectionCamera(origin,forward,right,cross(forward,right));
 }
@@ -47,20 +47,41 @@ bool PlanetSphere(float3 origin, float3 ray, float radius, out float2 roots)
     roots = -b + float2(-1,1)*sqrt(max(0,q));
     return q>=0 && roots.y>0;
 }
-float PlanetLimbAngle()
+float PlanetCalculateLimbAngle()
 {
-    float r = length(PlanetObserver());
+    float r = length(PlanetCalculateObserver());
     return asin(saturate(AtmosphereRadius/r));
 }
-float PlanetAngularScale(float limb)
+float PlanetCalculateAngularScale(float limb)
 {
     // Half the non-disk rows reach the projected altitude 2H (or a hemisphere
     // when inside that region). The remaining rows retain full-sphere coverage.
-    float core = asin(min(1,(AtmosphereRadius+2*AtmosphereScaleHeight())/length(PlanetObserver())));
+    float core = asin(min(1,(AtmosphereRadius+2*AtmosphereScaleHeight())/length(PlanetCalculateObserver())));
     float span = AtmospherePi-limb, width = core-limb;
     // From the surface, distribute non-disk rows across the sky hemisphere;
     // the dense core and limb coincide, so the orbital mapping degenerates.
     return width>1e-6 ? width/(span-width) : 1;
+}
+// Camera transport constants are rebuilt only when their input controls change.
+cbuffer PlanetCameraConstants
+{
+    float4 PlanetOrigin, PlanetForward, PlanetRight, PlanetUp;
+    float4 PlanetViewForward, PlanetViewRight, PlanetViewUp;
+    float4 PlanetLens; // focal, near, far, limb angle
+    float4 PlanetMapping; // angular scale
+};
+float3 PlanetObserver() { return PlanetOrigin.xyz; }
+ProjectionCamera PlanetCamera()
+{
+    return MakeProjectionCamera(PlanetOrigin.xyz,PlanetForward.xyz,PlanetRight.xyz,PlanetUp.xyz);
+}
+float PlanetLimbAngle() { return PlanetLens.w; }
+float PlanetAngularScale(float limb) { return PlanetMapping.x; }
+ProjectionCamera PlanetDisplayCamera()
+{
+    ProjectionCamera c=MakeProjectionCamera(PlanetOrigin.xyz,PlanetViewForward.xyz,PlanetViewRight.xyz,PlanetViewUp.xyz);
+    c.Focal=PlanetLens.x; c.Near=PlanetLens.y; c.Far=PlanetLens.z;
+    return c;
 }
 // Separate disk and annulus row ranges prevent interpolation across the opaque limb.
 // Disk rows concentrate near the limb; non-disk rows cover the rest of the sphere,
@@ -115,9 +136,9 @@ void BuildSkyView(uint3 id : SV_DispatchThreadID)
     AtmosphereStoreSky(id.xy,AtmosphereIntegrate(entry,ray,max(0,end-begin),AtmosphereSkySteps));
 }
 
-ProjectionCamera PlanetDisplayCamera()
+ProjectionCamera PlanetCalculateDisplayCamera()
 {
-    ProjectionCamera camera = PlanetCamera();
+    ProjectionCamera camera = PlanetCalculateCamera();
     float yaw = 2*AtmospherePi*(Camera.Yaw-.5), pitch = AtmosphereAltitudeAngle(Camera.Pitch);
     float3 forward = cos(yaw)*camera.Forward+sin(yaw)*camera.Right;
     camera.Right = cos(yaw)*camera.Right-sin(yaw)*camera.Forward;
@@ -127,6 +148,22 @@ ProjectionCamera PlanetDisplayCamera()
     camera.Near=AtmosphereRadius*.0001;
     camera.Far=length(camera.Origin)+AtmosphereRadius+AtmosphereHeight();
     return camera;
+}
+RWBuffer<float4> PlanetCameraOutput;
+[numthreads(1,1,1)]
+void BuildPlanetCamera(uint3 id:SV_DispatchThreadID)
+{
+    ProjectionCamera orbit=PlanetCalculateCamera(), view=PlanetCalculateDisplayCamera();
+    float limb=PlanetCalculateLimbAngle();
+    PlanetCameraOutput[0]=float4(orbit.Origin,0);
+    PlanetCameraOutput[1]=float4(orbit.Forward,0);
+    PlanetCameraOutput[2]=float4(orbit.Right,0);
+    PlanetCameraOutput[3]=float4(orbit.Up,0);
+    PlanetCameraOutput[4]=float4(view.Forward,0);
+    PlanetCameraOutput[5]=float4(view.Right,0);
+    PlanetCameraOutput[6]=float4(view.Up,0);
+    PlanetCameraOutput[7]=float4(view.Focal,view.Near,view.Far,limb);
+    PlanetCameraOutput[8]=float4(PlanetCalculateAngularScale(limb),0,0,0);
 }
 Texture3D<float4> AerialSun, AerialMultiple, AerialTransmission;
 RWTexture3D<float4> AerialSunOutput, AerialMultipleOutput, AerialTransmissionOutput;

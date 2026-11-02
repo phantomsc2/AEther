@@ -14,13 +14,17 @@ public sealed class AtmosphereEffect : SceneEffect
     readonly Dictionary<string, ID3D11UnorderedAccessView> outputs = [];
     Lookup? transmittance, skySun, skyMultiple, multipleScattering;
     bool multipleDirty = true;
-    readonly ShaderProgram? aerialProgram;
+    readonly ShaderProgram? aerialProgram, cameraProgram;
+    readonly ID3D11Buffer? cameraOutput, cameraConstants;
+    readonly ID3D11UnorderedAccessView? cameraView;
+    float[]? cameraKey;
     readonly FroxelRaster? meteors;
     Volume? aerialSun, aerialMultiple, aerialTransmission;
     float[]? aerialKey;
     float aerialAspect;
     // Internal override permits resolution comparisons without changing the public scene controls.
     internal int AerialSize { get; set; } = 32;
+    internal bool ExperimentalHalfSky { get; set; }
     ShaderParameters? previous;
     float[]? atmosphereKey, sunKey;
 
@@ -45,12 +49,18 @@ public sealed class AtmosphereEffect : SceneEffect
             multipleProgram = new(device, source, "BuildMultipleScattering", file, "cs_5_0");
             if (file == "Planet.hlsl")
             {
+                cameraProgram = new(device, source, "BuildPlanetCamera", file, "cs_5_0");
+                cameraOutput = device.CreateBuffer(144, BindFlags.UnorderedAccess);
+                cameraConstants = device.CreateBuffer(144, BindFlags.ConstantBuffer);
+                cameraView = device.CreateUnorderedAccessView(cameraOutput, new UnorderedAccessViewDescription {
+                    Format = Format.R32G32B32A32_Float, ViewDimension = UnorderedAccessViewDimension.Buffer,
+                    Buffer = new BufferUnorderedAccessView { NumElements = 9 } });
                 aerialProgram = new(device, source, "BuildAerial", file, "cs_5_0");
-                meteors = new(device, context, source, file, marker: "Planet meteors");
+                meteors = new(device, context, source, file, extraBindings: ["PlanetCameraConstants"], marker: "Planet meteors");
             }
             var programs = new[] { Display, transmittanceProgram, skyViewProgram, multipleProgram }
-                .Concat(aerialProgram == null ? [] : new[] { aerialProgram }).ToArray();
-            var bindings = FrameBindings.Concat(["AtmosphereTransmittance", "AtmosphereSkySun", "AtmosphereSkyMultiple", "AtmosphereSkyMultipleOutput", "AerialMultiple", "AerialMultipleOutput", "AtmosphereSampler",
+                .Concat(aerialProgram == null ? [] : new[] { aerialProgram, cameraProgram! }).ToArray();
+            var bindings = FrameBindings.Concat(["PlanetCameraConstants", "PlanetCameraOutput","AtmosphereTransmittance", "AtmosphereSkySun", "AtmosphereSkyMultiple", "AtmosphereSkyMultipleOutput", "AerialMultiple", "AerialMultipleOutput", "AtmosphereSampler",
                 "AtmosphereMultipleScattering", "AtmosphereMultipleScatteringOutput",
                 "AtmosphereTransmittanceOutput", "AtmosphereSkySunOutput", "AerialSun", "AerialTransmission", "AerialSunOutput", "AerialTransmissionOutput", "FroxelSurfaceDepth"]);
             foreach (var program in programs) program.ValidateBindings(bindings);
@@ -75,6 +85,23 @@ public sealed class AtmosphereEffect : SceneEffect
         Dictionary<string, ID3D11Buffer> buffers, Dictionary<string, ID3D11ShaderResourceView> textures,
         Dictionary<string, ID3D11SamplerState> samplers)
     {
+        if (cameraProgram != null)
+        {
+            var key = ShaderParameters.Leaves(parameters!.Items)
+                .Where(p => p.Path.StartsWith("Camera.", StringComparison.Ordinal) || p.Path == "Atmosphere.ScaleHeight")
+                .Select(parameters.GetFloat).ToArray();
+            buffers["PlanetCameraConstants"] = cameraConstants!;
+            if (cameraKey == null || !key.AsSpan().SequenceEqual(cameraKey))
+            {
+                Unbind();
+                outputs["PlanetCameraOutput"] = cameraView!;
+                cameraProgram.Bind(Context, parameters, buffers, textures, samplers, outputs);
+                Context.Dispatch(1, 1, 1);
+                Unbind();
+                Context.CopyResource(cameraConstants!, cameraOutput!);
+                cameraKey = key;
+            }
+        }
         bool rebuildTransmittance = transmittance == null, rebuildSky = skySun == null;
         float[]? nextAtmosphere = atmosphereKey, nextSun = sunKey;
         if (!ReferenceEquals(previous, parameters))
@@ -91,8 +118,8 @@ public sealed class AtmosphereEffect : SceneEffect
         }
         rebuildSky |= rebuildTransmittance;
         transmittance ??= new(Device, TransmittanceWidth, TransmittanceHeight);
-        skySun ??= new(Device, skyViewWidth, skyViewHeight);
-        skyMultiple ??= new(Device, skyViewWidth, skyViewHeight);
+        skySun ??= new(Device, skyViewWidth, skyViewHeight, ExperimentalHalfSky ? Format.R16G16B16A16_Float : Format.R32G32B32A32_Float);
+        skyMultiple ??= new(Device, skyViewWidth, skyViewHeight, ExperimentalHalfSky ? Format.R16G16B16A16_Float : Format.R32G32B32A32_Float);
         textures["AtmosphereSkyMultiple"] = skyMultiple.View;
         outputs["AtmosphereSkyMultipleOutput"] = skyMultiple.Output;
         textures["AtmosphereTransmittance"] = transmittance.View;
@@ -166,14 +193,14 @@ public sealed class AtmosphereEffect : SceneEffect
         multipleScattering?.Dispose(); multipleScattering = null; multipleDirty = true;
         skyMultiple?.Dispose(); skyMultiple = null;
         transmittance?.Dispose(); skySun?.Dispose(); transmittance = null; skySun = null;
-        previous = null; atmosphereKey = null; sunKey = null; aerialKey = null;
+        cameraKey = null; previous = null; atmosphereKey = null; sunKey = null; aerialKey = null;
         aerialSun?.Dispose(); aerialMultiple?.Dispose(); aerialTransmission?.Dispose();
         aerialSun = null; aerialMultiple = null; aerialTransmission = null;
         meteors?.Release();
     }
     public override void Dispose()
     {
-        base.Dispose(); transmittanceProgram?.Dispose(); skyViewProgram?.Dispose(); multipleProgram?.Dispose(); aerialProgram?.Dispose(); meteors?.Dispose(); sampler?.Dispose();
+        base.Dispose(); cameraProgram?.Dispose(); cameraView?.Dispose(); cameraOutput?.Dispose(); cameraConstants?.Dispose(); transmittanceProgram?.Dispose(); skyViewProgram?.Dispose(); multipleProgram?.Dispose(); aerialProgram?.Dispose(); meteors?.Dispose(); sampler?.Dispose();
     }
 
     sealed class Volume : IDisposable
@@ -196,12 +223,12 @@ public sealed class AtmosphereEffect : SceneEffect
         internal readonly ID3D11Texture2D Texture;
         internal readonly ID3D11ShaderResourceView View;
         internal readonly ID3D11UnorderedAccessView Output;
-        internal Lookup(ID3D11Device device, int width, int height)
+        internal Lookup(ID3D11Device device, int width, int height, Format format = Format.R32G32B32A32_Float)
         {
             Texture = device.CreateTexture2D(new Texture2DDescription
             {
                 Width = (uint)width, Height = (uint)height, ArraySize = 1, MipLevels = 1,
-                Format = Format.R32G32B32A32_Float, SampleDescription = new(1, 0),
+                Format = format, SampleDescription = new(1, 0),
                 BindFlags = BindFlags.ShaderResource | BindFlags.UnorderedAccess,
             });
             try { View = device.CreateShaderResourceView(Texture); Output = device.CreateUnorderedAccessView(Texture); }
