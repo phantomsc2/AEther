@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <Compile Include="../tools/FluidTestExtensions.cs" Link="FluidTestExtensions.cs" />
+    <Compile Include="../tools/FlameReference.cs" Link="FlameReference.cs" />
     <PackageReference Include="NUnit" Version="5.0.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="6.3.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />

@@ -143,8 +143,9 @@ internal static partial class Program
                                     || eventLog.Events.ActualHeight <= 0 || eventLog.ActualHeight > settings.ActualHeight * .4 + 40
                                     || !Descendants(eventLog.Events).OfType<TextBlock>().Any(t => t.Text.Contains("Window warning smoke")))
                                     throw new Exception("The event log must display real rows in a bounded panel beside the live graphics.");
-                                if (eventLog.Events.Columns.Count != 4
-                                    || !eventLog.Events.Columns.Select(c => c.Header?.ToString()).SequenceEqual(new[] { "Time", "Severity", "Source", "Message" })
+                                if (eventLog.Events.Header is not Grid eventHeader || eventHeader.ColumnDefinitions.Count != 4
+                                    || !eventHeader.Children.OfType<TextBlock>().Select(c => c.Text).SequenceEqual(new[] { "Time", "Source", "Message" })
+                                    || !eventHeader.Children.OfType<FontIcon>().Any(icon => AutomationProperties.GetName(icon) == "Severity")
                                     || !Descendants(eventLog.Events).OfType<FontIcon>().Any(icon => AutomationProperties.GetName(icon) == "Warning"))
                                     throw new Exception("Event table must expose four aligned columns and icon-only severity cells.");
                                 var latestMessage = Descendants(eventLog.Events).OfType<TextBlock>().First(t => t.Text.Contains("Window warning smoke"));

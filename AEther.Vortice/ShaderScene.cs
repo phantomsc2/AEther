@@ -20,6 +20,7 @@ public sealed class SceneDefinition
     [
         Fullscreen("Histogram"), Fullscreen("Spectrum"), Fullscreen("Debug"), Fullscreen("MandelPond"),
         new("FractalCut", (d, c, s) => [new FractalCutEffect("Volume", d, c, s, "FractalCut.hlsl")]),
+        new("Flame", (d, c, s) => [new FlameEffect("Flame", d, c, s, "Flame.hlsl")]),
         new("Atmosphere", (d, c, s) => [new AtmosphereEffect("Atmosphere", d, c, s, "Atmosphere.hlsl")]),
         new("Planet", (d, c, s) => [new AtmosphereEffect("Atmosphere", d, c, s, "Planet.hlsl", 256, 128)]),
         new("Froxel1", (d, c, s) => [new FroxelEffect("Froxel", d, c, s, "Froxel1.hlsl", new FroxelOptions())]),

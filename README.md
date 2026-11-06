@@ -103,6 +103,10 @@ the final background pass uses a lookup with no integration. See the
 an orbit camera, a large diffuse atmosphere, foreground scattering, and an atmospheric limb. Its two LUTs
 keep integration out of the final render pass. See [Planet](doc/planet.md).
 
+`Flame` iterates a bounded affine fern IFS by inverse warping with equal branch
+weights and Jacobian density correction. Shape controls act on continuous raw
+feedback; no normalization or stabilization is applied. See [Flame](doc/flame.md).
+
 Editable values are reflected from `cbuffer Parameters`; nested structs become groups,
 bools become checkboxes, and floats/float vectors use linked [0, 1] sliders and numeric
 inputs. Analyzer options are grouped by category using expanders, numeric inputs,
