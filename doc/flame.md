@@ -63,3 +63,6 @@ filter/mip combinations after 24 iterations from fresh seeds, tests all eight bo
 combinations, checks mip-generation cadence and checkerboard minification, and
 exercises late mip toggles and resource lifecycle. PNGs go to the ignored smoke
 artifacts folder.
+
+For final-mip normalization accuracy, even/odd dimension checks, and GPU versus
+CPU readback costs, see the [mip-average probe](flame-mip-average.md).

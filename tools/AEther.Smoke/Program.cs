@@ -31,6 +31,7 @@ internal static partial class Program
             CopyShaderTree(Path.Combine(root, "AEther.Vortice", "Shaders"), shaderDirectory);
             if (args.Contains("--windows-watcher-only")) { CheckShaderWindows(shaderDirectory); return 0; }
             using var form = new Form { ClientSize = new(640, 360), ShowInTaskbar = false };
+            if (args.Contains("--flame-mip-average-only")) { CheckFlameMipAverage(form.Handle, shaderDirectory, output); return 0; }
             if (args.Contains("--flame-only")) { CheckFlame(form.Handle, shaderDirectory, output); return 0; }
             if (args.Contains("--fractal-cut-only")) { CheckFractalCut(form.Handle, shaderDirectory, output); return 0; }
             if (args.Contains("--output-only")) { CheckColorOutput(form.Handle, shaderDirectory, output); return 0; }
