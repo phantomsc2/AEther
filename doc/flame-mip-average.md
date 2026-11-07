@@ -1,8 +1,10 @@
 # Flame mip-average probe
 
 Measured 2026-11-07 on Intel (R) Arc (TM) Graphics using R32_FLOAT and D3D11
-GenerateMips. The probe compares GPU mip values with double-precision sums of
-the uploaded float density. Production Flame behavior is unchanged.
+GenerateMips. These numbers describe the earlier unnormalized Flame renderer
+with selectable feedback filtering. They are retained as historical evidence
+for the power-of-two normalization design. The probe compares GPU mip values
+with double-precision sums of the uploaded float density.
 
 Run:
 

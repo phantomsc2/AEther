@@ -9,7 +9,7 @@ namespace AEther.Vortice;
 public sealed class FlameEffect : SceneEffect
 {
     readonly ShaderProgram iterate;
-    readonly ID3D11SamplerState bilinear, trilinear, anisotropic, displaySampler;
+    readonly ID3D11SamplerState anisotropic, displaySampler;
     readonly ID3D11BlendState opaque;
     readonly ID3D11DepthStencilState noDepth;
     DensityImage[]? images;
@@ -24,10 +24,10 @@ public sealed class FlameEffect : SceneEffect
                 throw new InvalidOperationException("Flame requires R32_Float automatic mip generation support.");
             iterate = new(device, source, "IteratePS", file);
             foreach (var program in new[] { Display, iterate })
-                program.ValidateBindings(FrameBindings.Concat(["FlameDensity", "FlameSampler", "FlameDisplaySampler"]));
+                program.ValidateBindings(FrameBindings.Concat([
+                    "FlameDensity", "FlameMean", "FlameSampler", "FlameDisplaySampler"
+                ]));
             Parameters = ShaderParameters.Merge([Display.Parameters, iterate.Parameters]);
-            bilinear = MakeSampler(Filter.MinMagLinearMipPoint);
-            trilinear = MakeSampler(Filter.MinMagMipLinear);
             anisotropic = MakeSampler(Filter.Anisotropic);
             displaySampler = MakeSampler(Filter.MinMagLinearMipPoint, 0);
 
@@ -56,14 +56,15 @@ public sealed class FlameEffect : SceneEffect
     {
         Context.PSSetShaderResources(0, ShaderProgram.EmptyViews);
         Context.OMSetRenderTargets(Array.Empty<ID3D11RenderTargetView>());
-        if (images == null || images[0].Texture.Description.Width != frame.Width ||
-            images[0].Texture.Description.Height != frame.Height)
+        int width = PowerOfTwo(frame.Width), height = PowerOfTwo(frame.Height);
+        if (images == null || images[0].Texture.Description.Width != width ||
+            images[0].Texture.Description.Height != height)
         {
-            var first = new DensityImage(Device, frame.Width, frame.Height);
+            var first = new DensityImage(Device, width, height);
             DensityImage second;
             try
             {
-                second = new(Device, frame.Width, frame.Height);
+                second = new(Device, width, height);
             }
             catch
             {
@@ -77,24 +78,19 @@ public sealed class FlameEffect : SceneEffect
             Context.ClearRenderTargetView(first.Target, new(1f / 96, 0, 0, 0));
         }
 
-        var filtering = parameters!.Items.Single(p => p.Name == "Filtering");
-        bool Enabled(string name) => parameters.GetBoolean(filtering.Children.Single(p => p.Name == name));
-        bool mipmaps = Enabled("Mipmaps");
-        if (mipmaps)
+        frame.Marker("Flame mipmaps", true);
+        try
         {
-            frame.Marker("Flame mipmaps", true);
-            try
-            {
-                Context.GenerateMips(images[current].View);
-            }
-            finally
-            {
-                frame.Marker("Flame mipmaps", false);
-            }
+            Context.GenerateMips(images[current].View);
+        }
+        finally
+        {
+            frame.Marker("Flame mipmaps", false);
         }
 
-        textures["FlameDensity"] = mipmaps ? images[current].View : images[current].BaseView;
-        samplers["FlameSampler"] = Enabled("Anisotropic") ? anisotropic : Enabled("Trilinear") ? trilinear : bilinear;
+        textures["FlameDensity"] = images[current].View;
+        textures["FlameMean"] = images[current].MeanView;
+        samplers["FlameSampler"] = anisotropic;
         samplers["FlameDisplaySampler"] = displaySampler;
         int next = 1 - current;
         float* factor = stackalloc float[4];
@@ -106,7 +102,7 @@ public sealed class FlameEffect : SceneEffect
             Context.OMSetRenderTargets(images[next].Target);
             Context.OMSetBlendState(opaque);
             Context.OMSetDepthStencilState(noDepth);
-            Context.RSSetViewport(0, 0, frame.Width, frame.Height);
+            Context.RSSetViewport(0, 0, width, height);
             Context.VSSetShader(frame.Vertex);
             iterate.Bind(Context, parameters, buffers, textures, samplers);
             Context.Draw(3, 0);
@@ -125,6 +121,8 @@ public sealed class FlameEffect : SceneEffect
 
         textures["FlameDensity"] = images[current].BaseView;
     }
+
+    static int PowerOfTwo(int value) => checked((int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)value));
 
     internal float[] ReadDensityPixels()
     {
@@ -170,8 +168,6 @@ public sealed class FlameEffect : SceneEffect
     {
         base.Dispose();
         iterate?.Dispose();
-        bilinear?.Dispose();
-        trilinear?.Dispose();
         anisotropic?.Dispose();
         displaySampler?.Dispose();
         opaque?.Dispose();
@@ -184,6 +180,7 @@ public sealed class FlameEffect : SceneEffect
         internal readonly ID3D11RenderTargetView Target;
         internal readonly ID3D11ShaderResourceView View;
         internal readonly ID3D11ShaderResourceView BaseView;
+        internal readonly ID3D11ShaderResourceView MeanView;
 
         internal DensityImage(ID3D11Device device, int width, int height)
         {
@@ -207,11 +204,21 @@ public sealed class FlameEffect : SceneEffect
                     Format = Format.R32_Float, ViewDimension = ShaderResourceViewDimension.Texture2D,
                     Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1 },
                 });
+                MeanView = device.CreateShaderResourceView(Texture, new ShaderResourceViewDescription
+                {
+                    Format = Format.R32_Float, ViewDimension = ShaderResourceViewDimension.Texture2D,
+                    Texture2D = new Texture2DShaderResourceView
+                    {
+                        MostDetailedMip = (uint)System.Numerics.BitOperations.Log2((uint)Math.Max(width, height)),
+                        MipLevels = 1,
+                    },
+                });
             }
             catch
             {
                 Target?.Dispose();
                 View?.Dispose();
+                MeanView?.Dispose();
                 Texture.Dispose();
                 throw;
             }
@@ -221,6 +228,7 @@ public sealed class FlameEffect : SceneEffect
         {
             View.Dispose();
             BaseView.Dispose();
+            MeanView.Dispose();
             Target.Dispose();
             Texture.Dispose();
         }

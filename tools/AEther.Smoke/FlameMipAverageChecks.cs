@@ -43,9 +43,7 @@ internal static partial class Program
                 if (pattern=="fern-24")
                 {
                     renderer.Resize(width,height); renderer.SelectScene(null); renderer.SelectScene("Flame");
-                    var parameters=renderer.ActiveShader!.Effects[0].Parameters!; parameters.Reset();
-                    parameters.SetBoolean(Find(parameters,"Filtering.Mipmaps"),true);
-                    parameters.SetBoolean(Find(parameters,"Filtering.Trilinear"),true);
+                    renderer.ActiveShader!.Effects[0].Parameters!.Reset();
                     for (int i=0;i<24;i++) renderer.Render(false);
                     values=((FlameEffect)renderer.ActiveShader.Effects[0]).ReadDensityPixels();
                 }

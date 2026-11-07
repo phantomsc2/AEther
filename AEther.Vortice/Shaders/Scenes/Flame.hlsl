@@ -8,21 +8,14 @@ struct FernSettings
     float FrondScale;
 };
 
-struct FilteringSettings
-{
-    bool Mipmaps;
-    bool Trilinear;
-    bool Anisotropic;
-};
-
 cbuffer Parameters
 {
     FernSettings Fern = {.5, .75, .5, .5};
-    FilteringSettings Filtering = {false, false, false};
     float DensityGain = .5;
 };
 
 Texture2D<float> FlameDensity;
+Texture2D<float> FlameMean;
 SamplerState FlameSampler;
 SamplerState FlameDisplaySampler;
 
@@ -59,6 +52,9 @@ float2 DensityUV(float2 p) { return float2((p.x + 4) / 8, 1 - p.y / 12); }
 
 float IteratePS(PSin input) : SV_Target
 {
+    uint width, height;
+    FlameDensity.GetDimensions(width, height);
+    float2 size = float2(width, height);
     float2 y = float2(8 * input.UV.x - 4, 12 * (1 - input.UV.y));
     float density = 0;
     [unroll] for (int i = 0; i < 3; ++i)
@@ -69,14 +65,15 @@ float IteratePS(PSin input) : SV_Target
         float2 x = float2(f.A.w * d.x - f.A.y * d.y, -f.A.z * d.x + f.A.x * d.y) / det + float2(0, 6);
         float2 uv = DensityUV(x);
         // UV change per destination pixel, including physical-domain scale and Y inversion.
-        float2 dx = float2(f.A.w, -f.A.z) * (8 / Resolution.x) / det;
-        float2 dy = float2(-f.A.y, f.A.x) * (-12 / Resolution.y) / det;
+        float2 dx = float2(f.A.w, -f.A.z) * (8 / size.x) / det;
+        float2 dy = float2(-f.A.y, f.A.x) * (-12 / size.y) / det;
         float2 du_dx = dx * float2(1.0 / 8, -1.0 / 12);
         float2 du_dy = dy * float2(1.0 / 8, -1.0 / 12);
         // Zero-border filtering retains footprints that overlap the domain even if their center is outside.
         density += FlameDensity.SampleGrad(FlameSampler, uv, du_dx, du_dy) / (3 * abs(det));
     }
-    return density;
+    float mean = FlameMean.Load(int3(0, 0, 0));
+    return mean > 0 ? density / (96 * mean) : 0;
 }
 
 float4 PS(PSin input) : SV_Target

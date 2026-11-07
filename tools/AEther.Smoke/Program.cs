@@ -32,7 +32,8 @@ internal static partial class Program
             if (args.Contains("--windows-watcher-only")) { CheckShaderWindows(shaderDirectory); return 0; }
             using var form = new Form { ClientSize = new(640, 360), ShowInTaskbar = false };
             if (args.Contains("--flame-mip-average-only")) { CheckFlameMipAverage(form.Handle, shaderDirectory, output); return 0; }
-            if (args.Contains("--flame-only")) { CheckFlame(form.Handle, shaderDirectory, output); return 0; }
+            if (args.Contains("--flame-normalization-only")) { CheckFlameNormalization(form.Handle, shaderDirectory); return 0; }
+            if (args.Contains("--flame-only")) { CheckFlameNormalization(form.Handle, shaderDirectory); return 0; }
             if (args.Contains("--fractal-cut-only")) { CheckFractalCut(form.Handle, shaderDirectory, output); return 0; }
             if (args.Contains("--output-only")) { CheckColorOutput(form.Handle, shaderDirectory, output); return 0; }
             if (args.Contains("--fluid-only")) { CheckFluid(form.Handle, shaderDirectory, output); return 0; }
