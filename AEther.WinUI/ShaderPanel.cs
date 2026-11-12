@@ -1,6 +1,7 @@
 using AEther.Vortice;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 
 namespace AEther.WinUI;
 
@@ -8,12 +9,18 @@ public sealed class ShaderPanel : UserControl
 {
     readonly Grid layout = new() { RowSpacing = 8 };
     readonly StackPanel parameters = new() { Spacing = 4 };
-    readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Visibility = Visibility.Collapsed };
+
+    readonly TextBlock status = new()
+        { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Visibility = Visibility.Collapsed };
+
     readonly Dictionary<string, IReadOnlyDictionary<string, EffectSettings>> saved = new(StringComparer.Ordinal);
+
     Renderer? renderer;
+
     // Allows restarting a preview after renderer changes without losing its scene.
     public string? SelectedScene { get; private set; } = Environment.GetCommandLineArgs()
         .FirstOrDefault(argument => argument.StartsWith("--scene=", StringComparison.Ordinal))?[8..] ?? "Planet";
+
     public event EventHandler? SceneChanged;
 
     public ShaderPanel()
@@ -21,9 +28,11 @@ public sealed class ShaderPanel : UserControl
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Content = layout;
-        var scroll = new ScrollViewer { Content = parameters, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var scroll = new ScrollViewer
+            { Content = parameters, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(status, 1);
-        layout.Children.Add(scroll); layout.Children.Add(status);
+        layout.Children.Add(scroll);
+        layout.Children.Add(status);
     }
 
     public void Attach(Renderer? value)
@@ -32,16 +41,20 @@ public sealed class ShaderPanel : UserControl
         {
             renderer.ShadersChanged -= ShadersChanged;
             foreach (var scene in renderer.Scenes)
-                if (renderer.GetSceneSettings(scene.Name) is { } parameters) saved[scene.Name] = parameters;
+                if (renderer.GetSceneSettings(scene.Name) is { } parameters)
+                    saved[scene.Name] = parameters;
         }
+
         renderer = value;
         if (renderer != null)
         {
             foreach (var scene in renderer.Scenes)
-                if (saved.TryGetValue(scene.Name, out var previous)) renderer.RestoreSceneSettings(scene.Name, previous);
+                if (saved.TryGetValue(scene.Name, out var previous))
+                    renderer.RestoreSceneSettings(scene.Name, previous);
             if (renderer.Scenes.Any(s => s.Name == SelectedScene)) renderer.SelectScene(SelectedScene);
             renderer.ShadersChanged += ShadersChanged;
         }
+
         RefreshScene();
     }
 
@@ -49,7 +62,13 @@ public sealed class ShaderPanel : UserControl
     {
         SelectedScene = name;
         if (renderer == null) return;
-        if (name == null) { renderer.SelectScene(null); RefreshScene(); return; }
+        if (name == null)
+        {
+            renderer.SelectScene(null);
+            RefreshScene();
+            return;
+        }
+
         bool firstCompilation = renderer.Scenes.Single(scene => scene.Name == name).Effects.Count == 0;
         renderer.SelectScene(name);
         if (firstCompilation && saved.TryGetValue(name, out var previous))
@@ -82,10 +101,12 @@ public sealed class ShaderPanel : UserControl
         {
             SelectedScene = renderer.SceneName;
             // Retain visited scenes even when a reload leaves them uncompiled.
-            if (SelectedScene != null && renderer.GetSceneSettings(SelectedScene) is { } values) saved[SelectedScene] = values;
+            if (SelectedScene != null && renderer.GetSceneSettings(SelectedScene) is { } values)
+                saved[SelectedScene] = values;
             SetStatus(renderer.ShaderError ?? "");
         }
         else SetStatus("No active rendering session.");
+
         RefreshParameters();
         SceneChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -97,6 +118,7 @@ public sealed class ShaderPanel : UserControl
         foreach (var effect in scene.Effects)
         {
             var group = new ShaderGroupLayout();
+
             void AddOptions(StackPanel content)
             {
                 var ungrouped = new StackPanel { Spacing = 4 };
@@ -107,28 +129,38 @@ public sealed class ShaderPanel : UserControl
                     if (child is Expander expander)
                     {
                         expander.IsExpanded = true;
-                        if (ungrouped.Children.Count > 0) { group.Children.Add(ungrouped); ungrouped = new StackPanel { Spacing = 4 }; }
+                        if (ungrouped.Children.Count > 0)
+                        {
+                            group.Children.Add(ungrouped);
+                            ungrouped = new StackPanel { Spacing = 4 };
+                        }
+
                         group.Children.Add(child);
                     }
                     else ungrouped.Children.Add(child);
                 }
+
                 if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
             }
+
             if (effect is Froxel4Effect tube)
             {
-                var editor = new OptionsEditor<Froxel4Options>(tube.CloudOptions, v => v with { }, tube.DefaultCloudOptions);
+                var editor =
+                    new OptionsEditor<Froxel4Options>(tube.CloudOptions, v => v with { }, tube.DefaultCloudOptions);
                 editor.Changed += (_, _) => tube.CloudOptions = editor.Options;
                 AddOptions(editor.Content);
             }
             else if (effect is Froxel3Effect cloud)
             {
-                var editor = new OptionsEditor<Froxel3Options>(cloud.CloudOptions, v => v with { }, cloud.DefaultCloudOptions);
+                var editor =
+                    new OptionsEditor<Froxel3Options>(cloud.CloudOptions, v => v with { }, cloud.DefaultCloudOptions);
                 editor.Changed += (_, _) => cloud.CloudOptions = editor.Options;
                 AddOptions(editor.Content);
             }
             else if (effect is Froxel2Effect ring)
             {
-                var editor = new OptionsEditor<Froxel2Options>(ring.DepthOptions, v => v with { }, ring.DefaultDepthOptions);
+                var editor =
+                    new OptionsEditor<Froxel2Options>(ring.DepthOptions, v => v with { }, ring.DefaultDepthOptions);
                 editor.Changed += (_, _) => ring.DepthOptions = editor.Options;
                 group.Children.Add(editor.Content);
             }
@@ -138,18 +170,21 @@ public sealed class ShaderPanel : UserControl
                 editor.Changed += (_, _) => froxel.Options = editor.Options;
                 AddOptions(editor.Content);
             }
+
             if (effect is FluidEffect fluid)
             {
                 var editor = new OptionsEditor<FluidOptions>(fluid.Options, v => v with { }, fluid.DefaultOptions);
                 editor.Changed += (_, _) => fluid.Options = editor.Options;
                 AddOptions(editor.Content);
             }
+
             if (effect is RasterEffect raster)
             {
                 var editor = new OptionsEditor<RasterOptions>(raster.Options, v => v with { }, raster.DefaultOptions);
                 editor.Changed += (_, _) => raster.Options = editor.Options;
                 AddOptions(editor.Content);
             }
+
             if (effect.Parameters is { } values)
             {
                 var ungrouped = new StackPanel { Spacing = 4 };
@@ -157,21 +192,57 @@ public sealed class ShaderPanel : UserControl
                 {
                     if (parameter.Children.Count != 0)
                     {
-                        if (ungrouped.Children.Count > 0) { group.Children.Add(ungrouped); ungrouped = new StackPanel { Spacing = 4 }; }
+                        if (ungrouped.Children.Count > 0)
+                        {
+                            group.Children.Add(ungrouped);
+                            ungrouped = new StackPanel { Spacing = 4 };
+                        }
+
                         group.Children.Add(Editor(values, parameter));
                     }
                     else ungrouped.Children.Add(Editor(values, parameter));
                 }
+
                 if (ungrouped.Children.Count > 0) group.Children.Add(ungrouped);
             }
+
             foreach (var child in group.Children.OfType<FrameworkElement>())
                 child.VerticalAlignment = VerticalAlignment.Top;
-            parameters.Children.Add(new Expander
-            {
-                Header = effect.Name, Content = group, IsExpanded = true,
-                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            });
+            for (var i = 0; i < group.Children.Count; i++)
+                group.Children[i] = ExpandCard(group.Children[i]);
+            var section = new StackPanel { Spacing = 8 };
+            section.Children.Add(new TextBlock { Text = effect.Name, FontSize = 16 });
+            section.Children.Add(group);
+            parameters.Children.Add(section);
         }
+    }
+
+    static UIElement ExpandCard(UIElement element)
+    {
+        if (element is Expander expander)
+        {
+            var content = expander.Content as UIElement;
+            expander.Content = null;
+            var card = new StackPanel { Spacing = 8 };
+            card.Children.Add(new TextBlock
+                { Text = expander.Header?.ToString(), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            if (content != null) card.Children.Add(ExpandCard(content));
+            return new Border
+            {
+                Child = card, Padding = new Thickness(10), CornerRadius = new CornerRadius(8),
+                Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
+            };
+        }
+
+        if (element is Panel panel)
+            for (var i = 0; i < panel.Children.Count; i++)
+            {
+                var child = panel.Children[i];
+                panel.Children.RemoveAt(i);
+                panel.Children.Insert(i, ExpandCard(child));
+            }
+
+        return element;
     }
 
     static UIElement Editor(ShaderParameters values, ShaderParameter parameter)
@@ -183,12 +254,23 @@ public sealed class ShaderPanel : UserControl
             return new Expander
             {
                 Header = parameter.Name, Content = children, IsExpanded = true,
-                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
             };
         }
+
         if (parameter.IsBoolean)
         {
-            var checkbox = new CheckBox { Content = parameter.Path switch { "Transport.L0" => "Surface", "Transport.L1" => "Single Scattering", "Transport.L2Plus" => "Multiple Scattering (approx)", _ => parameter.Name == "WarmStart" ? "Warm Start" : parameter.Name }, IsChecked = values.GetBoolean(parameter), Tag = parameter.Path };
+            var checkbox = new CheckBox
+            {
+                Content = parameter.Path switch
+                {
+                    "Transport.L0" => "Surface", "Transport.L1" => "Single Scattering",
+                    "Transport.L2Plus" => "Multiple Scattering (approx)",
+                    _ => parameter.Name == "WarmStart" ? "Warm Start" : parameter.Name
+                },
+                IsChecked = values.GetBoolean(parameter), Tag = parameter.Path
+            };
             checkbox.Checked += (_, _) => values.SetBoolean(parameter, true);
             checkbox.Unchecked += (_, _) => values.SetBoolean(parameter, false);
             ParameterMenu.Attach(checkbox, () =>
@@ -198,10 +280,18 @@ public sealed class ShaderPanel : UserControl
             });
             return checkbox;
         }
+
         double anchor = values.GetDefaultFloat(parameter);
         double max = parameter.Path is "Emitter.Radius" or "Fluid.EmissionVelocity" ? 2 : 1;
-        double Encode(double v) => anchor > 0 && anchor < max ? (v <= anchor ? .5 * v / anchor : .5 + .5 * (v - anchor) / (max - anchor)) : v / max;
-        double Decode(double v) => anchor > 0 && anchor < max ? (v <= .5 ? 2 * v * anchor : anchor + (2 * v - 1) * (max - anchor)) : v * max;
+
+        double Encode(double v) => anchor > 0 && anchor < max
+            ? (v <= anchor ? .5 * v / anchor : .5 + .5 * (v - anchor) / (max - anchor))
+            : v / max;
+
+        double Decode(double v) => anchor > 0 && anchor < max
+            ? (v <= .5 ? 2 * v * anchor : anchor + (2 * v - 1) * (max - anchor))
+            : v * max;
+
         var number = new NumberBox
         {
             Minimum = 0, Maximum = max, SmallChange = .01, LargeChange = .1,
@@ -209,21 +299,38 @@ public sealed class ShaderPanel : UserControl
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             NumberFormatter = NumericEditor.Formatter(),
         };
-        var slider = new Slider { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = Encode(values.GetFloat(parameter)) };
+        var slider = new Slider
+            { Minimum = 0, Maximum = 1, StepFrequency = .001, Value = Encode(values.GetFloat(parameter)) };
         bool updating = false;
         SliderCommit.Bind(slider, value =>
         {
             if (updating) return;
             updating = true;
-            try { number.Value = Decode(value); }
-            finally { updating = false; }
-        }, value => { if (!updating) values.SetFloat(parameter, (float)Decode(value)); });
+            try
+            {
+                number.Value = Decode(value);
+            }
+            finally
+            {
+                updating = false;
+            }
+        }, value =>
+        {
+            if (!updating) values.SetFloat(parameter, (float)Decode(value));
+        });
         number.ValueChanged += (_, e) =>
         {
             if (updating || !double.IsFinite(e.NewValue)) return;
             updating = true;
-            try { slider.Value = Encode(e.NewValue); values.SetFloat(parameter, (float)e.NewValue); }
-            finally { updating = false; }
+            try
+            {
+                slider.Value = Encode(e.NewValue);
+                values.SetFloat(parameter, (float)e.NewValue);
+            }
+            finally
+            {
+                updating = false;
+            }
         };
         var row = NumericEditor.Create(parameter.Name, number, slider);
         row.Tag = parameter.Path;
@@ -231,8 +338,15 @@ public sealed class ShaderPanel : UserControl
         {
             values.Reset(parameter);
             updating = true;
-            try { number.Value = values.GetFloat(parameter); slider.Value = Encode(number.Value); }
-            finally { updating = false; }
+            try
+            {
+                number.Value = values.GetFloat(parameter);
+                slider.Value = Encode(number.Value);
+            }
+            finally
+            {
+                updating = false;
+            }
         });
         return row;
     }
