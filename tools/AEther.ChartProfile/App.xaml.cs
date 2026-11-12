@@ -109,9 +109,9 @@ public partial class App : Application
                     || !ReferenceEquals(view.Content, view.Chart)
                     || view.Chart.LowerLimit >= -1 || view.Chart.UpperLimit < Math.Log10(40))
                     throw new Exception("Expected one combined chart with automatic sub-millisecond range and retained spike range.");
-                if (layout && (analysis!.ActualWidth > settings!.ActualWidth * .6 || view.ActualWidth < 100
-                    || settings.AudioColumn.TransformToVisual(settings).TransformPoint(default).Y < analysis.ActualHeight))
-                    throw new Exception("Expected audio/video views above their respective control columns.");
+                if (layout && (analysis!.ActualWidth < 100 || settings!.Tabs.TabItems.Count != 2
+                    || settings.Columns.Children.Contains(view) || !settings.SceneColumn.Children.Contains(view)))
+                    throw new Exception("Expected separate whole-window Audio and Video tabs.");
                 var cpu = (process.TotalProcessorTime - initialCpu).TotalSeconds / seconds;
                 profile.Describe("Client pixels", $"{window.AppWindow.ClientSize.Width}x{window.AppWindow.ClientSize.Height}");
                 profile.Describe("Chart DIPs", $"{view.ActualWidth:0}x{view.ActualHeight:0}");

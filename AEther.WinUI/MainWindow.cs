@@ -3,6 +3,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 using Vortice.DXGI;
 using Windows.Graphics;
 using Windows.System;
@@ -52,21 +53,29 @@ public sealed class MainWindow : Window
         this.shaderDirectory = shaderDirectory;
         // Injected sources and shader directories are used by development probes.
         settingsStore = createSource == null && shaderDirectory == null ? new SettingsStore() : null;
-        try { appSettings = settingsStore?.Load() ?? new(); }
+        try
+        {
+            appSettings = settingsStore?.Load() ?? new();
+        }
         catch (Exception error)
         {
             Log.ForContext<MainWindow>().Warning(error, "Could not load settings; using defaults");
             appSettings = new();
         }
+
         audio = new AudioPanel(appSettings.Analyzer);
         graphics.SetOptions(appSettings.Graphics);
         Title = "AEther";
         AppWindow.TitleBar.PreferredTheme = TitleBarTheme.UseDefaultAppMode;
         AppWindow.TitleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
-        canvasDismissed = !Environment.GetCommandLineArgs().Any(argument => argument.StartsWith("--scene=", StringComparison.Ordinal));
+        canvasDismissed = !Environment.GetCommandLineArgs()
+            .Any(argument => argument.StartsWith("--scene=", StringComparison.Ordinal));
         // A focusable host routes keyboard input without adding anything over the canvas.
-        root = new UserControl { Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        root = new UserControl
+        {
+            Content = canvas, IsTabStop = true, UseSystemFocusVisuals = false,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent)
+        };
         canvasWindow = new(root);
         analysis = new(this);
         frameTime = new(this);
@@ -76,9 +85,11 @@ public sealed class MainWindow : Window
         SystemBackdrop = new MicaBackdrop();
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
+            var chrome = Color.FromArgb(255, 24, 24, 24);
             hubTitleBar = new TitleBar
             {
                 Title = Title,
+                Background = (Brush)Application.Current.Resources["WindowChromeBrush"],
             };
             var layout = new Grid();
             layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -88,11 +99,14 @@ public sealed class MainWindow : Window
             layout.Children.Add(settings);
             Content = layout;
             ExtendsContentIntoTitleBar = true;
-            AppWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
-            AppWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+            AppWindow.TitleBar.BackgroundColor = chrome;
+            AppWindow.TitleBar.InactiveBackgroundColor = chrome;
+            AppWindow.TitleBar.ButtonBackgroundColor = chrome;
+            AppWindow.TitleBar.ButtonInactiveBackgroundColor = chrome;
             SetTitleBar(hubTitleBar);
         }
         else Content = settings;
+
         settings.Loaded += async (_, _) =>
         {
             if (loaded) return;
@@ -166,7 +180,11 @@ public sealed class MainWindow : Window
         };
         ToolWindow.AddShortcut(settings, VirtualKey.F11, ToggleFullscreen);
         ToolWindow.AddShortcut(root, VirtualKey.F11, ToggleFullscreen);
-        root.DoubleTapped += (_, e) => { ToggleFullscreen(); e.Handled = true; };
+        root.DoubleTapped += (_, e) =>
+        {
+            ToggleFullscreen();
+            e.Handled = true;
+        };
         canvas.Loaded += (_, _) =>
         {
             SwapChainHost.Attach(canvas, canvasChain);
@@ -199,10 +217,14 @@ public sealed class MainWindow : Window
                 }
                 else if (changedPath != null && session.Renderer.ReloadActiveScene()) shaders.RefreshParameters();
                 else shaders.Reload();
+
                 analysis.RefreshOutput(resetError: true);
                 if (session.Renderer.ShaderError is { } error) shaders.SetStatus(error);
             }
-            catch (Exception error) { Logger.Error(error, "Could not reload changed shaders"); }
+            catch (Exception error)
+            {
+                Logger.Error(error, "Could not reload changed shaders");
+            }
         };
         // A Tick already queued before Stop can still arrive during window teardown.
         timingTimer.Tick += (_, _) =>
@@ -212,7 +234,11 @@ public sealed class MainWindow : Window
             UpdateRendering();
         };
         timingTimer.Start();
-        canvasWindow.VisibilityChanged += (_, e) => { visible = e.Visible; UpdateRendering(); };
+        canvasWindow.VisibilityChanged += (_, e) =>
+        {
+            visible = e.Visible;
+            UpdateRendering();
+        };
         canvasWindow.AppWindow.Changed += (_, _) => UpdateRendering();
         analysis.OutputChanged += (_, _) => UpdateRendering();
         AppWindow.Closing += OnClosing;
@@ -236,7 +262,9 @@ public sealed class MainWindow : Window
 
     (int Width, int Height) CanvasSize =>
         (canvas.ActualWidth > 0 ? Math.Max(1, (int)Math.Round(canvas.ActualWidth * canvas.CompositionScaleX)) : 1280,
-         canvas.ActualHeight > 0 ? Math.Max(1, (int)Math.Round(canvas.ActualHeight * canvas.CompositionScaleY)) : 720);
+            canvas.ActualHeight > 0
+                ? Math.Max(1, (int)Math.Round(canvas.ActualHeight * canvas.CompositionScaleY))
+                : 720);
 
     void ResizeRenderer()
     {
@@ -247,13 +275,17 @@ public sealed class MainWindow : Window
             session.Renderer.Resize(size.Width, size.Height);
             session.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
         }
-        catch (Exception error) { RenderFailed(error); }
+        catch (Exception error)
+        {
+            RenderFailed(error);
+        }
     }
 
     Task RestartAsync() => RestartCoreAsync(preserveGraphics: false);
 
     SampleSource CreateSource() => createSource?.Invoke() ?? (settings.InputName == SettingsPanel.Loopback
-        ? new Loopback() : new Recorder(settings.InputName));
+        ? new Loopback()
+        : new Recorder(settings.InputName));
 
     async Task RestartCoreAsync(bool preserveGraphics)
     {
@@ -269,11 +301,13 @@ public sealed class MainWindow : Window
             if (closing || version != restartVersion) return;
             pipelineId = ApplicationLog.Events.BeginPipeline();
             attemptLogger = Log.ForContext<MainWindow>().ForContext("PipelineId", pipelineId);
-            attemptLogger.Information("Starting audio pipeline with input {Input}; retaining graphics {RetainGraphics}; options {@Options}",
+            attemptLogger.Information(
+                "Starting audio pipeline with input {Input}; retaining graphics {RetainGraphics}; options {@Options}",
                 settings.InputName, preserveGraphics, audio.Options);
             if (preserveGraphics && session is { } current)
             {
-                renderWorker?.Dispose(); renderWorker = null;
+                renderWorker?.Dispose();
+                renderWorker = null;
                 SampleSource? replacement = null;
                 try
                 {
@@ -301,8 +335,10 @@ public sealed class MainWindow : Window
                     UpdateRendering();
                     throw;
                 }
+
                 return;
             }
+
             await StopSessionAsync();
             if (closing || version != restartVersion) return;
             SampleSource source = CreateSource();
@@ -311,7 +347,8 @@ public sealed class MainWindow : Window
             {
                 var size = CanvasSize;
                 next = new(WinRT.Interop.WindowNative.GetWindowHandle(canvasWindow), size.Width, size.Height,
-                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene, graphics.Options, attemptLogger, pipelineId);
+                    source, audio.Options, shaderDirectory, AttachCanvasSwapChain, shaders.SelectedScene,
+                    graphics.Options, attemptLogger, pipelineId);
                 next.Renderer.SetCompositionScale(canvas.CompositionScaleX, canvas.CompositionScaleY);
                 next.CaptureStopped += CaptureStopped;
                 next.Start();
@@ -338,7 +375,8 @@ public sealed class MainWindow : Window
             }
             catch
             {
-                renderWorker?.Dispose(); renderWorker = null;
+                renderWorker?.Dispose();
+                renderWorker = null;
                 session = null;
                 frameTime.Attach(null);
                 analysis.Attach(null);
@@ -353,7 +391,12 @@ public sealed class MainWindow : Window
             attemptLogger.ForContext("PipelineBlocking", session?.IsRunning != true)
                 .Error(error, "Could not start audio pipeline");
         }
-        finally { changingSession = false; sessionGate.Release(); UpdateRendering(); }
+        finally
+        {
+            changingSession = false;
+            sessionGate.Release();
+            UpdateRendering();
+        }
     }
 
     void SaveAcceptedAnalyzerSettings(Session current, long version)
@@ -366,8 +409,14 @@ public sealed class MainWindow : Window
 
     void SaveSettings()
     {
-        try { settingsStore?.Save(appSettings); }
-        catch (Exception error) { Logger.Warning(error, "Could not save settings"); }
+        try
+        {
+            settingsStore?.Save(appSettings);
+        }
+        catch (Exception error)
+        {
+            Logger.Warning(error, "Could not save settings");
+        }
     }
 
     void CaptureStopped(object? sender, Exception? error)
@@ -388,7 +437,8 @@ public sealed class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (closing || !ReferenceEquals(sender, watcher)) return;
-            reloadTimer.Stop(); reloadTimer.Start();
+            reloadTimer.Stop();
+            reloadTimer.Start();
         });
     }
 
@@ -430,12 +480,17 @@ public sealed class MainWindow : Window
         presentationEstimated = null;
         nextHealthSample = DateTimeOffset.MinValue;
         var format = current.Analyzer.Format;
-        current.Logger.Information("Audio configured: {SampleRate} Hz, {Channels} channels, analysis {AnalysisRate} Hz; history delay {HistoryDelayMilliseconds} ms; graphics {@GraphicsOptions}",
+        current.Logger.Information(
+            "Audio configured: {SampleRate} Hz, {Channels} channels, analysis {AnalysisRate} Hz; history delay {HistoryDelayMilliseconds} ms; graphics {@GraphicsOptions}",
             format.SampleRate, format.ChannelCount,
             format.SampleRate / (double)(format.SampleRate / current.Analyzer.Options.TimeResolution),
             current.Renderer.Audio.PresentationDelay * 1000, current.Renderer.Options);
-        foreach (var stage in new[] { "startup.analysis_ms", "startup.dft_ms", "startup.smoother_ms", "startup.splitter_ms",
-            "startup.gpu_ms", "startup.gpu_device_ms", "startup.gpu_output_ms", "startup.gpu_shaders_ms", "startup.gpu_audio_ms" })
+        foreach (var stage in new[]
+                 {
+                     "startup.analysis_ms", "startup.dft_ms", "startup.smoother_ms", "startup.splitter_ms",
+                     "startup.gpu_ms", "startup.gpu_device_ms", "startup.gpu_output_ms", "startup.gpu_shaders_ms",
+                     "startup.gpu_audio_ms"
+                 })
             if (current.Analyzer.Profile.Recent(stage) is { } timing)
                 current.Logger.Information("Startup stage {Stage} took {Milliseconds} ms", stage, timing.Mean);
         if (current.IsRunning)
@@ -459,7 +514,9 @@ public sealed class MainWindow : Window
         {
             if (presentationEstimated == true && !estimated)
                 current.Logger.Warning("Presentation clock estimate unavailable; using host clock");
-            else current.Logger.Information("Presentation timing uses {Clock}", estimated ? "compositor estimate" : "host clock");
+            else
+                current.Logger.Information("Presentation timing uses {Clock}",
+                    estimated ? "compositor estimate" : "host clock");
             presentationEstimated = estimated;
         }
     }
@@ -471,17 +528,21 @@ public sealed class MainWindow : Window
         {
             if (closing || !ReferenceEquals(sender, watcher)) return;
             // The watcher survives audio-only restarts, so this is an application event.
-            Log.ForContext<MainWindow>().Warning(error, "Shader file watcher failed; automatic reload may be unavailable");
+            Log.ForContext<MainWindow>()
+                .Warning(error, "Shader file watcher failed; automatic reload may be unavailable");
         });
     }
 
     async Task StopSessionAsync()
     {
         reloadTimer.Stop();
-        watcher?.Dispose(); watcher = null;
-        var previous = session; session = null;
+        watcher?.Dispose();
+        watcher = null;
+        var previous = session;
+        session = null;
         frameTime.Attach(null);
-        renderWorker?.Dispose(); renderWorker = null;
+        renderWorker?.Dispose();
+        renderWorker = null;
         analysis.Attach(null);
         shaders.Attach(null);
         pipelineWarnings = null;
@@ -496,7 +557,8 @@ public sealed class MainWindow : Window
         if (!canvasWindow.IsVisible) OpenCanvas();
         if (!fullscreen)
         {
-            windowBounds = new RectInt32(canvasWindow.AppWindow.Position.X, canvasWindow.AppWindow.Position.Y, canvasWindow.AppWindow.Size.Width, canvasWindow.AppWindow.Size.Height);
+            windowBounds = new RectInt32(canvasWindow.AppWindow.Position.X, canvasWindow.AppWindow.Position.Y,
+                canvasWindow.AppWindow.Size.Width, canvasWindow.AppWindow.Size.Height);
             canvasWindow.AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
             fullscreen = true;
         }
@@ -521,8 +583,11 @@ public sealed class MainWindow : Window
         RefreshScenePicker();
     }
 
-    bool CanvasVisible => !canvasDismissed && visible && canvasWindow.IsVisible && canvasWindow.AppWindow.Presenter is not OverlappedPresenter
-        { State: OverlappedPresenterState.Minimized };
+    bool CanvasVisible => !canvasDismissed && visible && canvasWindow.IsVisible &&
+                          canvasWindow.AppWindow.Presenter is not OverlappedPresenter
+                          {
+                              State: OverlappedPresenterState.Minimized
+                          };
 
     void UpdateRendering()
     {
@@ -532,6 +597,7 @@ public sealed class MainWindow : Window
             renderWorker?.SetEnabled(false);
             return;
         }
+
         if (renderWorker == null || renderCanvas != CanvasVisible || renderDebug != analysis.CanRender)
             StartRenderWorker(session);
         renderWorker?.SetEnabled(renderCanvas || renderDebug);
@@ -546,9 +612,18 @@ public sealed class MainWindow : Window
     async Task StopAfterRenderFailureAsync(Session? failed, long pipelineId)
     {
         await sessionGate.WaitAsync();
-        try { if (ReferenceEquals(session, failed) && session?.PipelineId == pipelineId) await StopSessionAsync(); }
-        catch (Exception error) { Log.Error(error, "Could not stop failed pipeline"); }
-        finally { sessionGate.Release(); }
+        try
+        {
+            if (ReferenceEquals(session, failed) && session?.PipelineId == pipelineId) await StopSessionAsync();
+        }
+        catch (Exception error)
+        {
+            Log.Error(error, "Could not stop failed pipeline");
+        }
+        finally
+        {
+            sessionGate.Release();
+        }
     }
 
     void OnClosing(AppWindow sender, AppWindowClosingEventArgs e)
@@ -568,8 +643,14 @@ public sealed class MainWindow : Window
         UpdateRendering();
         timingTimer.Stop();
         await sessionGate.WaitAsync();
-        try { await StopSessionAsync(); }
-        catch (Exception error) { Log.Error(error, "Could not stop pipeline during shutdown"); }
+        try
+        {
+            await StopSessionAsync();
+        }
+        catch (Exception error)
+        {
+            Log.Error(error, "Could not stop pipeline during shutdown");
+        }
         finally
         {
             sessionGate.Release();
@@ -580,4 +661,3 @@ public sealed class MainWindow : Window
         }
     }
 }
-

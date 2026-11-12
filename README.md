@@ -52,9 +52,9 @@ is not carried over.
 - **F11** or double-clicking the canvas toggles fullscreen on the canvas window's current display.
   Closing the canvas dismisses it; select a scene in the hub to reopen it. Closing the hub exits the application.
 
-The resizable hub has two equal-width columns. Input, Gain and the live analysis
-view are pinned on the left. Below them, DFT, Pipeline, Smoother and Splitter are
-separate expandable blocks, all closed initially, inside one shared scroller.
+The resizable hub uses whole-window Audio and Video tabs. Input, Gain and the live
+analysis view are on the Audio tab. Below the view, DFT, Pipeline, Smoother and
+Splitter are separate expandable blocks, all closed initially, inside one shared scroller.
 Pipeline includes a graphics-owned **Peak emphasis** aggregation parameter:
 0 = Mean, 0.5 = RMS, 1 = Max (default emphasis 0.172). Intermediate values use a power mean with
 `p = 1 / (1 - a)`, weighted by each row's overlap with the display interval.
@@ -62,7 +62,7 @@ Missing intervals contribute zero; Max includes every row with positive overlap.
 Scenes hold the aggregate between arrivals until it becomes stale after 50 ms.
 Changing peak emphasis preserves history and analysis. Spectrum and Debug diagnostics
 continue to show only blocks newly consumed in each display frame.
-HistorySeconds is a graphics setting in the right column, below the scene selector
+HistorySeconds is a graphics setting on the Video tab, below the scene selector
 and above shader controls. Changing it clears the histogram without restarting audio.
 There is no outer Audio expander.
 The Scene picker starts empty above HistorySeconds. Selection opens the
@@ -89,11 +89,14 @@ Closing the canvas clears the scene picker. Selecting the same scene again reope
 it with retained parameters and without restarting capture. Audio edits and shader
 reloads leave the picker empty while the canvas is dismissed.
 
-The analysis view shares the renderer and history while the canvas keeps its
-selected scene. It fills the available space above the bottom-aligned Audio settings,
-with thinner bands when the window is too short. It remains live with the
-canvas closed; hiding or minimizing the hub stops its drawing work. An explicit
-`--scene=Name` argument opts into launching a scene on startup.
+The control window is a whole-window standard tab view. The **Audio** tab places
+the debug spectrum above the input and analyzer settings; the **Video** tab places
+the combined frame-timing graph above the scene, graphics, and shader/theme
+parameters. Each tab keeps a horizontal splitter between its live view and controls;
+there are no vertical splitters. The analysis view shares the renderer and history
+while the canvas keeps its selected scene. It remains live with the canvas closed;
+hiding or minimizing the hub stops its drawing work. An explicit `--scene=Name`
+argument opts into launching a scene on startup.
 
 Scenes are registered by short C# setup in `SceneDefinition.Defaults`, with HLSL
 sources in `AEther.Vortice/Shaders/Scenes`. Shared code lives in `Shaders/Common`.
@@ -140,8 +143,7 @@ are scale -2.152, guarded zero inner radius and 13 iterations (normalized
 Box controls: 0.231, 0, 0.382).
 JuliaSeed components map to [-2,2], with a static default of (-1.468,-0.684,0.756)
 (normalized 0.133,0.329,0.689).
-Extinction maps to [0,4] per fractal-coordinate unit, default 1.256
-(normalized 0.314); zero is transparent.
+Extinction maps to [0,4] per fractal-coordinate unit, default 1.256 (normalized 0.314); zero is transparent.
 CutScale controls slice spacing over the same six-unit volume: slice count is
 `ceil(2^(8 - 4*CutScale))`, from 256 to 16, default 256 (normalized 0). Increasing spacing reduces
 sampling detail without changing the volume extent or intentionally changing its

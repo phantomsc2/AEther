@@ -57,7 +57,6 @@ internal static partial class Program
                 PointInt32 canvasPosition = default;
                 long debugDraws = 0;
                 int hubWidth = 0, hubHeight = 0;
-                double inputTop = 0, sceneTop = 0;
                 double Top(FrameworkElement element) => element.TransformToVisual(settings).TransformPoint(default).Y;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
                 int stage = 0;
@@ -157,14 +156,16 @@ internal static partial class Program
                                         - (Top(settings.AudioColumn) + settings.AudioColumn.ActualHeight)) > 1)
                                     throw new Exception("Analysis must fill the available space above bottom-aligned audio settings.");
                                 if (!host.AppWindow.IsVisible) throw new Exception("Settings did not open.");
-                                if (settings.Content is not Grid || Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
-                                    throw new Exception("The hub must have two equal-width columns without an outer scroller.");
+                                if (settings.Content is not Grid || settings.Tabs.TabItems.Count != 2
+                                    || settings.Tabs.TabItems.Cast<TabViewItem>().Any(tab => tab.IsClosable)
+                                    || settings.Tabs.SelectedIndex != 0)
+                                    throw new Exception("The hub must be a non-closable whole-window Audio/Video tab view.");
                                 if (Descendants(settings.Content).OfType<Expander>().Any(e => e.Header?.ToString() == "Debug"))
                                     throw new Exception("Text debug diagnostics must be removed.");
                                 var selector = Descendants(settings.Content).OfType<ComboBox>().Single(c => c.Name == "Scene");
                                 if (selector.SelectedItem != null || shadersVisible()
-                                    || !settings.Columns.Children.Contains(analysis) || settings.SceneColumn.Children[0] is not Grid sceneRow || !sceneRow.Children.Contains(selector))
-                                    throw new Exception("Scene must start empty with analysis above the audio controls.");
+                                    || !settings.Columns.Children.Contains(analysis) || !settings.SceneColumn.Children.OfType<Grid>().Any(sceneRow => sceneRow.Children.Contains(selector)))
+                                    throw new Exception("Scene must start empty on the Video tab, with analysis above the audio controls.");
                                 if (!Descendants(audio.Content).OfType<NumberBox>().Any())
                                     throw new Exception("Analyzer property editor is missing.");
                                 if (!Descendants(settings.Content).OfType<ComboBox>().Any(c => AutomationProperties.GetName(c) == "Input")
@@ -172,16 +173,17 @@ internal static partial class Program
                                     throw new Exception("Input and Gain must live in the hub.");
                                 selector.SelectedItem = "Spectrum";
                                 selector.SelectedItem = "MandelPond";
+                                settings.Tabs.SelectedIndex = 1;
                                 stage++;
                                 break;
                             case 2:
                                 if (!shadersVisible() || !canvasWindow.IsVisible || current.Renderer.SceneName != "MandelPond")
                                     throw new Exception("Scene selection must open canvas and reveal embedded shader settings.");
                                 if (current.Analyzer.Progress.Latest.Gpu == null) return;
-                                if (!settings.Columns.Children.Contains(backlog) || Grid.GetColumn(backlog) != 2 || Grid.GetRow(backlog) != 0
+                                if (!settings.SceneColumn.Children.Contains(backlog) || Grid.GetRow(backlog) != 0
                                     || !backlog.CurveNames.SequenceEqual(new[] { "Analysis", "Render", "GPU", "Frame" })
                                     || !ReferenceEquals(backlog.Content, backlog.Chart))
-                                    throw new Exception("The frame-time graph must occupy the right live-view pane.");
+                                    throw new Exception("The frame-time graph must occupy the upper Video tab pane.");
                                 var shaderGroups = LogicalChildren((DependencyObject)shaderPanel.Content).OfType<Expander>().ToArray();
                                 if (!shaderGroups.Any(g => g.Header?.ToString() == "Geometry"))
                                     throw new Exception("Dynamic shader parameter tree is missing.");
@@ -193,8 +195,6 @@ internal static partial class Program
                                     || audioScroll.ViewportHeight > settings.AudioColumn.ActualHeight
                                     || shaderScroll.ViewportHeight > settings.SceneColumn.ActualHeight)
                                     throw new Exception("Only settings panels must scroll within bounded column space.");
-                                inputTop = Top((FrameworkElement)settings.AudioColumn.Children[0]);
-                                sceneTop = Top((FrameworkElement)settings.SceneColumn.Children[0]);
                                 audioScroll.ChangeView(null, audioScroll.ScrollableHeight, null, true);
                                 shaderScroll.ChangeView(null, shaderScroll.ScrollableHeight, null, true);
                                 var number = Descendants(shaderPanel.Content).OfType<NumberBox>().First();
@@ -222,9 +222,6 @@ internal static partial class Program
                                 stage++;
                                 break;
                             case 3:
-                                if (Math.Abs(inputTop - Top((FrameworkElement)settings.AudioColumn.Children[0])) > .5
-                                    || Math.Abs(sceneTop - Top((FrameworkElement)settings.SceneColumn.Children[0])) > .5)
-                                    throw new Exception("Scrolling settings moved the pinned input or scene picker.");
                                 foreach (var group in ((StackPanel)audio.Content).Children.OfType<Expander>())
                                 {
                                     group.IsExpanded = false;
@@ -391,8 +388,6 @@ internal static partial class Program
                                 if (started != 4 || current.Renderer.Audio.Bands < 300) return;
                                 if (current.Renderer.Audio.Bands < 300 || host.AppWindow.Size.Width != hubWidth || host.AppWindow.Size.Height != hubHeight || analysis.ActualHeight > settings.Columns.RowDefinitions[0].ActualHeight + 1)
                                     throw new Exception("More bands must fit the pinned analysis area without resizing the window or adding scrolling.");
-                                if (Math.Abs(settings.AudioColumn.ActualWidth - settings.SceneColumn.ActualWidth) > 1)
-                                    throw new Exception("Resizing the hub changed the equal column widths.");
                                 Descendants(audio.Content).OfType<NumberBox>().Single(n => AutomationProperties.GetName(n) == "FrequencyResolution").Value = 12;
                                 stage++;
                                 break;

@@ -11,6 +11,18 @@
             <x:Double x:Key="ExpanderMinHeight">32</x:Double>
             <Thickness x:Key="ExpanderHeaderPadding">10,4,10,4</Thickness>
             <Thickness x:Key="ExpanderContentPadding">10,8,10,8</Thickness>
+            <SolidColorBrush x:Key="WindowChromeBrush" Color="#181818" />
+            <SolidColorBrush x:Key="WindowChromePointerOverBrush" Color="#252525" />
+            <SolidColorBrush x:Key="WindowChromePressedBrush" Color="#303030" />
+            <StaticResource x:Key="TabViewBackground" ResourceKey="WindowChromeBrush" />
+            <!-- The selected shape sits behind TabContainer; its base must stay transparent. -->
+            <SolidColorBrush x:Key="TabViewItemHeaderBackground" Color="Transparent" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundSelected"
+                            ResourceKey="SolidBackgroundFillColorTertiaryBrush" />
+            <StaticResource x:Key="TabViewItemHeaderDragBackground" ResourceKey="SolidBackgroundFillColorTertiaryBrush" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundPointerOver" ResourceKey="WindowChromePointerOverBrush" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundPressed" ResourceKey="WindowChromePressedBrush" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundDisabled" ResourceKey="WindowChromeBrush" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
