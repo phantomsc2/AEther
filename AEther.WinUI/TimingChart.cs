@@ -21,10 +21,12 @@ internal sealed class TimingChart : UserControl
     readonly Canvas yLabels = new();
     readonly Canvas secondBars = new() { IsHitTestVisible = false };
     readonly Canvas cursorLayer = new() { IsHitTestVisible = false };
+
     readonly Microsoft.UI.Xaml.Shapes.Rectangle cursor = new()
     {
         Fill = new SolidColorBrush(Color.FromArgb(128, 255, 255, 255)),
     };
+
     readonly Grid plot = new();
     readonly string metric;
     WriteableBitmap? bitmap;
@@ -56,10 +58,14 @@ internal sealed class TimingChart : UserControl
         layout.ColumnDefinitions.Add(new() { Width = new GridLength(2, GridUnitType.Star) });
         layout.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         layout.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
 
         layout.Children.Add(yLabels);
-        var unit = new TextBlock { Text = "ms", FontSize = 11, Opacity = .7,
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var unit = new TextBlock
+        {
+            Text = "ms", FontSize = 11, Opacity = .7,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+        };
         Grid.SetColumn(unit, 1);
         layout.Children.Add(unit);
         plot.Children.Add(secondBars);
@@ -68,17 +74,24 @@ internal sealed class TimingChart : UserControl
         plot.Children.Add(cursorLayer);
         Grid.SetColumn(plot, 2);
         layout.Children.Add(plot);
-        var legend = new Grid { RowSpacing = 4, ColumnSpacing = 6,
-            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0) };
+        var legend = new Grid
+        {
+            RowSpacing = 4, ColumnSpacing = 6,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0)
+        };
         legend.ColumnDefinitions.Add(new() { Width = new GridLength(88) });
         for (int column = 1; column <= 3; column++)
             legend.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         legend.RowDefinitions.Add(new() { Height = GridLength.Auto });
         string[] headings = ["Mean", "Std", "Max"];
         for (int column = 1; column <= 3; column++)
-            AddCell(new TextBlock { Text = headings[column - 1], FontSize = 11,
-                HorizontalAlignment = HorizontalAlignment.Left }, 0, column);
-        ToolTipService.SetToolTip(legend, "Milliseconds received since the previous summary update (about 1 second). Std is population standard deviation.");
+            AddCell(new TextBlock
+            {
+                Text = headings[column - 1], FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Left
+            }, 0, column);
+        ToolTipService.SetToolTip(legend,
+            "Milliseconds received since the previous summary update (about 1 second). Std is population standard deviation.");
         for (int i = 0; i < definitions.Length; i++)
         {
             int index = definitions.Length - 1 - i;
@@ -98,6 +111,7 @@ internal sealed class TimingChart : UserControl
                 token.Resources["ToggleButtonBorderBrush" + state] = fill;
                 token.Resources["ToggleButtonForeground" + state] = new SolidColorBrush(Microsoft.UI.Colors.Black);
             }
+
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(token, d.Name);
             ToolTipService.SetToolTip(token, d.Description);
             token.Checked += (_, _) => SetVisible(index, true);
@@ -107,10 +121,25 @@ internal sealed class TimingChart : UserControl
             AddCell(traces[index].StdText, i + 1, 2);
             AddCell(traces[index].MaxText, i + 1, 3);
         }
+
         Grid.SetColumn(legend, 3);
         layout.Children.Add(legend);
         Content = layout;
         plot.SizeChanged += (_, _) => UpdateLabels();
+        SizeChanged += (_, _) => UpdateLegendLayout();
+        UpdateLegendLayout();
+
+        void UpdateLegendLayout()
+        {
+            // Keep enough room for three complete numeric columns. On narrow
+            // windows the legend becomes a table underneath the full-width plot.
+            bool narrow = ActualWidth < 760;
+            layout.ColumnDefinitions[3].Width = narrow ? new GridLength(0) : new GridLength(280);
+            Grid.SetColumn(legend, narrow ? 0 : 3);
+            Grid.SetColumnSpan(legend, narrow ? 4 : 1);
+            Grid.SetRow(legend, narrow ? 1 : 0);
+            legend.Margin = narrow ? new Thickness(8, 12, 8, 0) : new Thickness(8, 0, 8, 0);
+        }
 
         void AddCell(FrameworkElement cell, int row, int column)
         {
@@ -151,6 +180,7 @@ internal sealed class TimingChart : UserControl
             trace.Summary.Reset();
             trace.ShowSummary();
         }
+
         dirty = true;
         UpdateLabels();
     }
@@ -172,11 +202,14 @@ internal sealed class TimingChart : UserControl
                 if (!trace.Visible) continue;
                 if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
                 double value = Math.Log10(sample.Milliseconds);
-                min = Math.Min(min, value); max = Math.Max(max, value);
+                min = Math.Min(min, value);
+                max = Math.Max(max, value);
                 trace.SampleCount++;
             }
+
             if (!trace.Visible) trace.Incoming.Clear();
         }
+
         if (now - lastSummaryTime >= 1)
         {
             foreach (var trace in traces)
@@ -184,8 +217,10 @@ internal sealed class TimingChart : UserControl
                 trace.ShowSummary();
                 trace.Summary.Reset();
             }
+
             lastSummaryTime = now;
         }
+
         double previousTime = latestTime;
         latestTime = now;
         UpdateCursor();
@@ -200,36 +235,48 @@ internal sealed class TimingChart : UserControl
             upper = Math.Max(UpperLimit ?? upper, upper);
             if (LowerLimit != lower || UpperLimit != upper)
             {
-                LowerLimit = lower; UpperLimit = upper;
+                LowerLimit = lower;
+                UpperLimit = upper;
                 ticks = TimingScale.Ticks(lower, upper)
                     .Where(tick => Math.Abs(tick - Math.Round(tick)) < 1e-12).ToArray();
                 dirty = true;
                 UpdateLabels();
             }
         }
+
         bool resized = ResizeRaster(physicalWidth, physicalHeight);
         bool changed = dirty || resized;
         if (dirty)
         {
             Array.Clear(pixels);
         }
-        else changed |= AdaptiveScatterRaster.ClearSweep(pixels, bitmapWidth, bitmapHeight, previousTime, now, HistorySeconds);
+        else
+            changed |= AdaptiveScatterRaster.ClearSweep(pixels, bitmapWidth, bitmapHeight, previousTime, now,
+                HistorySeconds);
+
         profile?.Elapsed(metric.Replace("_update_ms", "_prepare_ms"), start);
         long rasterStart = Stopwatch.GetTimestamp();
         foreach (var trace in traces)
         {
             foreach (var sample in trace.Incoming)
             {
-                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0 || sample.Milliseconds > 100) continue;
+                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0 ||
+                    sample.Milliseconds > 100) continue;
                 double time = Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds;
                 int x = (int)(ScatterRaster.Wrap(time, HistorySeconds) / HistorySeconds * (bitmapWidth - 1));
                 int y = Math.Clamp((int)((UpperLimit!.Value - Math.Log10(sample.Milliseconds)) /
                     (UpperLimit.Value - LowerLimit!.Value) * (bitmapHeight - 1)), 0, bitmapHeight - 1);
                 int index = y * bitmapWidth + x;
-                if (pixels[index] != trace.Color) { pixels[index] = trace.Color; changed = true; }
+                if (pixels[index] != trace.Color)
+                {
+                    pixels[index] = trace.Color;
+                    changed = true;
+                }
             }
+
             trace.Incoming.Clear();
         }
+
         if (!changed) return;
         Render();
         profile?.Elapsed(metric.Replace("_update_ms", "_raster_upload_ms"), rasterStart);
@@ -239,6 +286,7 @@ internal sealed class TimingChart : UserControl
         CompletedUpdates++;
         dirty = false;
     }
+
     void UpdateLabels()
     {
         UpdateCursor();
@@ -255,19 +303,28 @@ internal sealed class TimingChart : UserControl
                     Width = width, Height = 1 / scale,
                     Fill = new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)),
                 };
-                double y = Math.Floor(Math.Max(0, Math.Ceiling(height * scale) - 1) * (upper - tick) / (upper - lower)) / scale;
+                double y =
+                    Math.Floor(Math.Max(0, Math.Ceiling(height * scale) - 1) * (upper - tick) / (upper - lower)) /
+                    scale;
                 Canvas.SetTop(line, y);
                 secondBars.Children.Add(line);
             }
+
             int step = Math.Max(1, (int)Math.Ceiling(ticks.Length / Math.Max(2, height / 18)));
             for (int i = 0; i < ticks.Length; i += step)
             {
-                var label = new TextBlock { Text = Math.Pow(10, ticks[i]).ToString("G3", CultureInfo.CurrentCulture), FontSize = 11, Width = 60, TextAlignment = TextAlignment.Center };
-                Canvas.SetTop(label, Math.Clamp((upper - ticks[i]) / (upper - lower) * height - 7, 0, Math.Max(0, height - 14)));
+                var label = new TextBlock
+                {
+                    Text = Math.Pow(10, ticks[i]).ToString("G3", CultureInfo.CurrentCulture), FontSize = 11, Width = 60,
+                    TextAlignment = TextAlignment.Center
+                };
+                Canvas.SetTop(label,
+                    Math.Clamp((upper - ticks[i]) / (upper - lower) * height - 7, 0, Math.Max(0, height - 14)));
                 Canvas.SetLeft(label, 0);
                 yLabels.Children.Add(label);
             }
         }
+
         for (int i = 0; i <= HistorySeconds * 2; i++)
         {
             var bar = new Microsoft.UI.Xaml.Shapes.Rectangle
@@ -275,9 +332,11 @@ internal sealed class TimingChart : UserControl
                 Width = 1 / scale, Height = height,
                 Fill = new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)),
             };
-            Canvas.SetLeft(bar, Math.Floor(Math.Max(0, Math.Ceiling(width * scale) - 1) * i / (HistorySeconds * 2)) / scale);
+            Canvas.SetLeft(bar,
+                Math.Floor(Math.Max(0, Math.Ceiling(width * scale) - 1) * i / (HistorySeconds * 2)) / scale);
             secondBars.Children.Add(bar);
         }
+
         if (frameBudget is double budget && LowerLimit is double min && UpperLimit is double max)
         {
             double value = Math.Log10(budget);
@@ -312,7 +371,8 @@ internal sealed class TimingChart : UserControl
         if (!dirty && pixels.Length != 0)
             AdaptiveScatterRaster.Restore(pixels, bitmapWidth, bitmapHeight, nextPixels, width, height);
         pixels = nextPixels;
-        bitmapWidth = width; bitmapHeight = height;
+        bitmapWidth = width;
+        bitmapHeight = height;
         bitmap = null;
         UpdateLabels();
         return true;
@@ -325,15 +385,20 @@ internal sealed class TimingChart : UserControl
             bitmap = new(bitmapWidth, bitmapHeight);
             image.Source = bitmap;
         }
+
         using var stream = bitmap.PixelBuffer.AsStream();
         stream.Write(MemoryMarshal.AsBytes(pixels.AsSpan()));
         bitmap.Invalidate();
     }
+
     sealed class Trace(string metric, string name, Color color)
     {
         internal string Metric { get; } = metric;
         internal string Name { get; } = name;
-        internal int Color { get; } = unchecked((int)(0xff000000u | (uint)color.R << 16 | (uint)color.G << 8 | color.B));
+
+        internal int Color { get; } =
+            unchecked((int)(0xff000000u | (uint)color.R << 16 | (uint)color.G << 8 | color.B));
+
         // Accepted samples since Attach; no plotted points are retained.
         internal int SampleCount;
         internal List<TimingSample> Incoming { get; } = new();
