@@ -217,7 +217,7 @@ public sealed class ShaderPanel : UserControl
         }
     }
 
-    static UIElement ExpandCard(UIElement element)
+    internal static UIElement ExpandCard(UIElement element)
     {
         if (element is Expander expander)
         {
