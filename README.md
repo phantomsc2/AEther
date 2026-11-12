@@ -40,6 +40,15 @@ untitled, resizable canvas window with a standard title bar. Its content is a
 Direct3D `SwapChainPanel`. Settings and shader
 properties use standard WinUI controls with the system's default appearance.
 
+### VS Code
+
+Open the repository folder and install the recommended C# Dev Kit extension.
+Press F5 to build and debug the WinUI app, or use **Run Build Task** to build it.
+The **test AEther** task runs the NUnit suite. Add arguments such as
+`--scene=Planet` to the `args` array in `.vscode/launch.json` when needed.
+The launch configuration uses managed debugging; Rider's native debugging setting
+is not carried over.
+
 - **F11** or double-clicking the canvas toggles fullscreen on the canvas window's current display.
   Closing the canvas dismisses it; select a scene in the hub to reopen it. Closing the hub exits the application.
 
