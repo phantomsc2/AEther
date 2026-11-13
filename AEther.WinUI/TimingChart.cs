@@ -35,14 +35,14 @@ internal sealed class TimingChart : UserControl
     long origin, lost;
     bool dirty = true;
     double latestTime, lastSummaryTime;
-    double[] ticks = [];
+    readonly double[] ticks = [-2, -1, 0, 1, 2];
     double? frameBudget;
     internal int PointCount => traces[0].SampleCount;
     internal int PlottedPointCount => traces.Sum(t => t.SampleCount);
     internal int[] PointCounts => traces.Select(t => t.SampleCount).ToArray();
     internal string[] CurveNames => traces.Select(t => t.Name).ToArray();
-    internal double? LowerLimit { get; private set; }
-    internal double? UpperLimit { get; private set; }
+    internal double? LowerLimit => -2;
+    internal double? UpperLimit => 2;
     internal double PresentTime => ScatterRaster.Wrap(latestTime, HistorySeconds);
     internal long LostSamples => lost;
     internal long UpdateCount { get; private set; }
@@ -169,8 +169,6 @@ internal sealed class TimingChart : UserControl
         lost = 0;
         latestTime = 0;
         lastSummaryTime = 0;
-        LowerLimit = UpperLimit = null;
-        ticks = [];
         foreach (var trace in traces)
         {
             trace.History = next?.Track(trace.Metric, Capacity);
@@ -191,7 +189,6 @@ internal sealed class TimingChart : UserControl
         double rasterScale = XamlRoot?.RasterizationScale ?? 1;
         double physicalWidth = plot.ActualWidth * rasterScale, physicalHeight = plot.ActualHeight * rasterScale;
         if (physicalWidth <= 0 || physicalHeight <= 0) return;
-        double min = double.PositiveInfinity, max = double.NegativeInfinity;
         foreach (var trace in traces)
         {
             if (trace.History != null) lost += trace.History.ReadSince(ref trace.Cursor, trace.Incoming);
@@ -201,9 +198,6 @@ internal sealed class TimingChart : UserControl
                 trace.Summary.Add(sample.Milliseconds);
                 if (!trace.Visible) continue;
                 if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
-                double value = Math.Log10(sample.Milliseconds);
-                min = Math.Min(min, value);
-                max = Math.Max(max, value);
                 trace.SampleCount++;
             }
 
@@ -224,26 +218,6 @@ internal sealed class TimingChart : UserControl
         double previousTime = latestTime;
         latestTime = now;
         UpdateCursor();
-        // Expand only: contraction would unnecessarily discard accumulated marks.
-        if (double.IsFinite(min) && double.IsFinite(max))
-        {
-            double lower = TimingScale.Floor(min), upper = TimingScale.Ceiling(max);
-            if (upper <= lower) upper = TimingScale.Next(lower);
-            upper = Math.Min(upper, 2); // log10(100 ms)
-            if (lower >= upper) lower = 1; // Keep a valid range if all samples exceed the cap.
-            lower = Math.Min(LowerLimit ?? lower, lower);
-            upper = Math.Max(UpperLimit ?? upper, upper);
-            if (LowerLimit != lower || UpperLimit != upper)
-            {
-                LowerLimit = lower;
-                UpperLimit = upper;
-                ticks = TimingScale.Ticks(lower, upper)
-                    .Where(tick => Math.Abs(tick - Math.Round(tick)) < 1e-12).ToArray();
-                dirty = true;
-                UpdateLabels();
-            }
-        }
-
         bool resized = ResizeRaster(physicalWidth, physicalHeight);
         bool changed = dirty || resized;
         if (dirty)
@@ -260,7 +234,7 @@ internal sealed class TimingChart : UserControl
         {
             foreach (var sample in trace.Incoming)
             {
-                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0 ||
+                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds < 0.01 ||
                     sample.Milliseconds > 100) continue;
                 double time = Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds;
                 int x = (int)(ScatterRaster.Wrap(time, HistorySeconds) / HistorySeconds * (bitmapWidth - 1));

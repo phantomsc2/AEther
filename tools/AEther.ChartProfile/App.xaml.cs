@@ -107,8 +107,8 @@ public partial class App : Application
                     throw new Exception("All native frame and 1000 Hz analysis samples must be retained, including sub-millisecond values.");
                 if (!view.CurveNames.SequenceEqual(new[] { "Analysis", "Render", "GPU", "Frame" })
                     || !ReferenceEquals(view.Content, view.Chart)
-                    || view.Chart.LowerLimit >= -1 || view.Chart.UpperLimit < Math.Log10(40))
-                    throw new Exception("Expected one combined chart with automatic sub-millisecond range and retained spike range.");
+                    || view.Chart.LowerLimit != -2 || view.Chart.UpperLimit != 2)
+                    throw new Exception("Expected one combined chart with a fixed 0.01–100 ms range.");
                 if (layout && (analysis!.ActualWidth < 100 || settings!.Tabs.TabItems.Count != 2
                     || settings.Columns.Children.Contains(view) || !settings.SceneColumn.Children.Contains(view)))
                     throw new Exception("Expected separate whole-window Audio and Video tabs.");
@@ -139,9 +139,9 @@ public partial class App : Application
                 await encoder.FlushAsync();
                 view.Attach(new PipelineProfile());
                 if (view.PlottedPointCount != 0 || view.LostSamples != 0
-                    || view.Chart.LowerLimit != null || view.Chart.UpperLimit != null
+                    || view.Chart.LowerLimit != -2 || view.Chart.UpperLimit != 2
                     || view.Chart.PresentTime != 0)
-                    throw new Exception("Profile replacement must reset the chart and its expanded range.");
+                    throw new Exception("Profile replacement must reset the chart and retain its fixed range.");
                 window.Close();
                 Exit();
             }
