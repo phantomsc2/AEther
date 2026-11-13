@@ -17,6 +17,7 @@ internal static partial class Program
     {
         try
         {
+            if (args.Contains("--group-layout-only")) { CheckGroupLayout(); return 0; }
             if (args.Contains("--presentation-profile")) { ProfilePresentation(args); return 0; }
             if (args.Contains("--slider-probe")) { CheckSliderPointerEdits(); return 0; }
             if (args.Contains("--swift-settings-only")) { CheckSwiftSettings(); return 0; }

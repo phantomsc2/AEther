@@ -54,7 +54,7 @@ is not carried over.
 
 The resizable hub uses whole-window Audio and Video tabs. Input, Gain and the live
 analysis view are on the Audio tab. Below the view, DFT, Pipeline, Smoother and
-Splitter are separate expandable blocks, all closed initially, inside one shared scroller.
+Splitter are always-expanded cards in a staggered layout inside one shared scroller.
 Pipeline includes a graphics-owned **Peak emphasis** aggregation parameter:
 0 = Mean, 0.5 = RMS, 1 = Max (default emphasis 0.172). Intermediate values use a power mean with
 `p = 1 / (1 - a)`, weighted by each row's overlap with the display interval.
@@ -62,10 +62,9 @@ Missing intervals contribute zero; Max includes every row with positive overlap.
 Scenes hold the aggregate between arrivals until it becomes stale after 50 ms.
 Changing peak emphasis preserves history and analysis. Spectrum and Debug diagnostics
 continue to show only blocks newly consumed in each display frame.
-HistorySeconds is a graphics setting on the Video tab, below the scene selector
-and above shader controls. Changing it clears the histogram without restarting audio.
-There is no outer Audio expander.
-The Scene picker starts empty above HistorySeconds. Selection opens the
+HistorySeconds, Peak emphasis and Exposure are graphics settings in the Video tab's
+Settings group. Changing HistorySeconds clears the histogram without restarting audio.
+The Scene Parameters group starts with only an empty Scene picker. Selection opens the
 canvas and reveals dynamic shader parameters, Reload and Reset defaults below it.
 Only the Audio settings and shader settings scroll, independently inside their
 panels. The overall window and analysis view never scroll. The bottom status strip
@@ -92,8 +91,13 @@ reloads leave the picker empty while the canvas is dismissed.
 The control window is a whole-window standard tab view. The **Audio** tab places
 the debug spectrum above the input and analyzer settings; the **Video** tab places
 the combined frame-timing graph above the scene, graphics, and shader/theme
-parameters. Each tab keeps a horizontal splitter between its live view and controls;
-there are no vertical splitters. The analysis view shares the renderer and history
+parameters. Each tab uses a single-column `GroupHost`: Audio has Spectrum and Settings;
+Video has Timings, Settings and Scene Parameters. These native Expanders start expanded.
+Collapsed groups occupy only their headers. Auto-sized groups fit their content;
+Fill groups share the remaining height. Toolkit splitters resize consecutive expanded
+groups, skipping collapsed groups, and allocations survive collapse/reopen. Content
+cards use Toolkit StaggeredLayout independently inside each group. There are no
+vertical splitters. The analysis view shares the renderer and history
 while the canvas keeps its selected scene. It remains live with the canvas closed;
 hiding or minimizing the hub stops its drawing work. An explicit `--scene=Name`
 argument opts into launching a scene on startup.

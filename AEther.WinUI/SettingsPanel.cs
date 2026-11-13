@@ -1,5 +1,4 @@
 using AEther.NAudio;
-using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -27,11 +26,10 @@ public sealed class SettingsPanel : UserControl
         VerticalAlignment = VerticalAlignment.Stretch,
     };
 
-    // Named surfaces are retained for diagnostics and profile tooling.
-    internal Grid Columns { get; } = new() { Padding = new Thickness(12), RowSpacing = 0 };
+    internal GroupHost Columns { get; } = new() { Padding = new Thickness(12) };
+    internal GroupHost SceneColumn { get; } = new() { Padding = new Thickness(12) };
     internal Grid AudioColumn { get; } = new() { RowSpacing = 8 };
-    internal Grid SceneColumn { get; } = new() { Padding = new Thickness(12), RowSpacing = 0 };
-    internal ScrollViewer AudioSettings { get; private set; } = null!;
+    internal ScrollViewer AudioSettings { get; }
     internal EventLogView EventLog { get; } = new();
 
     public string InputName => input.SelectedItem?.ToString() ?? Loopback;
@@ -49,16 +47,41 @@ public sealed class SettingsPanel : UserControl
         Columns.Background = contentSurface;
         SceneColumn.Background = contentSurface;
         var root = new Grid { Background = chrome };
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.Children.Add(Tabs);
         Grid.SetRow(EventLog, 1);
         root.Children.Add(EventLog);
         Content = root;
         SizeChanged += (_, _) => EventLog.SetAvailableHeight(ActualHeight);
 
-        BuildAudioTab(audio, analysis);
-        BuildVideoTab(graphics, backlog);
+        AudioColumn.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        AudioColumn.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        AudioSettings = new ScrollViewer
+        {
+            Content = audio, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        AudioColumn.Children.Add(LabeledControl.Create("Input", input));
+        Grid.SetRow(AudioSettings, 1);
+        AudioColumn.Children.Add(AudioSettings);
+        Columns.AddGroup("Spectrum", analysis);
+        Columns.AddGroup("Settings", AudioColumn);
+
+        var sceneControls = new Grid { RowSpacing = 8 };
+        sceneControls.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        sceneControls.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        AutomationProperties.SetName(scenePicker, "Scene");
+        sceneControls.Children.Add(LabeledControl.Create("Scene", scenePicker));
+        Grid.SetRow(shaders, 1);
+        sceneControls.Children.Add(shaders);
+        SceneColumn.AddGroup("Timings", backlog);
+        SceneColumn.AddGroup("Settings", new ScrollViewer
+        {
+            Content = graphics, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        }, GroupSizing.Auto);
+        SceneColumn.AddGroup("Scene Parameters", sceneControls);
         Tabs.TabItems.Add(CreateTab("Audio", Symbol.Volume, Columns));
         Tabs.TabItems.Add(CreateTab("Video", Symbol.Video, SceneColumn));
         Tabs.SelectedIndex = 0;
@@ -83,71 +106,9 @@ public sealed class SettingsPanel : UserControl
 
     static TabViewItem CreateTab(string header, Symbol symbol, UIElement content) => new()
     {
-        Header = header,
-        IconSource = new SymbolIconSource { Symbol = symbol },
-        IsClosable = false,
-        Content = content,
+        Header = header, IconSource = new SymbolIconSource { Symbol = symbol },
+        IsClosable = false, Content = content,
     };
-
-    static GridSplitter CreateHorizontalSplitter() => new()
-    {
-        Height = 8,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        VerticalAlignment = VerticalAlignment.Stretch,
-        ResizeDirection = GridSplitter.GridResizeDirection.Rows,
-        ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext
-    };
-
-    void BuildAudioTab(AudioPanel audio, AnalysisView analysis)
-    {
-        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 96 });
-        Columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        Columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 96 });
-        analysis.MinHeight = 96;
-        Columns.Children.Add(analysis);
-        var splitter = CreateHorizontalSplitter();
-        Grid.SetRow(splitter, 1);
-        Columns.Children.Add(splitter);
-
-        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        AudioColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        AudioSettings = new ScrollViewer
-        {
-            Content = audio,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        };
-        AudioColumn.Children.Add(LabeledControl.Create("Input", input));
-        Grid.SetRow(AudioSettings, 1);
-        AudioColumn.Children.Add(AudioSettings);
-        Grid.SetRow(AudioColumn, 2);
-        Columns.Children.Add(AudioColumn);
-    }
-
-    void BuildVideoTab(GraphicsPanel graphics, FrameTimeView backlog)
-    {
-        SceneColumn.RowDefinitions.Add(new RowDefinition
-            { Height = new GridLength(1, GridUnitType.Star), MinHeight = 96 });
-        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        SceneColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        SceneColumn.RowDefinitions.Add(new RowDefinition
-            { Height = new GridLength(1, GridUnitType.Star), MinHeight = 96 });
-        backlog.MinHeight = 96;
-        SceneColumn.Children.Add(backlog);
-        var splitter = CreateHorizontalSplitter();
-        Grid.SetRow(splitter, 1);
-        SceneColumn.Children.Add(splitter);
-
-        AutomationProperties.SetName(scenePicker, "Scene");
-        var sceneRow = LabeledControl.Create("Scene", scenePicker);
-        Grid.SetRow(sceneRow, 2);
-        Grid.SetRow(graphics, 3);
-        Grid.SetRow(shaders, 4);
-        SceneColumn.Children.Add(sceneRow);
-        SceneColumn.Children.Add(graphics);
-        SceneColumn.Children.Add(shaders);
-    }
 
     public void SetScenes(IEnumerable<string> names, string? selected)
     {
