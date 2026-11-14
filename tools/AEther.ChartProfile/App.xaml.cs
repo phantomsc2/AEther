@@ -44,12 +44,14 @@ public partial class App : Application
         var refreshRate = arguments.Contains("--fast") ? 10 : 1 / view.RefreshInterval.TotalSeconds;
         view.RefreshInterval = TimeSpan.FromSeconds(1.0 / refreshRate);
         var layout = arguments.Contains("--layout");
+        var resizeCheck = arguments.Contains("--resize-check");
         AnalysisView? analysis = null;
         SettingsPanel? settings = null;
         if (layout)
         {
             analysis = new AnalysisView(window);
-            settings = new SettingsPanel(new AudioPanel(), new GraphicsPanel(), new ShaderPanel(), analysis, view);
+            settings = new SettingsPanel(new AudioPanel(), new GraphicsPanel(), new ShaderPanel(), analysis, view,
+                16.0 / 9);
         }
         window.Content = (UIElement?)settings ?? view;
         // Both the chart-only and layout probes use at least 1280x720 client pixels.
@@ -79,7 +81,7 @@ public partial class App : Application
         GenerateUntil(Stopwatch.GetTimestamp());
         var watch = Stopwatch.StartNew();
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.0 / 60) };
-        bool recording = false, finishing = false;
+        bool recording = false, finishing = false, resized = false;
         TimeSpan initialCpu = default;
         long initialUpdates = 0;
         var process = Process.GetCurrentProcess();
@@ -95,6 +97,11 @@ public partial class App : Application
                     initialCpu = process.TotalProcessorTime;
                     initialUpdates = view.CompletedUpdates;
                     recording = true;
+                }
+                if (resizeCheck && !resized && watch.Elapsed.TotalSeconds >= 6)
+                {
+                    window.AppWindow.ResizeClient(new SizeInt32(1440, 810));
+                    resized = true;
                 }
                 if (watch.Elapsed.TotalSeconds < 13) return;
                 finishing = true;
@@ -116,7 +123,7 @@ public partial class App : Application
                 profile.Describe("Client pixels", $"{window.AppWindow.ClientSize.Width}x{window.AppWindow.ClientSize.Height}");
                 profile.Describe("Chart DIPs", $"{view.ActualWidth:0}x{view.ActualHeight:0}");
                 profile.Describe("Rasterization scale", view.XamlRoot.RasterizationScale.ToString());
-                profile.Describe("Library", "Direct WriteableBitmap CPU raster, opaque centers + quarter-opacity cross halos, all raw samples");
+                profile.Describe("Library", "Direct WriteableBitmap CPU raster, opaque points, all raw samples");
                 profile.Describe("Workload", $"{windowSeconds} seconds; synthetic 60 Hz frames and 1000 Hz analysis with periodic spikes; chart updates at {refreshRate} Hz");
                 profile.Describe("Binning", "None");
                 profile.Describe("Points", view.PointCount.ToString());

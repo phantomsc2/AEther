@@ -5,8 +5,8 @@ Run the executable under bin/x64/Release/net10.0-windows10.0.19041.0/win-x64
 from the repository root.
 
 The production charts use direct CPU rasterization into transparent WriteableBitmap
-surfaces. Every raw sample becomes an opaque center with four quarter-opacity physical-pixel neighbors at its original time
-and logarithmic duration. There is no binning, averaging, animation, smoothing,
+surfaces. Every raw sample becomes an opaque point at its original time and logarithmic duration.
+There is no binning, averaging, animation, smoothing,
 per-point UI element, or LiveCharts dependency. The grid and current-time marker
 are translucent; labels and legends use XAML.
 
@@ -19,6 +19,7 @@ pipeline CSV, summaries, and a rendered XAML capture.
 Options:
 - --layout uses the production hub's chart/control layout inside the 720p window.
 - --fast requests the maximum supported 10 Hz chart refresh.
+- --resize-check resizes the chart from 1280x720 to 1440x810 during collection.
 - --tag=NAME writes isolated results under artifacts/chart-profile/NAME.
 - --hub --scene=MandelFluid --tag=NAME runs the actual hub, analyzer and renderer
   at 1280x720 through scene, charts, spectrum, full hub, and scene-repeat phases.
@@ -40,4 +41,7 @@ their wall-time boundaries differ from the direct raster renderer.
 
 See ../../doc/raster-chart-performance.md for measurements.
 
-Incremental caching draws only arriving samples and removes expired samples using per-pixel per-trace reference counts. Full history replay occurs on resize, DPI change, axis expansion or profile replacement. The source histories remain available for those rebuilds. Refresh requests are capped at 10 Hz; hidden views suspend updates. Fully empty idle charts skip bitmap submission.
+Incremental rendering draws only arriving samples and clears elapsed columns. A bounded
+seven-second point history is replayed when resize or DPI changes the raster dimensions.
+Refresh requests are capped at 10 Hz; hidden views suspend updates. Fully empty idle charts
+skip bitmap submission.

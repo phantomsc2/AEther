@@ -10,7 +10,7 @@ using Windows.UI;
 
 namespace AEther.WinUI;
 
-/// <summary>Persistent scatter bitmap at roughly half physical resolution; no retained plot history.</summary>
+/// <summary>Incremental scatter bitmap with retained history for exact redraws after resize.</summary>
 internal sealed class TimingChart : UserControl
 {
     int bitmapWidth, bitmapHeight;
@@ -175,6 +175,8 @@ internal sealed class TimingChart : UserControl
             trace.Cursor = 0;
             trace.SampleCount = 0;
             trace.Incoming.Clear();
+            trace.NewPoints.Clear();
+            trace.Points.Clear();
             trace.Summary.Reset();
             trace.ShowSummary();
         }
@@ -191,6 +193,7 @@ internal sealed class TimingChart : UserControl
         if (physicalWidth <= 0 || physicalHeight <= 0) return;
         foreach (var trace in traces)
         {
+            trace.NewPoints.Clear();
             if (trace.History != null) lost += trace.History.ReadSince(ref trace.Cursor, trace.Incoming);
             else trace.Incoming.Clear();
             foreach (var sample in trace.Incoming)
@@ -199,9 +202,18 @@ internal sealed class TimingChart : UserControl
                 if (!trace.Visible) continue;
                 if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds <= 0) continue;
                 trace.SampleCount++;
+                var point = new ScatterPoint(
+                    Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds,
+                    Math.Log10(sample.Milliseconds));
+                if (point.Time < now - HistorySeconds || point.LogMilliseconds < LowerLimit!.Value
+                    || point.LogMilliseconds > UpperLimit!.Value) continue;
+                trace.Points.Enqueue(point);
+                trace.NewPoints.Add(point);
             }
 
-            if (!trace.Visible) trace.Incoming.Clear();
+            while (trace.Points.TryPeek(out var point) && point.Time < now - HistorySeconds)
+                trace.Points.Dequeue();
+            trace.Incoming.Clear();
         }
 
         if (now - lastSummaryTime >= 1)
@@ -220,35 +232,23 @@ internal sealed class TimingChart : UserControl
         UpdateCursor();
         bool resized = ResizeRaster(physicalWidth, physicalHeight);
         bool changed = dirty || resized;
-        if (dirty)
-        {
+        if (dirty || resized)
             Array.Clear(pixels);
-        }
         else
             changed |= AdaptiveScatterRaster.ClearSweep(pixels, bitmapWidth, bitmapHeight, previousTime, now,
                 HistorySeconds);
 
         profile?.Elapsed(metric.Replace("_update_ms", "_prepare_ms"), start);
         long rasterStart = Stopwatch.GetTimestamp();
-        foreach (var trace in traces)
+        if (dirty || resized)
         {
-            foreach (var sample in trace.Incoming)
-            {
-                if (!double.IsFinite(sample.Milliseconds) || sample.Milliseconds < 0.01 ||
-                    sample.Milliseconds > 100) continue;
-                double time = Stopwatch.GetElapsedTime(origin, sample.Timestamp).TotalSeconds;
-                int x = (int)(ScatterRaster.Wrap(time, HistorySeconds) / HistorySeconds * (bitmapWidth - 1));
-                int y = Math.Clamp((int)((UpperLimit!.Value - Math.Log10(sample.Milliseconds)) /
-                    (UpperLimit.Value - LowerLimit!.Value) * (bitmapHeight - 1)), 0, bitmapHeight - 1);
-                int index = y * bitmapWidth + x;
-                if (pixels[index] != trace.Color)
-                {
-                    pixels[index] = trace.Color;
-                    changed = true;
-                }
-            }
-
-            trace.Incoming.Clear();
+            foreach (var trace in traces)
+                changed |= Draw(trace.Points, trace.Color);
+        }
+        else
+        {
+            foreach (var trace in traces)
+                changed |= Draw(trace.NewPoints, trace.Color);
         }
 
         if (!changed) return;
@@ -259,6 +259,23 @@ internal sealed class TimingChart : UserControl
         UpdateCount++;
         CompletedUpdates++;
         dirty = false;
+    }
+
+    bool Draw(IEnumerable<ScatterPoint> points, int color)
+    {
+        bool changed = false;
+        double xScale = (bitmapWidth - 1.0) / HistorySeconds;
+        double yScale = (bitmapHeight - 1.0) / (UpperLimit!.Value - LowerLimit!.Value);
+        foreach (var point in points)
+        {
+            int x = (int)(ScatterRaster.Wrap(point.Time, HistorySeconds) * xScale);
+            int y = (int)((UpperLimit.Value - point.LogMilliseconds) * yScale);
+            int index = y * bitmapWidth + x;
+            if (pixels[index] == color) continue;
+            pixels[index] = color;
+            changed = true;
+        }
+        return changed;
     }
 
     void UpdateLabels()
@@ -338,13 +355,10 @@ internal sealed class TimingChart : UserControl
 
     bool ResizeRaster(double physicalWidth, double physicalHeight)
     {
-        int width = AdaptiveScatterRaster.Dimension(bitmapWidth, physicalWidth);
-        int height = AdaptiveScatterRaster.Dimension(bitmapHeight, physicalHeight);
+        int width = AdaptiveScatterRaster.Dimension(physicalWidth);
+        int height = AdaptiveScatterRaster.Dimension(physicalHeight);
         if (width == bitmapWidth && height == bitmapHeight) return false;
-        var nextPixels = new int[checked(width * height)];
-        if (!dirty && pixels.Length != 0)
-            AdaptiveScatterRaster.Restore(pixels, bitmapWidth, bitmapHeight, nextPixels, width, height);
-        pixels = nextPixels;
+        pixels = new int[checked(width * height)];
         bitmapWidth = width;
         bitmapHeight = height;
         bitmap = null;
@@ -373,9 +387,11 @@ internal sealed class TimingChart : UserControl
         internal int Color { get; } =
             unchecked((int)(0xff000000u | (uint)color.R << 16 | (uint)color.G << 8 | color.B));
 
-        // Accepted samples since Attach; no plotted points are retained.
+        // Accepted samples since Attach, plus the bounded points needed for resize redraws.
         internal int SampleCount;
         internal List<TimingSample> Incoming { get; } = new();
+        internal List<ScatterPoint> NewPoints { get; } = new();
+        internal Queue<ScatterPoint> Points { get; } = new();
         internal TimingHistory? History;
         internal long Cursor;
         internal bool Visible = true;

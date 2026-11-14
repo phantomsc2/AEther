@@ -4,25 +4,10 @@ namespace AEther.WinUI;
 
 internal static class AdaptiveScatterRaster
 {
-    internal static int Dimension(int current, double physical)
+    internal static int Dimension(double physical)
     {
-        if (!double.IsFinite(physical) || physical <= 0) return current;
-        if (current >= 2 && physical >= current * 1.5 && physical <= current * 2.5) return current;
+        if (!double.IsFinite(physical) || physical <= 0) return 0;
         return Math.Max(2, (int)Math.Round(physical / 2, MidpointRounding.AwayFromZero));
-    }
-
-    internal static void Restore(int[] source, int oldWidth, int oldHeight,
-        int[] destination, int width, int height)
-    {
-        for (int y = 0; y < height; y++)
-        {
-            int sy = (int)Math.Round((double)y * (oldHeight - 1) / (height - 1));
-            for (int x = 0; x < width; x++)
-            {
-                int sx = (int)Math.Round((double)x * (oldWidth - 1) / (width - 1));
-                destination[y * width + x] = source[sy * oldWidth + sx];
-            }
-        }
     }
 
     internal static bool ClearSweep(int[] pixels, int width, int height,
